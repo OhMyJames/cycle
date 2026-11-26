@@ -221,74 +221,98 @@ const columnsOf = (project: Record<string, unknown>): Column[] =>
 
 const STAGE_FIELD = "Loop 阶段";
 const STAGE_SINCE_FIELD = "Loop 阶段开始于";
-/** The options of the stage field, by the name Loop writes: the page gets fixed words, never the tracker's names. */
-const STAGE_OF_OPTION: Record<string, LoopStage> = {
-  开发: "develop",
-  验证: "verify",
-  QA: "qa",
-  "等 CI": "ci",
-  评审: "review",
-  等合并: "merge",
+/** The option names Loop writes (tools/auto-loop/src/project.ts), as the page's fixed words: never the tracker's text. */
+const STAGE_OF_OPTION = new Map<string, LoopStage>([
+  ["开发", "develop"],
+  ["验证", "verify"],
+  ["QA", "qa"],
+  ["等 CI", "ci"],
+  ["评审", "review"],
+  ["等合并", "merge"],
+  ["调研", "research"],
+  ["调研 QA", "researchQa"],
+  ["规划", "plan"],
+  ["规划 QA", "planQa"],
+]);
+
+type StageFields = { options: Map<unknown, string> };
+
+/** `list_custom_fields` is not a listed tool on every key: when the direct call fails it goes through `execute_read`. */
+const customFieldsOf = async (t: Tracker, projectKey: string): Promise<unknown> => {
+  try {
+    return await callTool(t, "list_custom_fields", { projectKey });
+  } catch {
+    return await callTool(t, "execute_read", {
+      name: "list_custom_fields",
+      arguments: { projectKey },
+    });
+  }
 };
 
-type StageFields = { stageId: unknown; options: Map<unknown, string>; sinceId: unknown };
-
-/** The two fields of a Project, found by name (ids are per Project). Undefined: it has no such fields. */
-const stageFieldsOf = async (
-  t: Tracker,
-  projectKey: string,
-  project: Record<string, unknown>,
-): Promise<StageFields | undefined> => {
+/** The stage field's options of a Project, found by field name. Undefined: it has no such fields. */
+const stageFieldsOf = async (t: Tracker, projectKey: string): Promise<StageFields | undefined> => {
   try {
-    let defs = project.customFields ?? project.fields;
-    if (!Array.isArray(defs)) {
-      const listed = await callTool(t, "list_custom_fields", { projectKey });
-      defs = Array.isArray(listed) ? listed : (asRecord(listed).fields ?? asRecord(listed).data);
-    }
+    const listed = await customFieldsOf(t, projectKey);
+    const defs = Array.isArray(listed)
+      ? listed
+      : (asRecord(listed).data ?? asRecord(listed).fields);
     const all = (Array.isArray(defs) ? defs : []).map(asRecord);
     const stage = all.find((f) => f.name === STAGE_FIELD);
-    const since = all.find((f) => f.name === STAGE_SINCE_FIELD);
-    if (stage === undefined || since === undefined) return undefined;
+    if (stage === undefined || !all.some((f) => f.name === STAGE_SINCE_FIELD)) return undefined;
+    // A select option's label is its `value` (what the writer matches on); `name` is read too.
     const options = new Map<unknown, string>();
     for (const o of Array.isArray(stage.options) ? stage.options : []) {
       const r = asRecord(o);
-      if (typeof r.name === "string") options.set(r.id, r.name);
+      const label = r.value ?? r.name;
+      if (typeof label === "string") options.set(r.id, label);
     }
-    return { stageId: stage.id, options, sinceId: since.id };
+    return { options };
   } catch {
     return undefined;
   }
 };
 
-/** One ticket's stage from `get_issue`; undefined for any failure or empty field (the card then shows none). */
+/** The last good stage of a ticket, kept briefly so that one failed read does not blank the card. */
+const stageCache = new Map<string, { at: number; stage: LoopTicket["loopStage"] }>();
+const STAGE_CACHE_TTL_MS = 2 * 60_000;
+
+/** One ticket's stage from `get_issue`. Throws when the ticket cannot be read; undefined when the fields say nothing. */
 const readStage = async (
   t: Tracker,
   issueId: unknown,
   defs: StageFields,
 ): Promise<LoopTicket["loopStage"]> => {
-  try {
-    const issue = unwrap(await callTool(t, "get_issue", { issueId }));
-    const fields = (Array.isArray(issue.fields) ? issue.fields : []).map(asRecord);
-    const find = (name: string, id: unknown) =>
-      fields.find((f) => f.name === name) ??
-      fields.find((f) => id !== undefined && (f.fieldId === id || f.customFieldId === id));
-    const stageField = find(STAGE_FIELD, defs.stageId);
-    const sinceField = find(STAGE_SINCE_FIELD, defs.sinceId);
-    if (!stageField || !sinceField) return undefined;
-    const optionId = Array.isArray(stageField.optionIds) ? stageField.optionIds[0] : undefined;
-    const name =
-      optionId !== undefined
-        ? defs.options.get(optionId)
-        : typeof stageField.value === "string"
-          ? stageField.value
-          : undefined;
-    const stage = name === undefined ? undefined : STAGE_OF_OPTION[name.trim()];
-    const raw = sinceField.value ?? sinceField.dateValue;
-    if (stage === undefined || typeof raw !== "string" || Number.isNaN(Date.parse(raw)))
-      return undefined;
-    return { stage, since: new Date(raw).toISOString() };
-  } catch {
+  const issue = unwrap(await callTool(t, "get_issue", { issueId }));
+  const fields = (Array.isArray(issue.fields) ? issue.fields : []).map(asRecord);
+  const stageField = fields.find((f) => f.name === STAGE_FIELD);
+  const sinceField = fields.find((f) => f.name === STAGE_SINCE_FIELD);
+  if (!stageField || !sinceField) return undefined;
+  const optionId = Array.isArray(stageField.optionIds) ? stageField.optionIds[0] : undefined;
+  const label = optionId === undefined ? undefined : defs.options.get(optionId);
+  const stage = label === undefined ? undefined : STAGE_OF_OPTION.get(label.trim());
+  const raw = sinceField.value;
+  if (stage === undefined || typeof raw !== "string" || Number.isNaN(Date.parse(raw)))
     return undefined;
+  return { stage, since: new Date(raw).toISOString() };
+};
+
+const readStageOrCached = async (
+  t: Tracker,
+  issueId: unknown,
+  defs: StageFields,
+): Promise<LoopTicket["loopStage"]> => {
+  const key = `${t.url}#${String(issueId)}`;
+  try {
+    const stage = await readStage(t, issueId, defs);
+    if (stage === undefined) stageCache.delete(key);
+    else {
+      if (stageCache.size >= CACHE_MAX) stageCache.clear();
+      stageCache.set(key, { at: Date.now(), stage });
+    }
+    return stage;
+  } catch {
+    const hit = stageCache.get(key);
+    return hit !== undefined && Date.now() - hit.at < STAGE_CACHE_TTL_MS ? hit.stage : undefined;
   }
 };
 
@@ -306,7 +330,7 @@ export const readBoard = async (t: Tracker, projectKey: string): Promise<LoopBoa
     const autoId = autoLabelOf(project);
     if (columns.length === 0) throw new Error("no columns");
     const stageDefs = columns.some((c) => roleOf(columns, c) === "progress")
-      ? await stageFieldsOf(t, projectKey, project)
+      ? await stageFieldsOf(t, projectKey)
       : undefined;
     const ticketsOf = async (
       column: Column,
@@ -324,7 +348,7 @@ export const readBoard = async (t: Tracker, projectKey: string): Promise<LoopBoa
         const lane = async () => {
           while (next < rows.length) {
             const r = asRecord(rows[next++]);
-            const stage = await readStage(t, r.id, stageDefs);
+            const stage = await readStageOrCached(t, r.id, stageDefs);
             if (stage !== undefined) stages.set(r, stage);
           }
         };

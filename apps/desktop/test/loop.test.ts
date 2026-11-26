@@ -567,14 +567,24 @@ describe("Loop's stage on In Progress cards (CYC-443)", () => {
   const stageField = {
     id: 90,
     name: "Loop 阶段",
+    fieldType: "select",
     options: [
-      { id: 1, name: "开发" },
-      { id: 3, name: "QA" },
+      { id: 1, value: "开发" },
+      { id: 3, value: "QA" },
+      { id: 4, name: "规划" },
+      { id: 5, value: "constructor" },
     ],
   };
-  const sinceField = { id: 91, name: "Loop 阶段开始于" };
+  const sinceField = { id: 91, name: "Loop 阶段开始于", fieldType: "datetime" };
   const since = "2026-11-26T08:00:00.000Z";
-  const stagedBoard = (opts: { fields?: unknown[]; issue?: (id: unknown) => unknown }) => {
+  // Each test has its own issue id: the last good stage is kept briefly by id.
+  let nextId = 1000;
+  const stagedBoard = (opts: {
+    fields?: unknown[];
+    issue?: (id: unknown) => unknown;
+    viaExecuteRead?: boolean;
+  }) => {
+    const id = nextId++;
     const seen: { tool: string; args: Record<string, unknown> }[] = [];
     const fetchImpl = (async (_url: unknown, init: RequestInit) => {
       const { params } = JSON.parse(String(init.body)) as {
@@ -582,25 +592,18 @@ describe("Loop's stage on In Progress cards (CYC-443)", () => {
       };
       const { name, arguments: args } = params;
       seen.push({ tool: name, args });
+      const fields = { ok: true, data: opts.fields ?? [stageField, sinceField] };
       let data: unknown;
-      if (name === "get_project")
-        data = {
-          project: {},
-          columns: boardColumns,
-          labels: [],
-          customFields: opts.fields ?? [stageField, sinceField],
-        };
+      if (name === "get_project") data = { project: {}, columns: boardColumns, labels: [] };
+      else if (name === "list_custom_fields") {
+        if (opts.viaExecuteRead) throw new Error("unknown tool");
+        data = fields;
+      } else if (name === "execute_read") data = fields;
       else if (name === "get_issue") {
         const r = opts.issue?.(args.issueId);
         if (r instanceof Error) throw r;
         data = r;
-      } else
-        data = [
-          {
-            ...issue(Number(args.columnId) * 10, Number(args.columnId)),
-            id: Number(args.columnId) * 100,
-          },
-        ];
+      } else data = [{ ...issue(Number(args.columnId) * 10, Number(args.columnId)), id }];
       return new Response(
         JSON.stringify({
           jsonrpc: "2.0",
@@ -609,11 +612,11 @@ describe("Loop's stage on In Progress cards (CYC-443)", () => {
         }),
       );
     }) as unknown as typeof fetch;
-    return { seen, fetchImpl };
+    return { id, seen, fetchImpl };
   };
-  const good = () => ({
+  const withOption = (optionId: number) => () => ({
     fields: [
-      { name: "Loop 阶段", optionIds: [3] },
+      { name: "Loop 阶段", optionIds: [optionId] },
       { name: "Loop 阶段开始于", value: since },
     ],
   });
@@ -621,37 +624,43 @@ describe("Loop's stage on In Progress cards (CYC-443)", () => {
     if (b.kind !== "ok") throw new Error("expected a board");
     return b.columns.find((c) => c.name === name)?.tickets ?? [];
   };
+  const progress = async (opts: Parameters<typeof stagedBoard>[0]) => {
+    writeKey(0o600);
+    const made = stagedBoard(opts);
+    return { ...made, board: await answerBoard(loop, "CYC", () => {}, made.fetchImpl) };
+  };
 
   test("In Progress tickets carry the stage; other columns are not read", async () => {
-    writeKey(0o600);
-    const { seen, fetchImpl } = stagedBoard({ issue: good });
-    const board = await answerBoard(loop, "CYC", () => {}, fetchImpl);
+    const { board, seen, id } = await progress({ issue: withOption(3) });
     expect(tickets(board, "In Progress")[0]?.loopStage).toEqual({ stage: "qa", since });
     expect(tickets(board, "In Review")[0]).not.toHaveProperty("loopStage");
-    expect(seen.filter((s) => s.tool === "get_issue").map((s) => s.args.issueId)).toEqual([2300]);
+    expect(seen.filter((s) => s.tool === "get_issue").map((s) => s.args.issueId)).toEqual([id]);
+  });
+
+  test("an option labelled by `name`, an optional phase, and a label that is not a stage", async () => {
+    const plan = await progress({ issue: withOption(4) });
+    expect(tickets(plan.board, "In Progress")[0]?.loopStage?.stage).toBe("plan");
+    const odd = await progress({ issue: withOption(5) });
+    expect(tickets(odd.board, "In Progress")[0]).not.toHaveProperty("loopStage");
+  });
+
+  test("the field list is read through execute_read when the direct tool is not there", async () => {
+    const { board, seen } = await progress({ issue: withOption(1), viaExecuteRead: true });
+    expect(tickets(board, "In Progress")[0]?.loopStage?.stage).toBe("develop");
+    expect(seen.some((s) => s.tool === "execute_read")).toBe(true);
   });
 
   test("a failed read, a missing field or an empty field leaves the card without a stage", async () => {
-    writeKey(0o600);
-    const failed = await answerBoard(
-      loop,
-      "CYC",
-      () => {},
-      stagedBoard({ issue: () => new Error("boom") }).fetchImpl,
-    );
-    expect(tickets(failed, "In Progress")).toHaveLength(1);
-    expect(tickets(failed, "In Progress")[0]).not.toHaveProperty("loopStage");
-    const missing = stagedBoard({ fields: [stageField], issue: good });
-    const noField = await answerBoard(loop, "CYC", () => {}, missing.fetchImpl);
-    expect(tickets(noField, "In Progress")[0]).not.toHaveProperty("loopStage");
+    const failed = await progress({ issue: () => new Error("boom") });
+    expect(tickets(failed.board, "In Progress")).toHaveLength(1);
+    expect(tickets(failed.board, "In Progress")[0]).not.toHaveProperty("loopStage");
+    const missing = await progress({ fields: [stageField], issue: withOption(3) });
+    expect(tickets(missing.board, "In Progress")[0]).not.toHaveProperty("loopStage");
     expect(missing.seen.some((s) => s.tool === "get_issue")).toBe(false);
-    const empty = await answerBoard(
-      loop,
-      "CYC",
-      () => {},
-      stagedBoard({ issue: () => ({ fields: [{ name: "Loop 阶段", optionIds: [] }] }) }).fetchImpl,
-    );
-    expect(tickets(empty, "In Progress")[0]).not.toHaveProperty("loopStage");
-    expect(tickets(empty, "Todo")).toHaveLength(1);
+    const empty = await progress({
+      issue: () => ({ fields: [{ name: "Loop 阶段", optionIds: [] }] }),
+    });
+    expect(tickets(empty.board, "In Progress")[0]).not.toHaveProperty("loopStage");
+    expect(tickets(empty.board, "Todo")).toHaveLength(1);
   });
 });

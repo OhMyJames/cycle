@@ -1345,7 +1345,17 @@ export type LoopTicket = {
 };
 
 /** The steps Loop goes through on a ticket, as fixed words (not the tracker's option names). */
-export type LoopStage = "develop" | "verify" | "qa" | "ci" | "review" | "merge";
+export type LoopStage =
+  | "develop"
+  | "verify"
+  | "qa"
+  | "ci"
+  | "review"
+  | "merge"
+  | "research"
+  | "researchQa"
+  | "plan"
+  | "planQa";
 
 export type LoopChat = "new" | "watch" | "none";
 

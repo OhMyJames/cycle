@@ -109,7 +109,7 @@ function TicketStage({ stage }: { stage: NonNullable<LoopTicket["loopStage"]> })
       : t("loop.stage.minutes", { minutes });
   return (
     <span data-slot="loop-ticket-stage" data-slow={ms > STAGE_SLOW_MS ? "true" : undefined}>
-      {t(`loop.stage.${stage.stage}`)} · {length}
+      {t("loop.stage.line", { stage: t(`loop.stage.${stage.stage}`), length })}
     </span>
   );
 }
