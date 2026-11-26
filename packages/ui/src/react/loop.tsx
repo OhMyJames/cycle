@@ -347,14 +347,17 @@ function Column({
   id,
   title,
   tickets,
+  more,
   collapsible,
   pageSize,
   act,
   onOpen,
 }: {
-  id: "doing" | "todo" | "backlog" | "done";
+  id: number;
   title: string;
   tickets: LoopTicket[];
+  /** The column has tickets that are not in the list. */
+  more?: boolean;
   collapsible?: boolean;
   /** Show this many first, and this many more each time asked: for a column that can be very long. */
   pageSize?: number;
@@ -387,7 +390,9 @@ function Column({
         ) : (
           <h3 data-slot="loop-column-title">{title}</h3>
         )}
-        <span data-slot="loop-column-count">{tickets.length}</span>
+        <span data-slot="loop-column-count">
+          {more === true ? `${tickets.length}+` : tickets.length}
+        </span>
       </header>
       {open ? (
         tickets.length === 0 ? (
@@ -525,37 +530,35 @@ function Board({
         />
       ) : null}
       <div data-slot="loop-columns">
-        <Column
-          id="doing"
-          title={t("loop.col.doing")}
-          tickets={answer.doing}
-          act={act}
-          onOpen={openTicket}
-        />
-        <Column
-          id="todo"
-          title={t("loop.col.todo")}
-          tickets={answer.todo}
-          act={act}
-          onOpen={openTicket}
-        />
-        <Column
-          id="backlog"
-          title={t("loop.col.backlog")}
-          tickets={answer.backlog}
-          pageSize={BACKLOG_PAGE}
-          act={act}
-          onOpen={openTicket}
-        />
+        {answer.columns
+          .filter((c) => c.stateType !== "completed")
+          .map((c) => (
+            <Column
+              key={c.id}
+              id={c.id}
+              title={c.name}
+              tickets={c.tickets}
+              more={c.more}
+              {...(c.stateType === "backlog" ? { pageSize: BACKLOG_PAGE } : {})}
+              act={act}
+              onOpen={openTicket}
+            />
+          ))}
       </div>
-      <Column
-        id="done"
-        title={t("loop.col.done")}
-        tickets={answer.done}
-        collapsible
-        act={act}
-        onOpen={openTicket}
-      />
+      {answer.columns
+        .filter((c) => c.stateType === "completed")
+        .map((c) => (
+          <Column
+            key={c.id}
+            id={c.id}
+            title={c.name}
+            tickets={c.tickets}
+            more={c.more}
+            collapsible
+            act={act}
+            onOpen={openTicket}
+          />
+        ))}
     </div>
   );
 }

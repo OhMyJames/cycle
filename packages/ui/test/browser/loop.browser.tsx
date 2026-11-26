@@ -1,7 +1,7 @@
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
-import type { LoopBoardAnswer, LoopProjectInfo } from "../../src/api.ts";
+import type { LoopBoardAnswer, LoopProjectInfo, LoopTicket } from "../../src/api.ts";
 import { fakeBridge } from "../fake-bridge.ts";
 import { renderApp } from "./render-app.tsx";
 
@@ -17,21 +17,40 @@ const docs: LoopProjectInfo = {
   projectKey: "DOC",
   repo: { displayName: "team/docs", forge: "gitlab" },
 };
-const ticket = (n: number, column: string) => ({
+const ticket = (n: number, column: string): LoopTicket => ({
   identifier: `CYC-${n}`,
   title: `Ticket ${n}`,
   priority: "high",
   column,
   actions: [],
-  chat: "none" as const,
+  chat: "none",
+});
+const col = (id: number, name: string, stateType: string, tickets: LoopTicket[]) => ({
+  id,
+  name,
+  stateType,
+  tickets,
+  more: false,
 });
 const board: LoopBoardAnswer = {
   kind: "ok",
-  doing: [ticket(386, "In Progress"), ticket(387, "In Review")],
-  todo: [ticket(388, "Todo")],
-  backlog: [],
-  done: [ticket(300, "Done")],
+  columns: [
+    col(1, "Backlog", "backlog", []),
+    col(2, "Todo", "unstarted", [ticket(388, "Todo")]),
+    col(3, "In Progress", "started", [ticket(386, "In Progress")]),
+    col(4, "Done", "completed", [ticket(300, "Done")]),
+    col(5, "In Review", "started", [ticket(387, "In Review")]),
+    col(6, "Blocked", "started", []),
+  ],
 };
+/** The board with the tickets of the named columns replaced. */
+const withTickets = (tickets: Record<string, LoopTicket[]>): LoopBoardAnswer => ({
+  kind: "ok",
+  columns: (board.kind === "ok" ? board.columns : []).map((c) => ({
+    ...c,
+    tickets: tickets[c.name] ?? c.tickets,
+  })),
+});
 
 const mount = async (script: Parameters<typeof fakeBridge>[0]) => {
   const fake = fakeBridge({ connected: true, ...script });
@@ -47,12 +66,13 @@ test("the Loop page shows a Project's board in three columns, with Done collapse
     loopBoards: { CYC: board },
   });
   expect(await screen.findByRole("tab", { name: /Cycle/ })).toBeTruthy();
-  const doing = await screen.findByRole("region", { name: "Doing" });
-  expect(
-    within(doing)
+  const text = (name: string) =>
+    within(screen.getByRole("region", { name }))
       .getAllByRole("listitem")
-      .map((li) => li.textContent),
-  ).toEqual(["CYC-386Ticket 386In Progress · high", "CYC-387Ticket 387In Review · high"]);
+      .map((li) => li.textContent);
+  await screen.findByRole("region", { name: "In Progress" });
+  expect(text("In Progress")).toEqual(["CYC-386Ticket 386In Progress · high"]);
+  expect(text("In Review")).toEqual(["CYC-387Ticket 387In Review · high"]);
   expect(
     within(screen.getByRole("region", { name: "Todo" })).getAllByRole("listitem"),
   ).toHaveLength(1);
@@ -107,7 +127,7 @@ test("the Backlog opens on 20 tickets and shows more when asked", async () => {
   const fake = fakeBridge({
     connected: true,
     loopProjects: { kind: "ok", projects: [cycle] },
-    loopBoards: { CYC: { ...board, backlog: many } },
+    loopBoards: { CYC: withTickets({ Backlog: many }) },
   });
   await renderApp(fake.bridge);
   await user.click(await screen.findByRole("button", { name: "Loop" }));
@@ -131,7 +151,7 @@ test("Approve asks first; only the confirmation writes, and a failure is said, n
   const fake = fakeBridge({
     connected: true,
     loopProjects: { kind: "ok", projects: [cycle] },
-    loopBoards: { CYC: { ...board, doing: [doing], backlog: [backlog] } },
+    loopBoards: { CYC: withTickets({ "In Progress": [doing], Backlog: [backlog] }) },
     loopAct: { kind: "failed", reason: "forbidden" },
   });
   await renderApp(fake.bridge);
@@ -139,7 +159,7 @@ test("Approve asks first; only the confirmation writes, and a failure is said, n
   const column = await screen.findByRole("region", { name: "Backlog" });
   // Loop's own ticket in Doing has no buttons.
   expect(
-    within(screen.getByRole("region", { name: "Doing" })).queryByRole("button", {
+    within(screen.getByRole("region", { name: "In Progress" })).queryByRole("button", {
       name: /Approve|Back to/,
     }),
   ).toBeNull();
@@ -163,7 +183,7 @@ test("a failed Back to Backlog on the ticket page is said there, and gone after 
   const fake = fakeBridge({
     connected: true,
     loopProjects: { kind: "ok", projects: [cycle] },
-    loopBoards: { CYC: { ...board, doing: [mine] } },
+    loopBoards: { CYC: withTickets({ "In Progress": [mine] }) },
     loopTickets: {
       "CYC-602": {
         kind: "ok",
@@ -193,7 +213,10 @@ const openTicketPage = async (
     connected: true,
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: {
-      CYC: { ...board, backlog: chat === "new" ? [mine] : [], doing: chat === "new" ? [] : [mine] },
+      CYC: withTickets({
+        Backlog: chat === "new" ? [mine] : [],
+        "In Progress": chat === "new" ? [] : [mine],
+      }),
     },
     loopTickets: {
       "CYC-700": { kind: "ok", ticket: { ...mine, body: "text", acceptance: [], links: [] } },
@@ -261,4 +284,13 @@ test("leaving the Loop and coming back lands on the level it was left on", async
   await waitFor(() => expect(document.querySelector('[data-kind="loop-board"]')).toBeNull());
   await user.click(await screen.findByRole("button", { name: "Loop" }));
   await screen.findByRole("button", { name: "Ticket 700" });
+});
+
+test("the board shows the columns by name, in the order they come", async () => {
+  await mount({ loopProjects: { kind: "ok", projects: [cycle] }, loopBoards: { CYC: board } });
+  await screen.findByRole("region", { name: "In Review" });
+  const names = [...document.querySelectorAll('[data-slot="loop-column"]')].map((e) =>
+    e.getAttribute("aria-label"),
+  );
+  expect(names).toEqual(["Backlog", "Todo", "In Progress", "In Review", "Blocked", "Done"]);
 });

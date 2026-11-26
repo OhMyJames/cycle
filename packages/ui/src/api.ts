@@ -1414,18 +1414,17 @@ export type LoopTicketAnswer =
   | { kind: "no_key" }
   | { kind: "unreachable" };
 
-/**
- * The columns are chosen by the kind of state, never by name: `doing` is every started column, `todo` every unstarted
- * one, `backlog` the backlog, `done` the completed ones (the newest few).
- */
+/** One column of the Project's board, as itsaplan has it. `more`: the column has tickets that are not listed (a completed column lists the newest 20). */
+export type LoopBoardColumn = {
+  id: number;
+  name: string;
+  stateType: string;
+  tickets: LoopTicket[];
+  more: boolean;
+};
+/** The Project's columns in the tracker's board order, Canceled left out. */
 export type LoopBoardAnswer =
-  | {
-      kind: "ok";
-      doing: LoopTicket[];
-      todo: LoopTicket[];
-      backlog: LoopTicket[];
-      done: LoopTicket[];
-    }
+  | { kind: "ok"; columns: LoopBoardColumn[] }
   /** There is no key file, or it is readable by others. */
   | { kind: "no_key" }
   /** The tracker did not answer, or refused the key. */
