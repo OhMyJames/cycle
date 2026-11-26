@@ -3,11 +3,16 @@
 import { chmodSync, rmSync } from "node:fs";
 import { connect, createServer, type Server } from "node:net";
 import { createInterface } from "node:readline";
-import { LOOP_PROJECTS_LIST } from "@cycle/protocol";
+import { LOOP_PROJECTS_LIST, LOOP_RUNS_LIST } from "@cycle/protocol";
 import type { Config } from "./config.ts";
 import { projectsList } from "./projects.ts";
+import { runsList, type StateDirOf } from "./runs.ts";
 
-const answer = (config: Config, line: string): string | undefined => {
+const answer = async (
+  config: Config,
+  line: string,
+  stateDirOf: StateDirOf,
+): Promise<string | undefined> => {
   let id: unknown = null;
   try {
     const message = JSON.parse(line) as { id?: unknown; method?: unknown };
@@ -17,6 +22,17 @@ const answer = (config: Config, line: string): string | undefined => {
     if (message.id === undefined) return undefined;
     if (message.method === LOOP_PROJECTS_LIST)
       return JSON.stringify({ jsonrpc: "2.0", id, result: projectsList(config) });
+    if (message.method === LOOP_RUNS_LIST) {
+      try {
+        return JSON.stringify({ jsonrpc: "2.0", id, result: await runsList(config, stateDirOf) });
+      } catch {
+        return JSON.stringify({
+          jsonrpc: "2.0",
+          id,
+          error: { code: -32603, message: "Internal error" },
+        });
+      }
+    }
     return JSON.stringify({
       jsonrpc: "2.0",
       id,
@@ -38,7 +54,11 @@ const alive = (socketPath: string): Promise<boolean> =>
     probe.once("error", () => resolve(false));
   });
 
-export const listen = async (config: Config, socketPath: string): Promise<Server> => {
+export const listen = async (
+  config: Config,
+  socketPath: string,
+  stateDirOf: StateDirOf = () => undefined,
+): Promise<Server> => {
   if (await alive(socketPath)) throw new Error("already_running");
   return new Promise((resolve, reject) => {
     rmSync(socketPath, { force: true });
@@ -48,8 +68,9 @@ export const listen = async (config: Config, socketPath: string): Promise<Server
       socket.on("error", () => {});
       createInterface({ input: socket }).on("line", (line) => {
         if (line.trim() === "") return;
-        const reply = answer(config, line);
-        if (reply !== undefined) socket.write(`${reply}\n`);
+        void answer(config, line, stateDirOf).then((reply) => {
+          if (reply !== undefined && !socket.destroyed) socket.write(`${reply}\n`);
+        });
       });
     });
     server.once("error", reject);
