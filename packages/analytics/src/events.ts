@@ -83,6 +83,22 @@ export const EVENTS = {
   analytics_toggled: o({ enabled: z.boolean() }),
   /** The Loop page read a Project's board: how it came out, never what is on it. */
   loop_board_read: o({ result: z.enum(["ok", "no_key", "unreachable"]) }),
+  /** The person opened a ticket's page on the Loop page. */
+  loop_ticket_opened: o({}),
+  /** The person pressed a state button on the Loop page: which, and how it came out; never which ticket. */
+  loop_ticket_acted: o({
+    action: z.enum(["approve", "to_backlog", "to_todo"]),
+    result: z.enum([
+      "ok",
+      "unconfirmed",
+      "no_key",
+      "forbidden",
+      "conflict",
+      "not_allowed",
+      "offline",
+      "refused",
+    ]),
+  }),
   /** The person asked to check for an update. */
   update_checked: o({ result: z.enum(["available", "up_to_date", "error", "disabled"]) }),
   update_install_started: o({}),

@@ -1,21 +1,22 @@
 #!/usr/bin/env bun
 // bun tools/auto-loop/src/cli.ts [--once] [--dry-run] [--interval SECONDS]
-// bun tools/auto-loop/src/cli.ts stats
+// bun tools/auto-loop/src/cli.ts stats [--project KEY]
 //
-// Environment: AUTO_LOOP_PLAN_KEY (required), AUTO_LOOP_PLAN_URL, AUTO_LOOP_PROJECT (default CYC),
-// AUTO_LOOP_TYPE_IDS (comma-separated issue type ids, default 20,25), AUTO_LOOP_STATE (default <dataDir>/auto-loop),
-// AUTO_LOOP_DEV_AGENT / AUTO_LOOP_QA_AGENT / AUTO_LOOP_REVIEW_AGENT (agent id of each session, default claude),
-// CYCLE_HOME / CYCLE_SOCKET for the daemon.
+// Configuration is a file (mode 0600), not environment variables: --config <path>, or <dataDir>/auto-loop.json.
+// See config-file.ts for the fields. CYCLE_HOME / CYCLE_SOCKET still locate the daemon.
 
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { type ConfigFile, loadConfigFiles } from "./config-file.ts";
+import { runLoops } from "./loop.ts";
 import { Pipeline } from "./pipeline.ts";
 import { PlanTracker } from "./plan-mcp.ts";
+import { resolveProject } from "./project.ts";
 import { runCommand } from "./runner.ts";
 import { DaemonSessions } from "./sessions.ts";
 import { computeStats } from "./stats.ts";
 import { acquireLock, RunStore } from "./store.ts";
-import { defaultConfig, parseAllowedTypeIds } from "./types.ts";
+import { defaultConfig } from "./types.ts";
 
 const args = process.argv.slice(2);
 const flag = (name: string) => args.includes(name);
@@ -25,112 +26,124 @@ const value = (name: string) => {
 };
 
 const dataDir = process.env.CYCLE_HOME ?? join(homedir(), ".cycle");
-const stateDir = resolve(process.env.AUTO_LOOP_STATE ?? join(dataDir, "auto-loop"));
+const configPath = resolve(value("--config") ?? join(dataDir, "auto-loop.json"));
+const files = await loadConfigFiles(configPath).catch((error: unknown) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(2);
+});
 const clock = { now: () => new Date() };
 const log = (line: string) => console.log(`${new Date().toISOString()} ${line}`);
 
 if (args[0] === "stats") {
-  const events = await new RunStore(stateDir, clock.now).events();
+  const wanted = value("--project");
+  const chosen = wanted === undefined ? files : files.filter((f) => f.projectKey === wanted);
+  const [only] = chosen;
+  if (chosen.length !== 1 || only === undefined) {
+    console.error(
+      `stats needs one Project: pass --project <key> (one of ${files.map((f) => f.projectKey).join(", ")}).`,
+    );
+    process.exit(2);
+  }
+  const events = await new RunStore(only.stateDir, clock.now).events();
   console.log(JSON.stringify(computeStats(events), null, 2));
   process.exit(0);
 }
-
-const key = process.env.AUTO_LOOP_PLAN_KEY;
-if (key === undefined || key === "") {
-  console.error("AUTO_LOOP_PLAN_KEY is not set.");
-  process.exit(2);
-}
-const repoRoot = resolve(import.meta.dir, "../../..");
-const rawTypeIds = process.env.AUTO_LOOP_TYPE_IDS;
-const allowedTypeIds =
-  rawTypeIds !== undefined && rawTypeIds.trim() !== ""
-    ? parseAllowedTypeIds(rawTypeIds)
-    : undefined;
-const agentFromEnv = (name: string): string | undefined => {
-  const value = process.env[name]?.trim();
-  return value === undefined || value === "" ? undefined : value;
-};
-const devAgent = agentFromEnv("AUTO_LOOP_DEV_AGENT");
-const qaAgent = agentFromEnv("AUTO_LOOP_QA_AGENT");
-const reviewAgent = agentFromEnv("AUTO_LOOP_REVIEW_AGENT");
-const config = {
-  ...defaultConfig({ repoRoot, stateDir }),
-  ...(devAgent !== undefined ? { devAgent } : {}),
-  ...(qaAgent !== undefined ? { qaAgent } : {}),
-  ...(reviewAgent !== undefined ? { reviewAgent } : {}),
-  ...(allowedTypeIds !== undefined ? { allowedTypeIds } : {}),
-  dryRun: flag("--dry-run"),
-};
-const tracker = new PlanTracker({
-  url: process.env.AUTO_LOOP_PLAN_URL ?? "https://plan.ops.shrimpdot.ai/api/mcp",
-  key,
-  projectKey: process.env.AUTO_LOOP_PROJECT ?? "CYC",
-  columns: config.columns,
-});
-const store = new RunStore(stateDir, clock.now);
-const release = config.dryRun ? async () => {} : await acquireLock(stateDir);
-const sessions = new DaemonSessions(
-  process.env.CYCLE_SOCKET ?? join(dataDir, "daemon.sock"),
-  (sessionId, title) => {
-    log(`waiting for a person in session ${sessionId}: ${title}`);
-    void store.unfinished().then((runs) => {
-      const run = runs.find(
-        (r) =>
-          r.devSessionId === sessionId ||
-          r.qaSessionId === sessionId ||
-          r.reviewSessionId === sessionId,
-      );
-      if (run !== undefined) return store.event(run.key, "permission_pending");
-    });
-  },
-);
-if (!config.dryRun) await sessions.start();
-const pipeline = new Pipeline({
-  config,
-  tracker,
-  sessions,
-  exec: runCommand,
-  store,
-  clock,
-  log,
-  env: process.env,
-});
 
 const seconds = Number(value("--interval") ?? 60);
 if (!Number.isFinite(seconds) || seconds <= 0) {
   console.error("--interval takes a number of seconds above 0.");
   process.exit(2);
 }
-const interval = seconds * 1000;
+const once = flag("--once") || flag("--dry-run");
+const dryRun = flag("--dry-run");
 let stop = false;
+
+// Everything one Project owns: tracker, store, lock, daemon connection, pipeline.
+const setUp = async (file: ConfigFile) => {
+  const { stateDir } = file;
+  const name = file.projectKey;
+  const plog = (line: string) => log(`[${name}] ${line}`);
+  const tracker = new PlanTracker({
+    url: file.planUrl,
+    key: file.planKey,
+    projectKey: file.projectKey,
+  });
+  const setup = resolveProject(await tracker.getProject(), file);
+  tracker.setColumns(setup.columns);
+  const config = {
+    ...defaultConfig({ repoRoot: file.repoRoot, stateDir, ...setup }),
+    ...(file.devAgent !== undefined ? { devAgent: file.devAgent } : {}),
+    ...(file.qaAgent !== undefined ? { qaAgent: file.qaAgent } : {}),
+    ...(file.reviewAgent !== undefined ? { reviewAgent: file.reviewAgent } : {}),
+    dryRun,
+  };
+  const store = new RunStore(stateDir, clock.now);
+  const release = dryRun ? async () => {} : await acquireLock(stateDir);
+  const sessions = new DaemonSessions(
+    process.env.CYCLE_SOCKET ?? join(dataDir, "daemon.sock"),
+    (sessionId, title) => {
+      plog(`waiting for a person in session ${sessionId}: ${title}`);
+      void store.unfinished().then((runs) => {
+        const run = runs.find(
+          (r) =>
+            r.devSessionId === sessionId ||
+            r.qaSessionId === sessionId ||
+            r.reviewSessionId === sessionId,
+        );
+        if (run !== undefined) return store.event(run.key, "permission_pending");
+      });
+    },
+  );
+  if (!dryRun) await sessions.start();
+  const pipeline = new Pipeline({
+    config,
+    tracker,
+    sessions,
+    exec: runCommand,
+    store,
+    clock,
+    log: plog,
+    env: process.env,
+  });
+  const close = async () => {
+    await release();
+    if (!dryRun) await sessions.close();
+  };
+  return { name, pipeline, release, close };
+};
+
+// Set up every Project before any loop starts, so a bad one stops the process rather than half of it.
+const projects: Awaited<ReturnType<typeof setUp>>[] = [];
+try {
+  for (const file of files) projects.push(await setUp(file));
+} catch (error) {
+  for (const p of projects) await p.close().catch(() => {});
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
+
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
     // The first asks to stop after this step; the second leaves now. A killed loop is picked up again on restart.
     if (stop) {
-      void release().finally(() => process.exit(130));
+      void Promise.allSettled(projects.map((p) => p.release())).finally(() => process.exit(130));
     }
     stop = true;
     log("stopping after this step (again to leave now)");
   });
 }
 try {
-  do {
-    let pause = false;
-    try {
-      const result = await pipeline.step();
-      log(JSON.stringify(result));
-      pause = result.status === "idle";
-    } catch (error) {
-      if (flag("--once") || config.dryRun) throw error;
-      // A tracker or daemon hiccup must not end an unattended loop: log it, wait, try again.
-      log(`step failed: ${error instanceof Error ? error.message : String(error)}`);
-      pause = true;
-    }
-    if (flag("--once") || config.dryRun) break;
-    if (pause && !stop) await Bun.sleep(interval);
-  } while (!stop);
+  await runLoops(
+    projects.map((p) => ({
+      name: p.name,
+      step: () => p.pipeline.step(),
+      once,
+      intervalMs: seconds * 1000,
+      log,
+      stopped: () => stop,
+    })),
+  );
 } finally {
-  await release();
-  if (!config.dryRun) await sessions.close();
+  await Promise.allSettled(projects.map((p) => p.close()));
 }
 process.exit(0);

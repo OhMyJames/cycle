@@ -675,7 +675,7 @@
   white-space: pre-wrap;
 }
 
-/* The Loop page (CYC-386): a Project's board, read only. Three columns side by side; Done is under them, collapsed. */
+/* The Loop page (CYC-386): a Project's board. Three columns side by side; Done is under them, collapsed. */
 [data-kind="loop-board"] {
   display: flex;
   flex-direction: column;
@@ -770,5 +770,53 @@
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+  font-size: var(--cycle-text-ui);
+}
+
+button[data-slot="loop-ticket-title"] {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+[data-slot="loop-ticket-actions"] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+[data-slot="loop-problem"] {
+  margin: 0;
+  color: var(--cycle-ink-secondary);
+  font-size: var(--cycle-text-meta);
+}
+
+[data-kind="loop-ticket-page"] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1.5rem var(--cycle-column-pad) 2rem;
+}
+
+[data-slot="loop-detail-title"] {
+  margin: 0;
+  font-size: var(--cycle-text-ui);
+  font-weight: 600;
+}
+
+[data-slot="loop-detail-section"] h4 {
+  margin: 0 0 0.25rem;
+  font-size: var(--cycle-text-ui);
+}
+
+[data-slot="loop-detail-body"] {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
   font-size: var(--cycle-text-ui);
 }

@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test";
 import { toIssue } from "../src/plan-mcp.ts";
 import { pickNext } from "../src/select.ts";
-import { parseAllowedTypeIds } from "../src/types.ts";
 import { config, issue } from "./helpers.ts";
 
 const cfg = config();
@@ -189,13 +188,4 @@ test("toIssue reads blockers from links: only inward blocks count; missing links
   const missing = toIssue(base, "CYC");
   expect(missing.blockerColumnIds).toBeNull();
   expect(pickNext([missing], cfg)).toBeUndefined();
-});
-
-test("parseAllowedTypeIds parses valid comma-separated ids and rejects invalid values", () => {
-  expect(parseAllowedTypeIds("20, 25")).toEqual([20, 25]);
-  expect(parseAllowedTypeIds("101")).toEqual([101]);
-  expect(() => parseAllowedTypeIds("")).toThrow();
-  expect(() => parseAllowedTypeIds("20,abc")).toThrow();
-  expect(() => parseAllowedTypeIds("0")).toThrow();
-  expect(() => parseAllowedTypeIds("-5")).toThrow();
 });

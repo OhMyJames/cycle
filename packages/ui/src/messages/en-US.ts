@@ -665,7 +665,30 @@ export const enUS = {
   "loop.noProjects.body":
     "The Loop server has no Projects. Add one to its loop.json file, then read again.",
   "loop.more": "Show {count} more",
-  "loop.readOnly": "Read only",
+  "loop.act.approve": "Approve",
+  "loop.act.to_backlog": "Back to Backlog",
+  "loop.act.to_todo": "Back to Todo",
+  "loop.approve.title": "Approve {id}?",
+  "loop.approve.body":
+    "It moves to Todo and gets the auto label, so Loop can take it on its next round.",
+  "loop.hint": "Change a ticket state with its buttons.",
+  "loop.fail.unconfirmed": "Not approved: it was not confirmed.",
+  "loop.fail.no_key": "Nothing was changed: there is no itsaplan key.",
+  "loop.fail.forbidden": "Nothing was changed: itsaplan did not accept your key for this.",
+  "loop.fail.conflict":
+    "Nothing was changed: the ticket was changed meanwhile. Read the board again.",
+  "loop.fail.not_allowed":
+    "Nothing was changed: the ticket is no longer where it was. Read the board again.",
+  "loop.fail.offline":
+    "Nothing was changed: itsaplan could not be reached. Check the connection and try again.",
+  "loop.fail.refused": "Nothing was changed: itsaplan refused the change.",
+  "loop.detail.back": "Back to the board",
+  "loop.detail.loading": "Reading the ticket",
+  "loop.detail.failed": "Could not read the ticket",
+  "loop.detail.body": "Text",
+  "loop.detail.acceptance": "Acceptance criteria",
+  "loop.detail.links": "Pull and merge requests",
+  "loop.detail.none": "None",
   // Connectors: MCP servers the daemon keeps for every agent (docs/protocol.md §14)
   "connectors.open": "Connectors",
   "connectors.title": "Connectors",

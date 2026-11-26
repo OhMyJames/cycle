@@ -171,6 +171,8 @@ test.skipIf(!ready)(
           "removeProvider",
           "listVault",
           "loopBoard",
+          "loopTicket",
+          "loopAct",
           "loopProjects",
           "setVaultItem",
           "removeVaultItem",

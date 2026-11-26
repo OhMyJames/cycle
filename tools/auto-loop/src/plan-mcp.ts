@@ -1,4 +1,4 @@
-// `Tracker` over the Itsaplan MCP endpoint (JSON-RPC `tools/call`). The key comes from the environment and goes nowhere
+// `Tracker` over the Itsaplan MCP endpoint (JSON-RPC `tools/call`). The key comes from the config file and goes nowhere
 // else: not into a session, not into a command's environment, not into a log line.
 //
 // `get_issue_by_number` on infra.CYC returns `typeId` and `subtasks` (`{ id, sequenceNumber, identifier, title,
@@ -68,18 +68,34 @@ export class PlanTracker implements Tracker {
   readonly #url: string;
   readonly #key: string;
   readonly #project: string;
-  readonly #columns: Config["columns"];
+  #columns: Config["columns"] | undefined;
 
+  /** `columns` may be left out until `setColumns` is called with what `get_project` resolved. */
   constructor(options: {
     url: string;
     key: string;
     projectKey: string;
-    columns: Config["columns"];
+    columns?: Config["columns"];
   }) {
     this.#url = options.url;
     this.#key = options.key;
     this.#project = options.projectKey;
     this.#columns = options.columns;
+  }
+
+  setColumns(columns: Config["columns"]): void {
+    this.#columns = columns;
+  }
+
+  #column(stage: Stage): number {
+    const id = this.#columns?.[stage];
+    if (id === undefined) throw new Error("the project's columns are not resolved yet");
+    return id;
+  }
+
+  /** The project's setup: columns, issue types, labels (`get_project`). */
+  async getProject(): Promise<unknown> {
+    return this.#call("get_project", { projectKey: this.#project });
   }
 
   async #call(name: string, args: Record<string, unknown>): Promise<unknown> {
@@ -125,7 +141,7 @@ export class PlanTracker implements Tracker {
     const listed = asRecord(
       await this.#call("list_issues", {
         projectKey: this.#project,
-        columnId: this.#columns.todo,
+        columnId: this.#column("todo"),
         limit: 100,
       }),
     );
@@ -159,7 +175,7 @@ export class PlanTracker implements Tracker {
   }
 
   async move(issue: Issue, stage: Stage): Promise<void> {
-    await this.#call("update_issue", { issueId: issue.id, columnId: this.#columns[stage] });
+    await this.#call("update_issue", { issueId: issue.id, columnId: this.#column(stage) });
   }
 
   async comment(issue: Issue, text: string): Promise<void> {

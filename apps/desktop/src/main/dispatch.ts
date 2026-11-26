@@ -22,6 +22,8 @@ export const MAIN_METHODS = [
   "signOut",
   "loopProjects",
   "loopBoard",
+  "loopTicket",
+  "loopAct",
 ] as const satisfies readonly ApiMethod[];
 
 export type MainMethod = (typeof MAIN_METHODS)[number];
