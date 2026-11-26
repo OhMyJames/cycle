@@ -1,6 +1,6 @@
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
-import { userEvent } from "vitest/browser";
+import { page, userEvent } from "vitest/browser";
 import type { LoopBoardAnswer, LoopProjectInfo, LoopTicket } from "../../src/api.ts";
 import { fakeBridge } from "../fake-bridge.ts";
 import { renderApp } from "./render-app.tsx";
@@ -60,7 +60,7 @@ const mount = async (script: Parameters<typeof fakeBridge>[0]) => {
   return { user, ...fake };
 };
 
-test("the Loop page shows a Project's board in three columns, with Done collapsed", async () => {
+test("the Loop page shows a Project's board as a row of columns, with Done collapsed", async () => {
   const { user, calls } = await mount({
     loopProjects: { kind: "ok", projects: [cycle, docs] },
     loopBoards: { CYC: board },
@@ -71,8 +71,8 @@ test("the Loop page shows a Project's board in three columns, with Done collapse
       .getAllByRole("listitem")
       .map((li) => li.textContent);
   await screen.findByRole("region", { name: "In Progress" });
-  expect(text("In Progress")).toEqual(["CYC-386Ticket 386In Progress · high"]);
-  expect(text("In Review")).toEqual(["CYC-387Ticket 387In Review · high"]);
+  expect(text("In Progress")).toEqual(["CYC-386highTicket 386"]);
+  expect(text("In Review")).toEqual(["CYC-387highTicket 387"]);
   expect(
     within(screen.getByRole("region", { name: "Todo" })).getAllByRole("listitem"),
   ).toHaveLength(1);
@@ -392,5 +392,73 @@ test("the board shows the columns by name, in the order they come", async () => 
   const names = [...document.querySelectorAll('[data-slot="loop-column"]')].map((e) =>
     e.getAttribute("aria-label"),
   );
-  expect(names).toEqual(["Backlog", "Todo", "In Progress", "In Review", "Blocked", "Done"]);
+  expect(names).toEqual(["Backlog", "Todo", "In Progress", "Done", "In Review", "Blocked"]);
+});
+
+test("the board is a row of columns: cards are not draggable, there is no move menu, and Done shows its count folded", async () => {
+  await mount({ loopProjects: { kind: "ok", projects: [cycle] }, loopBoards: { CYC: board } });
+  await screen.findByRole("region", { name: "In Review" });
+  expect(document.querySelectorAll("[draggable='true']")).toHaveLength(0);
+  expect(screen.queryByText(/Move to/i)).toBeNull();
+  expect(screen.queryByRole("menu")).toBeNull();
+  const done = screen.getByRole("region", { name: "Done" });
+  expect(within(done).getByText("1")).toBeTruthy();
+  expect(within(done).queryByRole("listitem")).toBeNull();
+  const tops = [...document.querySelectorAll('[data-slot="loop-column"]')].map(
+    (e) => e.getBoundingClientRect().top,
+  );
+  expect(new Set(tops).size).toBe(1);
+});
+
+test("a card opens its ticket, a button on it does not, and cancelling Approve writes nothing", async () => {
+  const backlog = {
+    ...ticket(600, "Backlog"),
+    actions: ["approve" as const],
+    chat: "new" as const,
+  };
+  const { user, calls } = await mount({
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: { CYC: withTickets({ Backlog: [backlog] }) },
+  });
+  const column = await screen.findByRole("region", { name: "Backlog" });
+  await user.click(within(column).getByRole("button", { name: "Approve CYC-600" }));
+  const dialog = await screen.findByRole("alertdialog");
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(calls.some(([name]) => name === "loopAct")).toBe(false);
+  expect(screen.queryByText("Back to board")).toBeNull();
+  expect(document.querySelector('[data-kind="loop-ticket-page"]')).toBeNull();
+  await user.click(within(column).getByRole("button", { name: "Ticket 600" }));
+  await waitFor(() => expect(calls.some(([name]) => name === "loopTicket")).toBe(true));
+});
+
+test("at 720px the page has no sideways scrollbar and the columns scroll by themselves", async () => {
+  await page.viewport(720, 800);
+  await mount({ loopProjects: { kind: "ok", projects: [cycle] }, loopBoards: { CYC: board } });
+  await screen.findByRole("region", { name: "In Review" });
+  const strip = document.querySelector<HTMLElement>('[data-slot="loop-columns"]');
+  if (strip === null) throw new Error("no columns");
+  const root = document.documentElement;
+  const body = document.querySelector<HTMLElement>('[data-slot="page-body"]');
+  expect(root.scrollWidth).toBeLessThanOrEqual(root.clientWidth);
+  expect(body === null || body.scrollWidth <= body.clientWidth).toBe(true);
+  expect(strip.scrollWidth).toBeGreaterThan(strip.clientWidth);
+  strip.scrollLeft = 40;
+  expect(strip.scrollLeft).toBeGreaterThan(0);
+});
+
+test("while the board is read each column shows skeleton cards", async () => {
+  const fake = fakeBridge({
+    connected: true,
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: { CYC: board },
+  });
+  const never = new Promise<LoopBoardAnswer>(() => {});
+  fake.bridge.loopBoard = () => never;
+  await renderApp(fake.bridge);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  await waitFor(() =>
+    expect(document.querySelectorAll('[data-slot="loop-column"][data-skeleton]').length).toBe(3),
+  );
+  expect(document.querySelectorAll('[data-slot="loop-ticket"][data-skeleton]').length).toBe(9);
 });
