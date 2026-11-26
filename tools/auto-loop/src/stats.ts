@@ -12,11 +12,32 @@ export type Stats = {
   interventionRate: number;
   /** Runs that needed at least one fix round, out of the runs that reached a check. */
   reworkRate: number;
+  /** Out of the runs started: delivered with `autoMerge: true` and no intervention (permission_pending, blocked, resumed) and no failure or rework (round_failed, ci_failed) at any point. */
+  firstPassRate: number;
+  /** Each `round_failed`, classed by the event just before it in its run (verify, qa_turn → qa, ci_failed → ci, review_decided → review, anything else → other): `events` is the count, `runs` the distinct runs with at least one. */
+  reworkByStage: Record<ReworkStage, { events: number; runs: number }>;
+  /** Milliseconds from the first `claimed` to the first `delivered` of each delivered run (never below 0), nearest-rank percentiles (the value at rank ceil(p·n) of the sorted list). `null` when no run was delivered. Includes time a run was blocked; for a run not auto-merged, `delivered` is written when the pull request opens, for an auto-merged one after the merge. */
+  durationMs: { median: number | null; p90: number | null };
   /** When each delivered run's pull request was opened: its review time is the time from here to its merge. */
   delivery: { run: string; at: string; prUrl: string }[];
   /** The requests the Loop left to a person or refused, by kind and command prefix: the ones a person allowed most first, at most 10 (CYC-423). Empty when there are none. */
   permissions: PermissionRow[];
 };
+
+export type ReworkStage = "verify" | "qa" | "ci" | "review" | "other";
+
+const STAGE_OF: Record<string, ReworkStage> = {
+  verify: "verify",
+  qa_turn: "qa",
+  ci_failed: "ci",
+  review_decided: "review",
+};
+
+const FAILURES = new Set(["round_failed", "ci_failed"]);
+
+/** Nearest-rank percentile of an ascending list; `null` when empty. */
+const percentile = (sorted: number[], p: number): number | null =>
+  sorted.length === 0 ? null : (sorted[Math.max(0, Math.ceil(p * sorted.length) - 1)] ?? null);
 
 export type PermissionRow = {
   kind: string;
@@ -84,13 +105,34 @@ export const computeStats = (events: LoopEvent[]): Stats => {
   let intervened = 0;
   let checked = 0;
   let reworked = 0;
+  let firstPass = 0;
+  const reworkByStage: Stats["reworkByStage"] = {
+    verify: { events: 0, runs: 0 },
+    qa: { events: 0, runs: 0 },
+    ci: { events: 0, runs: 0 },
+    review: { events: 0, runs: 0 },
+    other: { events: 0, runs: 0 },
+  };
+  const durations: number[] = [];
   const delivery: Stats["delivery"] = [];
   for (const [run, list] of byRun) {
     if (!list.some((e) => e.kind === "claimed")) continue;
     const helped = list.some((e) => INTERVENTIONS.has(e.kind));
     const done = list.find((e) => e.kind === "delivered");
     if (helped) intervened++;
+    const seen = new Set<ReworkStage>();
+    list.forEach((e, i) => {
+      if (e.kind !== "round_failed") return;
+      const stage = STAGE_OF[list[i - 1]?.kind ?? ""] ?? "other";
+      reworkByStage[stage].events++;
+      seen.add(stage);
+    });
+    for (const stage of seen) reworkByStage[stage].runs++;
     if (done !== undefined) {
+      const ms = Date.parse(done.ts) - Date.parse(list.find((e) => e.kind === "claimed")?.ts ?? "");
+      if (Number.isFinite(ms)) durations.push(Math.max(0, ms));
+      if (done.autoMerge === true && !helped && !list.some((e) => FAILURES.has(e.kind)))
+        firstPass++;
       delivered++;
       if (done.autoMerge === true) {
         autoMerged++;
@@ -104,6 +146,7 @@ export const computeStats = (events: LoopEvent[]): Stats => {
     }
   }
   const runs = Array.from(byRun.values()).filter((l) => l.some((e) => e.kind === "claimed")).length;
+  const sortedDurations = [...durations].sort((a, b) => a - b);
   return {
     runs,
     delivered,
@@ -111,6 +154,12 @@ export const computeStats = (events: LoopEvent[]): Stats => {
     autonomousCompletionRate: rate(autonomous, runs),
     interventionRate: rate(intervened, runs),
     reworkRate: rate(reworked, checked),
+    firstPassRate: rate(firstPass, runs),
+    reworkByStage,
+    durationMs: {
+      median: percentile(sortedDurations, 0.5),
+      p90: percentile(sortedDurations, 0.9),
+    },
     delivery,
     permissions: permissionRows(events),
   };

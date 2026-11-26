@@ -261,3 +261,46 @@ test("stats: events of two runs written interleaved give the same result as in r
   const mixed = computeStats([b[0], a[0], a[1], b[1], b[2], a[2], b[3]] as LoopEvent[]);
   expect(mixed).toEqual(inOrder);
 });
+
+test("stats: first pass rate, rework by stage and duration percentiles", () => {
+  const at = (min: number) => new Date(Date.UTC(2026, 10, 25, 0, min)).toISOString();
+  const ev: LoopEvent[] = [];
+  const add = (run: string, min: number, kind: string, extra: Record<string, boolean> = {}) =>
+    ev.push({ ts: at(min), run, kind, ...extra });
+  // A: clean. B: auto rework then merged. C: human help then merged. D: not auto-merged. E: undelivered.
+  add("A", 0, "claimed");
+  add("A", 10, "delivered", { autoMerge: true });
+  add("B", 0, "claimed");
+  add("B", 1, "verify");
+  add("B", 2, "round_failed");
+  add("B", 3, "qa_turn");
+  add("B", 4, "round_failed");
+  add("B", 5, "ci_failed");
+  add("B", 6, "round_failed");
+  add("B", 20, "delivered", { autoMerge: true });
+  add("C", 0, "claimed");
+  add("C", 1, "blocked");
+  add("C", 2, "review_decided");
+  add("C", 3, "round_failed");
+  add("C", 4, "resumed");
+  add("C", 5, "round_failed");
+  add("C", 30, "delivered", { autoMerge: true });
+  add("D", 0, "claimed");
+  add("D", 40, "delivered", { autoMerge: false });
+  add("E", 0, "claimed");
+  add("E", 1, "verify");
+  add("E", 2, "round_failed");
+  const s = computeStats(ev);
+  expect(s.firstPassRate).toBe(1 / 5);
+  expect(s.reworkByStage).toEqual({
+    verify: { events: 2, runs: 2 },
+    qa: { events: 1, runs: 1 },
+    ci: { events: 1, runs: 1 },
+    review: { events: 1, runs: 1 },
+    other: { events: 1, runs: 1 },
+  });
+  const min = 60_000;
+  expect(s.durationMs).toEqual({ median: 20 * min, p90: 40 * min });
+  expect(computeStats([]).durationMs).toEqual({ median: null, p90: null });
+  expect(computeStats([]).firstPassRate).toBe(0);
+});
