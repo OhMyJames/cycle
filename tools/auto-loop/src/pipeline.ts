@@ -154,6 +154,8 @@ export class Pipeline {
   /** The `tuning` in force for new steps: the last one that was read and valid. */
   #tuning: Tuning;
   #lastTuningProblem: string | null = null;
+  /** `node_modules_kept` events already written, by run, CI round and reason; a run's entries go when it ends. */
+  readonly #keptNoted = new Set<string>();
   /** The config one step runs with, fixed when it starts: a change to the file does not reach a step under way. */
   readonly #stepConfig = new AsyncLocalStorage<Config>();
   /** Keys of the runs some step is working on now. */
@@ -302,6 +304,7 @@ export class Pipeline {
       round: 0,
       ciRound: 0,
       ciFailedSha: null,
+      nodeModulesReleased: false,
       conflictRound: 0,
       conflict: null,
       resolvedFiles: [],
@@ -555,6 +558,7 @@ export class Pipeline {
 
   /** Delivery or Blocked: clears the phase, waits a short while for it to land, and forgets the run. */
   async #clear(run: RunRecord, issue: Issue): Promise<void> {
+    for (const id of this.#keptNoted) if (id.startsWith(`${run.key}:`)) this.#keptNoted.delete(id);
     this.#mirror(run, issue, null);
     const queue = this.#queues.get(run.key);
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -1135,14 +1139,92 @@ export class Pipeline {
     // A worktree made now has no node_modules.
     worktree = this.#need(worktree === "" ? undefined : worktree);
     const before = fresh ? await this.#freeKb(worktree) : undefined;
+    await this.#install(worktree);
+    if (fresh) await this.#recordInstall(run.key, worktree, before);
+    await save({ phase: "dev", nodeModulesReleased: false });
+  }
+
+  /** Installs again when `node_modules` was released; an install that fails is Blocked. */
+  async #restoreNodeModules(
+    run: RunRecord,
+    worktree: string,
+    save: (patch: Partial<RunRecord>) => Promise<void>,
+  ): Promise<void> {
+    if (!run.nodeModulesReleased) return;
+    await this.#install(worktree);
+    await save({ nodeModulesReleased: false });
+    await this.#d.store.event(run.key, "node_modules_restored");
+  }
+
+  async #install(worktree: string): Promise<void> {
     const installed = await this.#d.exec(["bun", "install"], {
+      cwd: worktree,
+      env: verifyEnv(this.#d.env),
+      timeoutMs: this.#d.config.commandTimeoutMs,
+    });
+    if (installed.code !== 0) throw new Blocked(`bun install 失败：${tail(installed.output)}`);
+  }
+
+  /** `node_modules_kept`, once per run, CI round and reason: a wait that is entered again does not repeat it. */
+  async #noteKept(run: RunRecord, reason: string): Promise<void> {
+    const id = `${run.key}:${run.ciRound}:${reason}`;
+    if (this.#keptNoted.has(id)) return;
+    this.#keptNoted.add(id);
+    await this.#d.store.event(run.key, "node_modules_kept", { reason, ciRound: run.ciRound });
+  }
+
+  /**
+   * CYC-450: while the run only waits for CI or the merge, the worktree's `node_modules` is not needed, so it is
+   * deleted (when `releaseNodeModules` is on). Only git-ignored directories named `node_modules` go, and only when
+   * the worktree has no uncommitted change. A failure to delete is not a failure of the run.
+   */
+  async #releaseNodeModules(
+    run: RunRecord,
+    worktree: string,
+    save: (patch: Partial<RunRecord>) => Promise<void>,
+  ): Promise<void> {
+    const { config, store } = this.#d;
+    if (!config.releaseNodeModules || run.nodeModulesReleased) return;
+    const status = await this.#git(["status", "--porcelain"], worktree);
+    if (status.code !== 0) {
+      await this.#noteKept(run, "status_failed");
+      return;
+    }
+    if (status.output.trim() !== "") {
+      await this.#noteKept(run, "dirty");
+      return;
+    }
+    const listed = await this.#git(
+      ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"],
+      worktree,
+    );
+    if (listed.code !== 0) {
+      await this.#noteKept(run, "list_failed");
+      return;
+    }
+    const dirs = listed.output
+      .split("\0")
+      .map((l) => l.trim().replace(/\/+$/, ""))
+      .filter(
+        (d) =>
+          d !== "" &&
+          !d.startsWith("/") &&
+          !d.split("/").includes("..") &&
+          d.split("/").at(-1) === "node_modules",
+      );
+    if (dirs.length === 0) return;
+    // Marked first: if rm stops halfway or the loop dies, the next Dev or verify installs again.
+    await save({ nodeModulesReleased: true });
+    const removed = await this.#d.exec(["rm", "-rf", "--", ...dirs], {
       cwd: worktree,
       env: verifyEnv(this.#d.env),
       timeoutMs: config.commandTimeoutMs,
     });
-    if (installed.code !== 0) throw new Blocked(`bun install 失败：${tail(installed.output)}`);
-    if (fresh) await this.#recordInstall(run.key, worktree, before);
-    await save({ phase: "dev" });
+    if (removed.code !== 0) {
+      await store.event(run.key, "node_modules_release_failed", { reason: "rm_failed" });
+      return;
+    }
+    await store.event(run.key, "node_modules_released", { dirs: dirs.length });
   }
 
   /** Free space of the volume holding `dir`, in 1 KiB blocks (`df -k`); undefined when it cannot be read. */
@@ -1509,6 +1591,10 @@ export class Pipeline {
   ): Promise<void> {
     const { config, store } = this.#d;
     const worktree = this.#need(run.worktree ?? undefined);
+    // Released while waiting for CI or the merge: installed again before the session starts.
+    // Not in the middle of a conflict merge: an install could fail on a conflicted manifest or rewrite bun.lock.
+    // The restore in #verify installs once the merge is resolved.
+    if (run.conflict?.state !== "dev") await this.#restoreNodeModules(run, worktree, save);
     const progress = await store.readProgress(run.key);
     // A conflict turn: the merge of the base is in the worktree (made again if it is not), and Dev is asked to finish it.
     let conflict: { files: string[]; preMergeSha: string } | undefined;
@@ -1525,7 +1611,10 @@ export class Pipeline {
             config.baseRef,
             conflict.files,
             await this.#theirCommits(worktree, conflict.preMergeSha, conflict.files),
-          );
+          ) +
+          (run.nodeModulesReleased
+            ? "\n\nDependencies are not installed in this worktree (node_modules was removed while waiting for CI). Resolve package.json and bun.lock first if they are conflicted, then run `bun install` before `bun run check`.\n"
+            : "");
     const prompt =
       conflictPrompt ??
       (run.findings !== null
@@ -1595,6 +1684,8 @@ export class Pipeline {
   ): Promise<void> {
     const { config, store, clock } = this.#d;
     const worktree = this.#need(run.worktree ?? undefined);
+    // Every way into verify (after Dev, a clean conflict merge, a resume) passes here.
+    await this.#restoreNodeModules(run, worktree, save);
     const changed = await this.#git(["diff", "--name-only", `${config.baseRef}...HEAD`], worktree);
     const files = changed.output.split("\n").filter((line) => line.trim() !== "");
     const failures: string[] = [];
@@ -1940,6 +2031,8 @@ export class Pipeline {
         );
       }
     }
+
+    await this.#releaseNodeModules(run, worktree, save);
 
     // A network error is retried on the single poll read, so the CI timeout budget is not restarted by it.
     const result = await waitForCi({

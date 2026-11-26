@@ -61,6 +61,7 @@ const setup = (git: Partial<Git> = {}, over = {}) => {
     prState: "OPEN",
     prMerge: [["OPEN", "CONFLICTING"]],
     mergeTreeOutput: "",
+    ignoredDirs: "",
   };
   const state: Git = {
     merge: 0,
@@ -427,6 +428,28 @@ test("a restart in the conflict turn does not merge again and sends the conflict
   expect(gitCalls(s.world.calls, "merge --no-edit")).toHaveLength(0);
   expect(devPrompts(s).at(-1)).toContain("Conflicted files");
   expect(devPrompts(s).at(-1)).toContain("src/a.ts");
+});
+
+test("node_modules released, then a conflict turn: Dev starts with no install in the middle of the merge", async () => {
+  const s = setup();
+  await resumeInCi(s, { ...inConflictTurn, nodeModulesReleased: true });
+  s.state.mergeHead = true;
+  s.state.ancestor = false;
+  s.state.unmerged = "src/a.ts\n";
+  s.sessions.script.dev.push(done());
+  resolve(s, true);
+  s.setDevTurns(1);
+  const log = s.world.calls;
+  const turn = s.sessions.turn.bind(s.sessions);
+  s.sessions.turn = async (id, prompt, ctx) => {
+    if (ctx.role === "dev") log.push("turn:dev");
+    return turn(id, prompt, ctx);
+  };
+  await s.pipeline.step();
+  expect(devPrompts(s).at(-1)).toContain("Dependencies are not installed");
+  const order = log.filter((c) => c === "turn:dev" || c === "bun install");
+  expect(order[0]).toBe("turn:dev");
+  expect(order).toContain("bun install");
 });
 
 test("a resend after the merge was already finished does not merge again either", async () => {

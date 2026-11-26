@@ -74,6 +74,8 @@ export const RunRecordSchema = z.object({
   ciRound: z.number().int().min(0).default(0),
   /** The HEAD commit whose CI run last came back red; the same commit again means no new CI run unless the failed jobs are rerun. */
   ciFailedSha: z.string().nullable().default(null),
+  /** CYC-450: the worktree's `node_modules` was deleted while waiting for CI or the merge; Dev installs it again. */
+  nodeModulesReleased: z.boolean().default(false),
   /** Times the loop merged the base into the branch after a conflict found while waiting for CI. Counted apart from fix rounds. */
   conflictRound: z.number().int().min(0).default(0),
   /**

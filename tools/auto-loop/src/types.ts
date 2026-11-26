@@ -123,6 +123,8 @@ export type Config = {
   maxFixRounds: number;
   /** Required CI check names on the pull request before the work item is considered delivered. */
   ciChecks: string[];
+  /** Delete the worktree's `node_modules` while waiting for CI or the merge, and install again before Dev (CYC-450). Default off. */
+  releaseNodeModules: boolean;
   /** Maximum number of times a red CI run is sent back to Dev before blocking. */
   maxCiRetries: number;
   /** Times the loop merges the base into the branch itself after a conflict found while waiting for CI. Not in the config file. */
@@ -198,6 +200,7 @@ export const defaultConfig = (
   maxCriteria: 8,
   maxFixRounds: 3,
   ciChecks: ["check", "browser", "integration"],
+  releaseNodeModules: false,
   maxCiRetries: 2,
   maxConflictRounds: 1,
   maxReviewRetries: 2,
