@@ -546,6 +546,15 @@ export class Pipeline {
         return;
       }
     }
+    // A merge that failed without starting leaves nothing to abort: say what git said.
+    const started = await this.#git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], worktree);
+    if (started.code !== 0) {
+      await store.event(run.key, "conflict_merge", { result: "failed", conflictRound: attempt });
+      await save({ conflict: null });
+      throw new Blocked(
+        `Loop 合并 ${config.baseRef} 失败，没有开始合并：${tail(merged?.output ?? "")}`,
+      );
+    }
     const listed = await this.#git(["diff", "--name-only", "--diff-filter=U"], worktree);
     const files = listed.output
       .split("\n")
@@ -563,7 +572,7 @@ export class Pipeline {
     throw new Blocked(
       files.length > 0
         ? `PR 与 ${config.baseBranch} 冲突：Loop 在工单工作区合并 ${config.baseRef} 后，真实冲突文件：${files.join("、")}。已撤回合并（${prUrl}）。`
-        : `Loop 合并 ${config.baseRef} 失败，但没有读到冲突文件，已撤回合并：${tail(merged?.output ?? "")}`,
+        : `Loop 合并 ${config.baseRef} 停在合并中，但没有读到冲突文件，已撤回合并：${tail(merged?.output ?? "")}`,
     );
   }
 

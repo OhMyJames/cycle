@@ -122,13 +122,12 @@ export class LineJsonRpcProcess {
         error instanceof Error ? error : new Error(`Invalid ${this.#options.name} message`);
       // readline hands over the bytes after the last newline as one more line at EOF. A process
       // stopped while writing a large message therefore leaves half a JSON line. That is its exit,
-      // not a protocol disagreement: let the process's own close event provide the real reason. The
-      // end of stdout can come before the exit is seen, so give the exit a moment (a loaded machine is slow).
+      // not a protocol disagreement: let the process's own close event provide the real reason.
       setTimeout(() => {
         if (this.#closed || this.#process.exitCode !== null || this.#process.signalCode !== null)
           return;
         this.close(reason);
-      }, 250).unref();
+      }, 0).unref();
     }
   }
 

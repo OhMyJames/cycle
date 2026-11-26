@@ -203,6 +203,15 @@ test("at the limit a second conflict blocks at once, saying it was handled once 
   expect(gitCalls(s.world.calls, "merge --no-edit")).toHaveLength(0);
 });
 
+test("a merge that cannot start blocks with git's output and runs no abort", async () => {
+  const s = setup({ merge: 1 });
+  await resumeInCi(s, { conflictRound: 0, conflict: null });
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("blocked");
+  if (result.status === "blocked") expect(result.reason).not.toContain("撤回合并失败");
+  expect(gitCalls(s.world.calls, "merge --abort")).toHaveLength(0);
+});
+
 test("an unclean worktree blocks before merging", async () => {
   const s = setup({ dirtyAtMerge: true });
   const result = await s.pipeline.step();
