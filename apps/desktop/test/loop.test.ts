@@ -286,6 +286,10 @@ describe("where Loop is running (CYC-458)", () => {
 
       // The server goes away: nothing is asked of it, and the last seq is kept.
       await new Promise((r) => server.close(r));
+      // One or two misses keep what was known; the third in a row says the server is away.
+      await feed.tick();
+      await feed.tick();
+      expect(told).toHaveLength(1);
       await feed.tick();
       expect(feed.lastSeq("CYC")).toBe(2);
 
@@ -326,6 +330,9 @@ describe("where Loop is running (CYC-458)", () => {
       expect(await feed.read()).toEqual({ kind: "ok", running: { CYC: ["CYC-1"] } });
       expect(told).toHaveLength(1);
       await new Promise((r) => server.close(r));
+      expect((await feed.read()).kind).toBe("ok");
+      expect((await feed.read()).kind).toBe("ok");
+      expect(told).toHaveLength(1);
       expect(await feed.read()).toEqual({ kind: "disconnected" });
       expect(told).toHaveLength(2);
     } finally {
@@ -444,6 +451,51 @@ describe("where Loop is running (CYC-458)", () => {
     waiting[0]?.(answer([]));
     await older;
     expect(told).toEqual([{ kind: "ok", running: { CYC: ["CYC-2"] } }]);
+  });
+
+  test("one Project whose events are broken does not hold back a healthy one", async () => {
+    const socket = join(dir, "two.sock");
+    let ops: string[] = ["CYC-5"];
+    let ops2seq = 1;
+    const server = createServer((c) =>
+      c.on("data", (chunk) => {
+        const req = JSON.parse(chunk.toString("utf8").split("\n")[0] ?? "{}") as {
+          method: string;
+          params?: { projectKey?: string; afterSeq?: number };
+        };
+        const send = (o: object) => c.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, ...o })}\n`);
+        if (req.method === "runs/list")
+          return send({
+            result: {
+              projects: [
+                { projectKey: "BAD", runs: [] },
+                { projectKey: "OPS", runs: ops.map((k) => run(k, "active")) },
+              ],
+            },
+          });
+        if (req.params?.projectKey === "BAD")
+          return send({ error: { code: -32603, message: "Internal error" } });
+        const after = req.params?.afterSeq ?? 0;
+        const events = after < ops2seq ? [event(ops2seq)] : [];
+        send({ result: { projectKey: "OPS", events, lastSeq: ops2seq, hasMore: false } });
+      }),
+    );
+    await new Promise<void>((r) => server.listen(socket, r));
+    const told: unknown[] = [];
+    try {
+      const feed = loopFeed({
+        call: (method, params) => loopRpc(socket, method, params),
+        changed: (runs) => told.push(runs),
+      });
+      for (let i = 0; i < 4; i++) await feed.tick();
+      // BAD is backing off; a new event in OPS still gets through at once.
+      ops = ["CYC-5", "CYC-6"];
+      ops2seq = 2;
+      await feed.tick();
+      expect(told.at(-1)).toEqual({ kind: "ok", running: { BAD: [], OPS: ["CYC-5", "CYC-6"] } });
+    } finally {
+      server.close();
+    }
   });
 
   test("a seq past the end of the log starts again from 0", async () => {

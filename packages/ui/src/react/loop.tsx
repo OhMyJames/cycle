@@ -314,7 +314,9 @@ function TicketPage({
   const waitingOn = (id: string) => waitingTitles.split("\n").includes(`[${id}] Dev`);
   // Which tickets Loop is running changes what the page says of this one (watch or not): it is read again then.
   const runKey = useAppState((s) =>
-    s.loop.runs?.kind === "ok" ? (s.loop.runs.running[projectKey] ?? []).join(",") : "",
+    s.loop.runs?.kind === "ok" && (s.loop.runs.running[projectKey] ?? []).includes(identifier)
+      ? "running"
+      : "idle",
   );
   useEffect(() => {
     let live = true;

@@ -146,6 +146,8 @@ export type FeedDeps = {
 const FEED_PAGES = 20;
 /** The run state is read again at least this often (ticks), for Projects that appear. */
 const RUNS_REREAD_TICKS = 15;
+/** Reads of the run state in a row that get no answer before the server counts as away. */
+const MISSES_TO_AWAY = 3;
 
 /**
  * Keeps up with Loop's event stream (docs/protocol.md §17): per Project it asks `events/list` after the last `seq` it
@@ -162,9 +164,12 @@ export const loopFeed = (deps: FeedDeps) => {
   let wanted = !deps.lazy;
   /** Events (or a first read) just made the runs be read: once more on the next tick, in case the record was written after. */
   let recheck = false;
-  /** Ticks in a row that could not be answered, and the tick before which nothing is asked (a back-off). */
-  let failures = 0;
-  let nextAt = 0;
+  /** Per Project: ticks in a row its events could not be read, and the tick before which they are not asked (a back-off). */
+  const backoff = new Map<string, { failures: number; nextAt: number }>();
+  /** The highest `seq` seen per Project: an event at or below it is never news again, even when the log is read again from 0. */
+  const high = new Map<string, number>();
+  /** Reads of runs/list in a row that got no answer: one miss does not flip the page. */
+  let misses = 0;
   /** Each read of runs/list is numbered when it starts; an answer older than one already applied is dropped. */
   let issued = 0;
   let applied = 0;
@@ -173,9 +178,12 @@ export const loopFeed = (deps: FeedDeps) => {
   /** Reads the runs and applies them, unless a read that began later has already been applied. Answers what stands. */
   const readRuns = async (): Promise<LoopRunsAnswer> => {
     const stamp = ++issued;
-    const runs = runningOf(await deps.call(LOOP_RUNS_LIST));
+    let runs = runningOf(await deps.call(LOOP_RUNS_LIST));
     if (stamp < applied) return told ?? runs;
     applied = stamp;
+    // A miss or two keeps what was last known; the third in a row says the server is away.
+    misses = runs.kind === "ok" ? 0 : misses + 1;
+    if (runs.kind !== "ok" && told?.kind === "ok" && misses < MISSES_TO_AWAY) runs = told;
     const same = sameRuns(told, runs);
     told = runs;
     // A page that cannot be told is not a reason to stop following.
@@ -220,8 +228,9 @@ export const loopFeed = (deps: FeedDeps) => {
       for (const event of parsed.data.events) {
         if (event.seq <= top) continue;
         top = event.seq;
-        if (!history) fresh = true;
+        if (!history && event.seq > (high.get(projectKey) ?? 0)) fresh = true;
       }
+      high.set(projectKey, Math.max(high.get(projectKey) ?? 0, top));
       last.set(projectKey, Math.max(top, parsed.data.lastSeq));
       if (!parsed.data.hasMore) {
         seeded.add(projectKey);
@@ -231,26 +240,37 @@ export const loopFeed = (deps: FeedDeps) => {
     return fresh ? "fresh" : "quiet";
   };
 
+  /** Pulls one Project unless it is backing off; a broken feed makes only that Project wait longer. */
+  const pullOne = async (projectKey: string) => {
+    const wait = backoff.get(projectKey);
+    if (wait !== undefined && ticks < wait.nextAt) return "quiet" as const;
+    const got = await pull(projectKey);
+    if (got === "broken") {
+      const failures = (wait?.failures ?? 0) + 1;
+      backoff.set(projectKey, { failures, nextAt: ticks + Math.min(2 ** (failures - 1) - 1, 30) });
+    } else backoff.delete(projectKey);
+    return got;
+  };
+
   const tick = async (): Promise<void> => {
     if (busy || !wanted) return;
-    if (ticks++ < nextAt) return;
+    ticks++;
     busy = true;
     try {
       const wasOk = told?.kind === "ok";
       // Read now: nothing is known yet, the last answer asked for another look, or it is time (a Project may be new).
       let read = !wasOk || recheck || ticks % RUNS_REREAD_TICKS === 0;
-      let trouble = false;
       let fresh = false;
       seededNow = false;
       if (told?.kind === "ok")
         for (const projectKey of Object.keys(told.running)) {
-          const got = await pull(projectKey);
+          const got = await pullOne(projectKey);
           if (got === "fresh") fresh = true;
           else if (got === "away") {
             // The server is not there: the others are not asked one by one, the runs say so.
             read = true;
             break;
-          } else if (got === "broken") trouble = true;
+          }
         }
       if (fresh) read = true;
       if (read) {
@@ -259,9 +279,9 @@ export const loopFeed = (deps: FeedDeps) => {
           // A first read, or the first after the server was away: every log is read to its end from the last `seq` held.
           let more = false;
           for (const projectKey of Object.keys(runs.running)) {
-            const got = await pull(projectKey);
+            const got = await pullOne(projectKey);
             if (got === "fresh") more = true;
-            else if (got === "broken") trouble = true;
+            else if (got === "away") break;
           }
           if (more) runs = await readRuns();
         }
@@ -269,10 +289,6 @@ export const loopFeed = (deps: FeedDeps) => {
       }
       // A Project seen for the first time had its log taken as history: its runs are looked at once more.
       if (seededNow) recheck = true;
-      // A tick that could not be answered makes the next ones wait longer (1, 2, 4... ticks, at most 30), so a server
-      // that keeps failing is not asked every time.
-      failures = trouble ? failures + 1 : 0;
-      nextAt = trouble ? ticks + Math.min(2 ** (failures - 1) - 1, 30) : 0;
     } finally {
       busy = false;
     }
