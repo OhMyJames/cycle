@@ -72,7 +72,7 @@ const KINDS = new Set(["comment", "move", "label", "phase"]);
 export class Reconciler {
   readonly #parts: () => Parts;
   /** The work that is under way for each work item: a second flush waits for it, and so keeps the order. */
-  readonly #chains = new Map<number, Promise<void>>();
+  readonly #chains = new Map<string, Promise<void>>();
 
   /** `parts` is a getter: the config is the one of the step that calls. */
   constructor(parts: () => Parts) {
@@ -99,15 +99,19 @@ export class Reconciler {
   }
 
   async #flush(issueId: number | undefined): Promise<void> {
-    const ids = new Set<number>();
+    // Two lanes per work item: what people read, in strict order, and the phase field, which is best effort and
+    // must never hold a comment or a move behind it.
+    const lanes = new Map<string, { id: number; phase: boolean }>();
     for (const intent of this.#pending()) {
       const target = targetOf(intent);
-      if (target !== undefined && (issueId === undefined || target.issueId === issueId))
-        ids.add(target.issueId);
+      if (target === undefined || (issueId !== undefined && target.issueId !== issueId)) continue;
+      const phase = intent.kind === "phase";
+      lanes.set(`${target.issueId}:${phase}`, { id: target.issueId, phase });
     }
-    const queue = [...ids];
+    const queue = [...lanes.values()];
     const worker = async () => {
-      for (let id = queue.shift(); id !== undefined; id = queue.shift()) await this.#chain(id);
+      for (let l = queue.shift(); l !== undefined; l = queue.shift())
+        await this.#chain(l.id, l.phase);
     };
     await Promise.all(Array.from({ length: Math.min(PARALLEL, queue.length) }, worker));
   }
@@ -118,20 +122,23 @@ export class Reconciler {
       .filter((i) => KINDS.has(i.kind));
   }
 
-  #chain(issueId: number): Promise<void> {
-    const prev = this.#chains.get(issueId) ?? Promise.resolve();
-    const next = prev.then(() => this.#issue(issueId)).catch(() => {});
-    this.#chains.set(issueId, next);
+  #chain(issueId: number, phase: boolean): Promise<void> {
+    const lane = `${issueId}:${phase}`;
+    const prev = this.#chains.get(lane) ?? Promise.resolve();
+    const next = prev.then(() => this.#issue(issueId, phase)).catch(() => {});
+    this.#chains.set(lane, next);
     void next.then(() => {
-      if (this.#chains.get(issueId) === next) this.#chains.delete(issueId);
+      if (this.#chains.get(lane) === next) this.#chains.delete(lane);
     });
     return next;
   }
 
   /** The intents of one work item, in order; the first that fails stops the rest, so a move never passes its comment. */
-  async #issue(issueId: number): Promise<void> {
+  async #issue(issueId: number, phase: boolean): Promise<void> {
     // Read again here: another flush may have done some of these while this one waited.
-    const mine = this.#pending().filter((i) => targetOf(i)?.issueId === issueId);
+    const mine = this.#pending().filter(
+      (i) => targetOf(i)?.issueId === issueId && (i.kind === "phase") === phase,
+    );
     for (const intent of mine) {
       const current = this.#pending().find((i) => i.id === intent.id);
       if (current === undefined) continue;
@@ -171,7 +178,7 @@ export class Reconciler {
   }
 
   async #apply(intent: Intent): Promise<void> {
-    const { tracker, config } = this.#parts();
+    const { tracker, config, store } = this.#parts();
     const target = targetOf(intent) as Target;
     const p = intent.payload as Record<string, unknown>;
     if (intent.kind === "phase") {
@@ -187,6 +194,18 @@ export class Reconciler {
     const issue = await tracker.get(target.issueNumber);
     if (intent.kind === "move") {
       const to = p.to as Stage;
+      // A move is replayed only while it is still what the run wants: a newer move for the run replaces it, and the
+      // run's own phase decides the two that a later step may have made wrong.
+      const newer = this.#pending().some(
+        (i) => i.kind === "move" && i.runKey === intent.runKey && i.id > intent.id,
+      );
+      if (newer) return;
+      const run = await store.load(intent.runKey);
+      if (run !== undefined) {
+        const stopped = run.phase === "blocked" || run.phase === "done";
+        if (to === "blocked" && run.phase !== "blocked") return;
+        if (to === "inProgress" && stopped) return;
+      }
       if (issue.columnId === config.columns[to]) return;
       await tracker.move(issue, to);
     } else if (intent.kind === "label") {

@@ -652,3 +652,7 @@ export const openStore = (stateDir: string, now: () => Date): LoopStore =>
   existsSync(join(stateDir, DB_FILE))
     ? SqliteStore.open(stateDir, now)
     : new RunStore(stateDir, now);
+
+/** The store a running loop writes to: always `loop.db` (intents need it), made when it is not there yet. A dry run writes nothing, so it reads whichever there is. */
+export const openLoopStore = (stateDir: string, now: () => Date, dryRun: boolean): LoopStore =>
+  dryRun ? openStore(stateDir, now) : SqliteStore.open(stateDir, now);

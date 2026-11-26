@@ -3,7 +3,7 @@
 import { join } from "node:path";
 import { type ConfigFile, readTuning } from "./config-file.ts";
 import { type ImportResult, importLegacyState, needsImport } from "./db/import.ts";
-import { openStore } from "./db/store.ts";
+import { openLoopStore } from "./db/store.ts";
 import { effectiveWorkers } from "./loop.ts";
 import { Pipeline } from "./pipeline.ts";
 import { DEFAULT_TIMEOUT_MS, PlanTracker } from "./plan-mcp.ts";
@@ -137,7 +137,8 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
     await release();
     throw error;
   }
-  const store = openStore(stateDir, clock.now);
+  // The loop writes intents, which only loop.db holds: a real run creates it when there is nothing to import.
+  const store = openLoopStore(stateDir, clock.now, dryRun);
   if (imported !== null) {
     await store.event("storage", "storage_imported", {
       runs: imported.runs,

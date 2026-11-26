@@ -344,6 +344,8 @@ test("approved work comes first: with a Todo work item to take, no round starts"
   expect(s.tracker.moves).toEqual(["CYC-9:inProgress"]);
   expect(s.sessions.inputs.map((i) => i.role)).toEqual(["dev"]);
   expect(await s.store.plans()).toEqual([]);
+  // With loop.db there is no plans/ directory to list: no rounds, and no open one, is the same claim.
+  expect(await s.store.unfinishedPlans()).toEqual([]);
 
   // In a dry run likewise; with Todo empty, it says it would plan.
   const dry = setup(

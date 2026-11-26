@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SqliteStore } from "../src/db/store.ts";
+import { openLoopStore, SqliteStore } from "../src/db/store.ts";
 import { MAX_ATTEMPTS, marker, Reconciler, writeIntent } from "../src/engine/reconcile.ts";
 import { Pipeline } from "../src/pipeline.ts";
 import {
@@ -167,4 +167,113 @@ test("the same preflight reason is commented once, however many rounds see it", 
   expect(s.tracker.comments).toHaveLength(1);
   expect(s.tracker.moves).toEqual(["CYC-1:blocked", "CYC-1:blocked"]);
   expect(s.tracker.issues[0]?.columnId).toBe(35);
+});
+
+test("a real run on an empty state directory gets loop.db and can claim a ticket", async () => {
+  const store = openLoopStore(dir, () => NOW, false);
+  expect(store).toBeInstanceOf(SqliteStore);
+  const s = setup(undefined, { dev: [done(), done(), done(), done()], qa: [] });
+  const pipeline = new Pipeline({
+    config: s.cfg,
+    tracker: s.tracker,
+    sessions: new FakeSessions({ dev: [done(), done(), done(), done()], qa: [] }),
+    exec: makeExec({
+      fail: new Set(),
+      calls: [],
+      dirty: false,
+      qaWrites: false,
+      headSha: "abc",
+      ciResponses: [],
+      ciLogs: {},
+      prState: "OPEN",
+      prMerge: [["MERGED", "UNKNOWN"]],
+      mergeTreeOutput: "",
+      ignoredDirs: "",
+    }),
+    store,
+    clock: { now: () => NOW },
+    log: () => {},
+    env: { PATH: "/bin" },
+    sleep: async () => {},
+  });
+  await pipeline.step().catch(() => {});
+  expect((await store.load("CYC-1"))?.key).toBe("CYC-1");
+  expect(s.tracker.moves[0]).toBe("CYC-1:inProgress");
+});
+
+test("a stale move does not undo what the run has become", async () => {
+  const s = setup(undefined, { dev: [], qa: [] });
+  const target = s.tracker.issues[0] as ReturnType<typeof issue>;
+  target.columnId = 24;
+  const base = {
+    key: "CYC-1",
+    kind: "dev" as const,
+    issueId: target.id,
+    issueNumber: target.number,
+    title: "t",
+  };
+  void base;
+  // A delivered run: a pending move to In Progress is dropped.
+  const run = {
+    ...(await (async () => {
+      const w = setup(undefined, { dev: [done(), done(), done(), done()], qa: [] });
+      await w.pipeline.step();
+      return (await w.store.load("CYC-1")) as NonNullable<Awaited<ReturnType<SqliteStore["load"]>>>;
+    })()),
+  };
+  s.store.transaction((tx) => {
+    tx.save({ ...run, phase: "done" });
+    writeIntent(tx, {
+      run: "CYC-1",
+      issue: target,
+      kind: "move",
+      dedupe: "stale1",
+      payload: { to: "inProgress" },
+    });
+  });
+  await reconciler(s).flush();
+  expect(s.tracker.moves).toEqual([]);
+  expect(pending(s.store)).toEqual([]);
+  // A person resumed: a stale move to Blocked is dropped.
+  s.store.transaction((tx) => {
+    tx.save({ ...run, phase: "dev" });
+    writeIntent(tx, {
+      run: "CYC-1",
+      issue: target,
+      kind: "move",
+      dedupe: "stale2",
+      payload: { to: "blocked" },
+    });
+  });
+  await reconciler(s).flush();
+  expect(s.tracker.moves).toEqual([]);
+  // Two moves for one run: only the newer is made.
+  s.store.transaction((tx) => {
+    tx.save({ ...run, phase: "blocked" });
+    writeIntent(tx, {
+      run: "CYC-1",
+      issue: target,
+      kind: "move",
+      dedupe: "m-old",
+      payload: { to: "inProgress" },
+    });
+    writeIntent(tx, {
+      run: "CYC-1",
+      issue: target,
+      kind: "move",
+      dedupe: "m-new",
+      payload: { to: "blocked" },
+    });
+  });
+  await reconciler(s).flush();
+  expect(s.tracker.moves).toEqual(["CYC-1:blocked"]);
+});
+
+test("a phase write that always fails does not hold the Blocked comment and move", async () => {
+  const s = setup(undefined, { dev: [done(), done(), done(), done()], qa: [] });
+  s.tracker.failPhase = true;
+  expect((await s.pipeline.step()).status).toBe("blocked");
+  expect(s.tracker.comments).toHaveLength(1);
+  expect(s.tracker.issues[0]?.columnId).toBe(35);
+  expect(pending(s.store).every((i) => i.kind === "phase")).toBe(true);
 });

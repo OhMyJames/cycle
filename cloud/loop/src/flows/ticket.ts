@@ -56,7 +56,8 @@ export const todoIntake = (host: FlowHost): Intake => ({
     const why = new Bun.CryptoHasher("sha256").update(body).digest("hex").slice(0, 12);
     store.transaction((tx) => {
       const seq = tx.countEvents(issue.key, "preflight_rejected") + 1;
-      // One comment for one reason, however many rounds see it; the move is written each time, and does nothing
+      // One comment for one reason, however many rounds or re-queues see it (on purpose: a person who puts the
+      // work item back unfixed has already read it); the move is written each time, and does nothing
       // when the work item is already in Blocked.
       writeIntent(tx, {
         run: issue.key,
@@ -65,13 +66,16 @@ export const todoIntake = (host: FlowHost): Intake => ({
         dedupe: `rejected:${issue.key}:${why}`,
         payload: { body },
       });
-      writeIntent(tx, {
-        run: issue.key,
-        issue,
-        kind: "move",
-        dedupe: `move:${issue.key}:rejected:${seq}`,
-        payload: { to: "blocked" },
-      });
+      // Not while a move to Blocked is still waiting: a tracker that is down must not collect one per round.
+      const waiting = tx.pendingIntents().some((i) => i.kind === "move" && i.runKey === issue.key);
+      if (!waiting)
+        writeIntent(tx, {
+          run: issue.key,
+          issue,
+          kind: "move",
+          dedupe: `move:${issue.key}:rejected:${seq}`,
+          payload: { to: "blocked" },
+        });
       tx.event(issue.key, "preflight_rejected", { reasons: reasons.length });
     });
     await host.reconcile.flush(issue.id, { capMs: host.d.mirrorCapMs ?? 10_000 });
