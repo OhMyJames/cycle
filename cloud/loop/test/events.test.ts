@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -90,6 +90,64 @@ describe("events/list", () => {
       "worktree",
     ])
       expect(raw).not.toContain(secret);
+  });
+});
+
+describe("the offset index", () => {
+  test("parallel calls while the file grows give contiguous seqs", async () => {
+    const state = fresh("par");
+    await write(state, 3);
+    const calls: Promise<Awaited<ReturnType<typeof eventsList>>>[] = [];
+    for (let i = 0; i < 20; i++) {
+      calls.push(eventsList("CYC", state, 0, 1000));
+      appendFileSync(join(state, "events.jsonl"), `{"ts":"t","run":"CYC-${i}","kind":"x"}\n`);
+    }
+    for (const r of await Promise.all(calls))
+      expect(r.events.map((e) => e.seq)).toEqual(r.events.map((_, i) => i + 1));
+    const final = await eventsList("CYC", state, 0, 1000);
+    expect(final.events).toHaveLength(23);
+    expect(final.events.map((e) => e.seq)).toEqual(final.events.map((_, i) => i + 1));
+  });
+
+  test("a truncated file or a replaced one of the same size starts the index over", async () => {
+    const state = fresh("swap");
+    await write(state, 4);
+    await eventsList("CYC", state, 0, 10);
+    writeFileSync(join(state, "events.jsonl"), '{"ts":"t","run":"NEW-1","kind":"x"}\n');
+    expect((await eventsList("CYC", state, 0, 10)).events.map((e) => e.run)).toEqual(["NEW-1"]);
+    await expect(eventsList("CYC", state, 4, 10)).rejects.toThrow("seq_ahead");
+    // replaced by a different file that is at least as large
+    const other = fresh("swap-other");
+    await write(other, 6);
+    renameSync(join(other, "events.jsonl"), join(state, "events.jsonl"));
+    const r = await eventsList("CYC", state, 0, 10);
+    expect(r.events.map((e) => e.run)).toEqual([
+      "CYC-1",
+      "CYC-2",
+      "CYC-3",
+      "CYC-4",
+      "CYC-5",
+      "CYC-6",
+    ]);
+  });
+
+  test("a page that mixes corrupt lines with the limit loses and repeats nothing", async () => {
+    const state = fresh("mix");
+    mkdirSync(state, { recursive: true });
+    const good = (n: number) => `{"ts":"t","run":"CYC-${n}","kind":"x"}\n`;
+    writeFileSync(
+      join(state, "events.jsonl"),
+      [good(1), "bad\n", good(3), "bad\n", good(5)].join(""),
+    );
+    const seen: number[] = [];
+    let after = 0;
+    for (;;) {
+      const page = await eventsList("CYC", state, after, 2);
+      seen.push(...page.events.map((e) => e.seq));
+      after = page.lastSeq;
+      if (!page.hasMore) break;
+    }
+    expect(seen).toEqual([1, 3, 5]);
   });
 });
 
