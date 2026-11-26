@@ -94,6 +94,8 @@ export const EVENTS = {
       "no_key",
       "offline",
       "refused",
+      "failed",
+      "no_folder",
       "auth_required",
     ]),
   }),

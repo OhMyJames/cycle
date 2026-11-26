@@ -693,6 +693,9 @@ export const enUS = {
   "loop.chat.fail.no_key": "No conversation was started: there is no itsaplan key.",
   "loop.chat.fail.offline": "No conversation was started: the agent or itsaplan did not answer.",
   "loop.chat.fail.refused": "No conversation was started: it was refused.",
+  "loop.chat.fail.failed":
+    "No conversation was started: the agent could not start or did not take the message.",
+  "loop.chat.fail.no_folder": "No conversation was started: its working folder could not be made.",
   "loop.chat.fail.auth_required": "Sign in to Codex in Settings, then try again.",
   "loop.detail.back": "Back to the board",
   "loop.detail.loading": "Reading the ticket",

@@ -182,15 +182,21 @@ export const actionsOf = (stateType: string, auto: boolean, role?: Role): LoopAc
 
 /**
  * What an agent may do with a ticket, by the kind of its column (CYC-389). Backlog and Todo: a new conversation.
- * In Progress (started): only to look, because for now that column is the sign that Loop is running it; a ticket
- * Loop left there when it died is taken for running too (CYC-390 corrects it with the run data). Anything else: nothing.
+ * A Todo ticket with `auto` is queued for Loop, which picks it up on its own: no conversation (send it back to Backlog
+ * to refine it). In Progress (the role `progress` of the started columns): only to look, because for now that column
+ * is the sign that Loop is running it; a ticket Loop left there when it died is taken for running too (CYC-390
+ * corrects it with the run data). Review, Blocked (CYC-388 joins the original session) and the rest: nothing.
  */
-export const chatOf = (stateType: string): LoopChat =>
-  stateType === "backlog" || stateType === "unstarted"
+export const chatOf = (stateType: string, role?: Role, auto = false): LoopChat =>
+  stateType === "backlog"
     ? "new"
-    : stateType === "started"
-      ? "watch"
-      : "none";
+    : stateType === "unstarted"
+      ? auto
+        ? "none"
+        : "new"
+      : stateType === "started" && role === "progress"
+        ? "watch"
+        : "none";
 
 const AUTO = "auto";
 
@@ -248,7 +254,7 @@ export const readBoard = async (t: Tracker, projectKey: string): Promise<LoopBoa
               priority: typeof r.priority === "string" ? r.priority : null,
               column: column.name,
               actions: actionsOf(column.stateType, auto, roleOf(columns, column)),
-              chat: chatOf(column.stateType),
+              chat: chatOf(column.stateType, roleOf(columns, column), auto),
             };
           });
         }),
@@ -426,7 +432,7 @@ export const answerTicket = async (
         priority: typeof issue.priority === "string" ? issue.priority : null,
         column: column.name,
         actions: actionsOf(column.stateType, auto, roleOf(columns, column)),
-        chat: chatOf(column.stateType),
+        chat: chatOf(column.stateType, role, auto),
         body,
         ...(attention ? { attention } : {}),
         acceptance: acceptanceOf(body),
@@ -547,20 +553,21 @@ export const startTicketChat = async (
   } catch (error) {
     return done(failureOf(error) === "offline" ? "offline" : "refused");
   }
-  if (chatOf(ticket.column.stateType) !== "new") return done("not_allowed");
+  const role = roleOf(ticket.columns, ticket.column);
+  if (chatOf(ticket.column.stateType, role, ticket.auto) !== "new") return done("not_allowed");
   let model: string | undefined;
   try {
     model = (await deps.agentDefaults(CHAT_AGENT)).model?.trim();
   } catch {
-    return done("offline");
+    return done("failed");
   }
   if (model === undefined || model === "") return done("needs_model");
   // Never the home folder: without a folder of its own, nothing is made.
-  if (deps.cwd === "") return done("refused");
+  if (deps.cwd === "") return done("no_folder");
   try {
     await mkdir(deps.cwd, { recursive: true });
   } catch {
-    return done("refused");
+    return done("no_folder");
   }
   let made: string | { problem: unknown };
   try {
@@ -570,15 +577,15 @@ export const startTicketChat = async (
       config: { model },
     });
   } catch (error) {
-    return done((error as { code?: unknown })?.code === -32000 ? "auth_required" : "offline");
+    return done((error as { code?: unknown })?.code === -32000 ? "auth_required" : "failed");
   }
   if (typeof made !== "string") return done("refused");
   try {
     await deps.prompt(made, firstMessage(String(identifier)));
   } catch {
     // The session exists: its id goes with the failure, so the person can open it and say the first thing themselves.
-    track("loop_ticket_chat", { result: "offline" });
-    return { kind: "failed", reason: "offline", sessionId: made, locationId: deps.locationId };
+    track("loop_ticket_chat", { result: "failed" });
+    return { kind: "failed", reason: "failed", sessionId: made, locationId: deps.locationId };
   }
   return done("started", { kind: "started", locationId: deps.locationId, sessionId: made });
 };

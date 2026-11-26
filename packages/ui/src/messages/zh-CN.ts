@@ -622,6 +622,8 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "loop.chat.fail.no_key": "没有开始对话：没有 itsaplan 的 key。",
   "loop.chat.fail.offline": "没有开始对话：连不上 agent 或 itsaplan。",
   "loop.chat.fail.refused": "没有开始对话：被拒绝了。",
+  "loop.chat.fail.failed": "没有开始对话：agent 没能启动，或没收下消息。",
+  "loop.chat.fail.no_folder": "没有开始对话：无法创建它的工作目录。",
   "loop.chat.fail.auth_required": "请先到设置里登录 Codex，再重试。",
   "loop.detail.back": "回到看板",
   "loop.detail.loading": "正在读取工单",

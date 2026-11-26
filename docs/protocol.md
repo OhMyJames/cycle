@@ -1177,12 +1177,12 @@ Loop 服务(`cloud/loop`)是独立于 daemon 的进程:一个进程服务多个 
 
 工单页的"与 agent 对话"按钮:桌面主进程再读一次工单,按列的状态类型决定,然后用本机 daemon 新开会话。
 
-- Backlog / Todo(`chat: "new"`):新开 codex 会话,模型取该 agent 在设置里的默认模型;第一条消息带工单号,agent 通过 itsaplan connector 读写工单,凭据由网关注入。不限制 agent 的工具(CYC-375 的强制部分推迟)。
-- In Progress(`chat: "watch"`):只读旁观,不提供对话。这一列暂时被当作"Loop 正在跑"的判据;已知误差:Loop 异常退出留在 In Progress 的工单会被误判为在跑,CYC-390 用运行数据纠正。其余列(如 Blocked,接入原会话见 CYC-388)为 `none`。
+- Backlog / Todo(`chat: "new"`;Todo 里带 `auto` 的是排给 Loop 的,Loop 会自己接手,所以为 `none`,要细化先退回 Backlog):新开 codex 会话,模型取该 agent 在设置里的默认模型;第一条消息带工单号,agent 通过 itsaplan connector 读写工单,凭据由网关注入。不限制 agent 的工具(CYC-375 的强制部分推迟)。
+- In Progress(按启动列的角色,第一个启动列;`chat: "watch"`):只读旁观,不提供对话。这一列暂时被当作"Loop 正在跑"的判据;已知误差:Loop 异常退出留在 In Progress 的工单会被误判为在跑,CYC-390 用运行数据纠正。其余列(In Review、Blocked,接入原会话见 CYC-388)为 `none`。
 - **工作目录**:ticket 对话的会话跑在专用目录 `<Cycle 数据目录>/ticket-chat/`(安装版是 `~/.cycle/ticket-chat/`),首次使用时创建;不用用户的主目录,也没有默认回退(没配置目录就不创建会话)。
 - 会话已创建但第一条消息没发出去:失败结果带上 `sessionId`,页面给出"打开这个会话"。
 - 默认模型没设:不创建会话,返回 `needs_model`,页面提示去设置里配置,而不是创建失败。
-- 失败给固定词:`needs_model`、`not_allowed`(工单已不在 Backlog/Todo)、`no_key`、`offline`、`refused`、`auth_required`。埋点 `loop_ticket_chat` 只记结果。
+- 失败给固定词:`needs_model`、`not_allowed`(工单已不在可对话的列)、`no_key`、`offline`(连不上 itsaplan)、`refused`、`failed`(agent 没能启动或没收下消息)、`no_folder`(工作目录建不了)、`auth_required`。埋点 `loop_ticket_chat` 只记结果。
 
 ### Notice:需要人处理的事(桌面端派生,CYC-388)
 

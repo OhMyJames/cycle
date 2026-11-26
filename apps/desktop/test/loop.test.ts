@@ -408,7 +408,11 @@ describe("a conversation about a ticket (CYC-389)", () => {
     const { chatOf } = await import("../src/main/loop.ts");
     expect(chatOf("backlog")).toBe("new");
     expect(chatOf("unstarted")).toBe("new");
-    expect(chatOf("started")).toBe("watch");
+    expect(chatOf("started", "progress")).toBe("watch");
+    expect(chatOf("started", "review")).toBe("none");
+    expect(chatOf("started", "blocked")).toBe("none");
+    expect(chatOf("started")).toBe("none");
+    expect(chatOf("unstarted", undefined, true)).toBe("none");
     expect(chatOf("completed")).toBe("none");
   });
 
@@ -420,6 +424,10 @@ describe("a conversation about a ticket (CYC-389)", () => {
     const doing = await answerTicket(loop, "CYC", "CYC-9", () => {}, trackerWith(23));
     if (doing.kind !== "ok") throw new Error("expected a ticket");
     expect(doing.ticket.chat).toBe("watch");
+    // In Review (34) is not Loop's running column: no note, no button.
+    const review = await answerTicket(loop, "CYC", "CYC-9", () => {}, trackerWith(34));
+    if (review.kind !== "ok") throw new Error("expected a ticket");
+    expect(review.ticket.chat).toBe("none");
   });
 
   test("a Backlog or Todo ticket gets a session with its number and the default model", async () => {
@@ -480,7 +488,7 @@ describe("a conversation about a ticket (CYC-389)", () => {
       none.track,
       trackerWith(21),
     );
-    expect(result).toEqual({ kind: "failed", reason: "refused" });
+    expect(result).toEqual({ kind: "failed", reason: "no_folder" });
     expect(none.made).toEqual([]);
   });
 
@@ -497,7 +505,7 @@ describe("a conversation about a ticket (CYC-389)", () => {
     const result = await startTicketChat(loop, failing, "CYC", "CYC-9", track, trackerWith(21));
     expect(result).toEqual({
       kind: "failed",
-      reason: "offline",
+      reason: "failed",
       sessionId: "s1",
       locationId: "local",
     });

@@ -1297,14 +1297,14 @@ export type AppApi = {
   /** What needs a person in a Project: Blocked tickets, escalated reviews, sessions waiting on an answer (§17). */
   loopNotices(projectKey: string): Promise<LoopNoticesAnswer>;
   /**
-   * Changes one ticket's state with the person's own key. `approve` writes nothing unless `confirmed` is true: main
-   * refuses it, whatever the page did. Never throws for a failed write: the reason comes back.
-   */
-  /**
    * Opens a conversation with an agent about a Backlog or Todo ticket (CYC-389): main reads the ticket again, takes the
    * default model of the agent, makes the session with the ticket's number in its first message.
    */
   loopChat(projectKey: string, identifier: string): Promise<LoopChatResult>;
+  /**
+   * Changes one ticket's state with the person's own key. `approve` writes nothing unless `confirmed` is true: main
+   * refuses it, whatever the page did. Never throws for a failed write: the reason comes back.
+   */
   loopAct(
     projectKey: string,
     identifier: string,
@@ -1351,6 +1351,8 @@ export type LoopChatFailure =
   | "no_key"
   | "offline"
   | "refused"
+  | "failed"
+  | "no_folder"
   | "auth_required";
 export type LoopChatResult =
   | { kind: "started"; locationId: string; sessionId: string }
