@@ -1645,3 +1645,43 @@ test("when stopped, a step takes no new work item and is idle", async () => {
   expect(s.tracker.moves).toEqual([]);
   expect(await s.store.all()).toEqual([]);
 });
+
+test("a failing check passes the mid-output assertion error on to Dev", async () => {
+  const output = [
+    "a.test.ts:",
+    "error: expect(received).toBe(expected)",
+    "Expected: 42",
+    "Received: 41",
+    "      at <anonymous> (/wt/src/bundle.test.ts:12:9)",
+    "(fail) it assembles the new bundle... [16.92ms]",
+    ...Array.from({ length: 120 }, (_, i) => `(pass) later test number ${i} [1ms]`),
+    "Ran 1949 tests across 200 files.",
+  ].join("\n");
+  expect(output.length).toBeGreaterThan(3000);
+  const s = setup([ready()], { dev: [done(), done()], qa: [done(PASS)] });
+  const inner = makeExec(s.world);
+  let failOnce = true;
+  const pipeline = new Pipeline({
+    config: config({ stateDir: dir }),
+    tracker: s.tracker,
+    sessions: s.sessions,
+    exec: async (argv, o) => {
+      if (failOnce && argv.join(" ") === "bun run check") {
+        failOnce = false;
+        return { code: 1, output, timedOut: false };
+      }
+      return inner(argv, o);
+    },
+    store: s.store,
+    clock: { now: () => new Date("2026-11-25T00:00:00Z") },
+    log: () => {},
+    env: { PATH: "/bin" },
+  });
+  await pipeline.step();
+  const dev = s.sessions.prompts.filter((p) => p.role === "dev");
+  expect(dev.length).toBeGreaterThanOrEqual(2);
+  const second = dev[1]?.prompt ?? "";
+  expect(second).toContain("Expected: 42");
+  expect(second).toContain("Received: 41");
+  expect(second).toContain("Ran 1949 tests across 200 files.");
+});

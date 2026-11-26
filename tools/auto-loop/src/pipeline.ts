@@ -8,6 +8,7 @@
 
 import { CriteriaBook, type Criterion } from "./criteria.ts";
 import { deliverEnv, GIT_SAFE, verifyEnv } from "./env.ts";
+import { summarizeFailure } from "./failure.ts";
 import { testLayers } from "./layers.ts";
 import {
   enableAutoMerge,
@@ -675,7 +676,7 @@ export class Pipeline {
         checks.push({ command: argv.join(" "), passed });
         if (!passed) {
           failures.push(
-            `\`${argv.join(" ")}\` ${done.timedOut ? "timed out" : `failed (exit ${done.code})`}:\n${tail(done.output)}`,
+            `\`${argv.join(" ")}\` ${done.timedOut ? "timed out" : `failed (exit ${done.code})`}:\n${summarizeFailure(done.output).trim()}`,
           );
           break;
         }
@@ -694,7 +695,7 @@ export class Pipeline {
         });
         if (done.status !== "passed")
           failures.push(
-            `Criterion ${done.id} (${done.text}) did not pass:\n${tail(done.evidence ?? "")}`,
+            `Criterion ${done.id} (${done.text}) did not pass:\n${summarizeFailure(done.evidence ?? "").trim()}`,
           );
       }
     }
