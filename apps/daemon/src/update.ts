@@ -5,7 +5,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { appVersionPath } from "./data-dir.ts";
-import { VERSION_FORMAT } from "./facing/connection.ts";
+import { olderThan, VERSION_FORMAT } from "./version.ts";
 
 /** Where releases are published: the same repository `install.sh` and the desktop app use. */
 const RELEASE_REPO = "OhMyJames/cycle";
@@ -23,6 +23,8 @@ export const recordedVersion = async (dataDir: string): Promise<string | undefin
 export type Install =
   /** In the desktop app's bundle (macOS): it is updated with the app. */
   | { kind: "bundled" }
+  /** The installer only supports Linux (macOS builds are inside the app). */
+  | { kind: "unsupported"; platform: string }
   /** Run from source: there is no installed program to replace. */
   | { kind: "source" }
   /** Compiled, but not where `install.sh` puts it. */
@@ -30,8 +32,13 @@ export type Install =
   /** Where `install.sh` puts it: `<prefix>/share/cycle/cycle`. */
   | { kind: "installed"; prefix: string };
 
-export const installOf = (execPath: string, compiled: boolean): Install => {
+export const installOf = (
+  execPath: string,
+  compiled: boolean,
+  platform: string = process.platform,
+): Install => {
   if (execPath.includes(".app/Contents/")) return { kind: "bundled" };
+  if (platform !== "linux") return { kind: "unsupported", platform };
   if (!compiled) return { kind: "source" };
   const share = dirname(dirname(execPath));
   if (
@@ -58,46 +65,26 @@ export type UpdateDeps = {
   isRunning: () => Promise<boolean>;
   /** Stops the running daemon (waiting for work unless `force`); the exit code `stopDaemon` gives. */
   stop: (force: boolean) => Promise<number>;
-  /** Starts a daemon and resolves once it is listening; false when it did not. */
-  start: () => Promise<boolean>;
+  /** The version the running daemon says it is; undefined when it cannot be asked. */
+  runningVersion: () => Promise<string | undefined>;
+  /** Starts the installed program as a daemon and resolves once it is listening; false when it did not. */
+  start: (installed: string) => Promise<boolean>;
   say: (line: string) => void;
   /** Where the installer's script is put. Default: a new temporary directory. */
   workDir?: () => Promise<string>;
 };
 
-/** Exit codes: 0 done (or nothing to do), 1 failed, 2 nothing was asked for that can be done. */
-export const runUpdate = async (deps: UpdateDeps): Promise<number> => {
+/**
+ * Downloads install.sh, checks it against the sha256 beside it, and runs it. undefined when installed, else the exit
+ * code. The check is of integrity (the file is the one that was published); both files come from the same release, so
+ * it does not say who published them.
+ */
+const installRelease = async (
+  deps: UpdateDeps,
+  target: string,
+  prefix: string,
+): Promise<number | undefined> => {
   const { say } = deps;
-  if (deps.install.kind === "bundled") {
-    say("This daemon is part of the desktop app and is updated with it. Nothing was changed.");
-    return 2;
-  }
-  if (deps.install.kind !== "installed") {
-    say(
-      deps.install.kind === "source"
-        ? "This daemon runs from source: there is no installed program to replace."
-        : "This program is not where the installer puts it (<prefix>/share/cycle/cycle): not replacing it.",
-    );
-    return 2;
-  }
-  const target = deps.requested ?? (await deps.recorded());
-  if (target === undefined) {
-    say("No desktop app has connected to this daemon yet, so there is no version to match.");
-    say("Say which: cycle update --version <x.y.z>");
-    return 2;
-  }
-  if (!VERSION_FORMAT.test(target)) {
-    say(`${target} is not a release version (expected x.y.z).`);
-    return 2;
-  }
-  say(
-    `Target: ${target}${deps.requested === undefined ? " (the desktop app's version)" : ""}; this is ${deps.version}.`,
-  );
-  if (target === deps.version) {
-    say(`Already ${target}. Nothing to do.`);
-    return 0;
-  }
-
   const dir = await (deps.workDir ?? (() => mkdtemp(join(tmpdir(), "cycle-update-"))))();
   try {
     say(`Downloading install.sh for v${target}...`);
@@ -123,7 +110,7 @@ export const runUpdate = async (deps: UpdateDeps): Promise<number> => {
     }
     await writeFile(join(dir, "install.sh"), script, { mode: 0o755 });
     say(`Installing v${target}...`);
-    const code = await deps.runInstaller(dir, `v${target}`, deps.install.prefix);
+    const code = await deps.runInstaller(dir, `v${target}`, prefix);
     if (code !== 0) {
       say(
         `The installer failed (exit ${code}). The current version stays unless the installer got as far as replacing it.`,
@@ -133,7 +120,65 @@ export const runUpdate = async (deps: UpdateDeps): Promise<number> => {
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+  return undefined;
+};
 
+/** Exit codes: 0 done (or nothing to do), 1 failed, 2 nothing was asked for that can be done. */
+export const runUpdate = async (deps: UpdateDeps): Promise<number> => {
+  const { say } = deps;
+  if (deps.install.kind === "bundled") {
+    say("This daemon is part of the desktop app and is updated with it. Nothing was changed.");
+    return 2;
+  }
+  if (deps.install.kind === "unsupported") {
+    say(
+      `cycle update installs Linux releases only; this is ${deps.install.platform}. Nothing was changed.`,
+    );
+    return 2;
+  }
+  if (deps.install.kind !== "installed") {
+    say(
+      deps.install.kind === "source"
+        ? "This daemon runs from source: there is no installed program to replace."
+        : "This program is not where the installer puts it (<prefix>/share/cycle/cycle): not replacing it.",
+    );
+    return 2;
+  }
+  const target = deps.requested ?? (await deps.recorded());
+  if (target === undefined) {
+    say("No desktop app has connected to this daemon yet, so there is no version to match.");
+    say("Say which: cycle update --version <x.y.z>");
+    return 2;
+  }
+  if (!VERSION_FORMAT.test(target)) {
+    say(`${target} is not a release version (expected x.y.z).`);
+    return 2;
+  }
+  say(
+    `Target: ${target}${deps.requested === undefined ? " (the desktop app's version)" : ""}; this is ${deps.version}.`,
+  );
+  let install = true;
+  if (target === deps.version) {
+    // An earlier update may have replaced the program and not got the daemon over: that is finished here.
+    const running = (await deps.isRunning())
+      ? await deps.runningVersion().catch(() => undefined)
+      : undefined;
+    if (running === undefined || running === target) {
+      say(`Already ${target}. Nothing to do.`);
+      return 0;
+    }
+    say(
+      `The installed program is ${target} but the running daemon is ${running}: switching it over.`,
+    );
+    install = false;
+  } else if (olderThan(target, deps.version)) {
+    say(`Warning: ${target} is older than this ${deps.version}: this is a downgrade.`);
+  }
+
+  if (install) {
+    const failed = await installRelease(deps, target, deps.install.prefix);
+    if (failed !== undefined) return failed;
+  }
   if (!(await deps.isRunning())) {
     say(`Installed ${target}. No daemon is running; the next connection starts it.`);
     return 0;
@@ -154,7 +199,7 @@ export const runUpdate = async (deps: UpdateDeps): Promise<number> => {
     return 1;
   }
   say("Starting the new version...");
-  if (!(await deps.start())) {
+  if (!(await deps.start(join(deps.install.prefix, "share/cycle/cycle")))) {
     say(
       "The new daemon did not start listening. See `cycle logs`; the next connection tries again.",
     );

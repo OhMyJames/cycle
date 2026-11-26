@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { chmod, readFile, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { methods } from "@agentclientprotocol/sdk/experimental/v2";
 import { CycleClient, connectUnix } from "@cycle/client";
+import { pathsFor } from "../src/config.ts";
 import { Daemon, isListening, listenUnix } from "../src/index.ts";
+import { startDetached } from "../src/proxy.ts";
 import { askWorking, stopDaemon } from "../src/stop.ts";
 import { installOf, recordedVersion, runUpdate, type UpdateDeps } from "../src/update.ts";
 import { connectClient, until } from "./client.ts";
@@ -71,6 +73,7 @@ const harness = (over: Partial<UpdateDeps> = {}) => {
       return 0;
     },
     isRunning: async () => false,
+    runningVersion: async () => undefined,
     stop: async (force) => {
       calls.stops.push(force);
       return 0;
@@ -192,12 +195,13 @@ test("a program inside the desktop app is not replaced", async () => {
 });
 
 test("where a program is decides whether it can be replaced", () => {
-  expect(installOf("/home/u/.local/share/cycle/cycle", true)).toEqual({
+  expect(installOf("/home/u/.local/share/cycle/cycle", true, "linux")).toEqual({
     kind: "installed",
     prefix: "/home/u/.local",
   });
-  expect(installOf("/usr/bin/bun", false).kind).toBe("source");
-  expect(installOf("/opt/x/cycle", true).kind).toBe("unknown");
+  expect(installOf("/usr/bin/bun", false, "linux").kind).toBe("source");
+  expect(installOf("/opt/x/cycle", true, "linux").kind).toBe("unknown");
+  expect(installOf("/Users/u/.local/share/cycle/cycle", true, "darwin").kind).toBe("unsupported");
 });
 
 test("with no daemon running only the program is replaced", async () => {
@@ -228,7 +232,7 @@ const switching = (
       pollMs: 20,
       stopWithinMs: 2_000,
     }),
-  start: async () => {
+  start: async (_installed: string) => {
     const next = await serve();
     started.new = next.stop;
     return isListening(socket);
@@ -293,4 +297,55 @@ test("the recorded version file holds just the version", async () => {
   await client.close();
   await until(() => Bun.file(join(dir, "app-version")).size > 0, "the file");
   expect((await readFile(join(dir, "app-version"), "utf8")).trim()).toBe("1.2.3");
+});
+
+test("the same version with an older daemon still running switches it over, without installing", async () => {
+  let running = true;
+  const h = harness({
+    recorded: async () => "0.3.1",
+    isRunning: async () => running,
+    runningVersion: async () => "0.3.0",
+    stop: async () => {
+      running = false;
+      return 0;
+    },
+  });
+  expect(await runUpdate(h.deps)).toBe(0);
+  expect(h.calls.installs).toEqual([]);
+  expect(h.calls.starts).toBe(1);
+  const same = harness({
+    recorded: async () => "0.3.1",
+    isRunning: async () => true,
+    runningVersion: async () => "0.3.1",
+  });
+  expect(await runUpdate(same.deps)).toBe(0);
+  expect(same.calls.starts).toBe(0);
+});
+
+test("a lower target is a downgrade and is warned about; macOS is refused up front", async () => {
+  const h = harness({ recorded: async () => "0.3.0" });
+  expect(await runUpdate(h.deps)).toBe(0);
+  expect(h.said.join("\n")).toContain("downgrade");
+  const mac = harness({
+    recorded: async () => "0.3.5",
+    install: installOf("/Users/u/.local/share/cycle/cycle", true, "darwin"),
+  });
+  expect(await runUpdate(mac.deps)).toBe(2);
+  expect(mac.calls.downloads).toEqual([]);
+  expect(mac.said.join("\n")).toContain("Linux");
+});
+
+test("a daemon is started from the program that was just put in place, not the one that was running", async () => {
+  // The installer replaces the file with a rename: what was there is a different file from what is there now.
+  const bin = join(dir, "share-cycle");
+  const mark = join(dir, "started-by");
+  const script = (name: string) => `#!/bin/sh\necho ${name} > "${mark}"\n`;
+  await Bun.write(bin, script("old"));
+  await Bun.write(`${bin}.new`, script("new"));
+  await chmod(bin, 0o755);
+  await chmod(`${bin}.new`, 0o755);
+  await rename(`${bin}.new`, bin);
+  startDetached(pathsFor(dir), [bin]);
+  await waitFor(async () => await Bun.file(mark).exists(), "the program to run");
+  expect((await readFile(mark, "utf8")).trim()).toBe("new");
 });

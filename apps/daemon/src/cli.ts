@@ -1,11 +1,12 @@
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { CycleClient, connectUnix } from "@cycle/client";
 import { parseCli } from "./args.ts";
 import { defaultDataDir, loadConfig, pathsFor } from "./config.ts";
 import type { Harness } from "./harness.ts";
 import { tailLines } from "./logger.ts";
-import { proxy, startDetached } from "./proxy.ts";
+import { logTail, proxy, startDetached } from "./proxy.ts";
 import { compiled } from "./self.ts";
 import { onSignalsAndCrashes, serve } from "./serve.ts";
 import { askWorking, stopDaemon } from "./stop.ts";
@@ -206,10 +207,27 @@ export const runCli = async (argv: string[], harnesses: readonly Harness[]): Pro
           say: (line) => console.log(line),
         });
       },
-      start: async () => {
-        startDetached(paths);
-        for (const at = Date.now(); Date.now() - at < 30_000; await Bun.sleep(100))
+      runningVersion: async () => {
+        const client = new CycleClient({
+          connect: () => connectUnix(paths.socket),
+          name: "cycle-update",
+        });
+        try {
+          await client.start();
+          return client.serverVersion;
+        } finally {
+          await client.close();
+        }
+      },
+      // From the installed path, not this process's own: the installer has just replaced that file.
+      start: async (installed) => {
+        const child = startDetached(paths, [installed]);
+        for (const at = Date.now(); Date.now() - at < 30_000; await Bun.sleep(100)) {
           if (await isListening(paths.socket)) return true;
+          if (child.exited()) break;
+        }
+        const said = logTail(paths);
+        if (said !== "") console.log(said);
         return false;
       },
       say: (line) => console.log(line),
