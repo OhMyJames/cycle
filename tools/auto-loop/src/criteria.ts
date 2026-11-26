@@ -125,6 +125,31 @@ export const verifyArgv = (
 const tail = (text: string, max: number): string =>
   text.length <= max ? text : `…${text.slice(text.length - max)}`;
 
+const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
+
+/**
+ * The counts on bun test's closing lines (" 12 pass", " 1 skip", " 0 fail"), read as `scripts/integration-suites.ts`
+ * `parseSummary` reads them: the last such line wins. A pass count that is not there is undefined, so "no summary" can
+ * be told from "0 pass".
+ */
+export const readSummary = (
+  raw: string,
+): { pass: number | undefined; skip: number; fail: number } => {
+  const output = raw.replace(ANSI, "");
+  const count = (word: string): number | undefined => {
+    const all = [...output.matchAll(new RegExp(`^\\s*(\\d+) ${word}\\s*$`, "gm"))];
+    const last = all[all.length - 1];
+    return last ? Number(last[1]) : undefined;
+  };
+  return { pass: count("pass"), skip: count("skip") ?? 0, fail: count("fail") ?? 0 };
+};
+
+/** What the loop actually runs: `bun run test:integration <suite>` gets `--strict`, so a skipped suite is a failure. */
+export const withStrict = (argv: string[]): string[] =>
+  argv.length === 4 && argv[0] === "bun" && argv[1] === "run" && argv[2] === "test:integration"
+    ? [...argv, "--strict"]
+    : argv;
+
 export class CriteriaBook {
   #items: Criterion[];
 
@@ -178,16 +203,30 @@ export class CriteriaBook {
     if (item === undefined) throw new Error(`no criterion ${id}`);
     const evidence: string[] = [];
     let passed = true;
-    for (const argv of item.verify) {
+    for (const stored of item.verify) {
+      const argv = withStrict(stored);
       const result = await run.exec(argv, {
         cwd: run.cwd,
         env: run.env,
         timeoutMs: run.timeoutMs,
       });
       const outcome = result.timedOut ? "timed out" : `exit ${result.code}`;
-      const failed = result.code !== 0 || result.timedOut;
+      let failed = result.code !== 0 || result.timedOut;
+      let note = "";
+      if (!failed && argv[0] === "bun" && argv[1] === "test") {
+        const { pass, skip } = readSummary(result.output);
+        if (pass === undefined) {
+          failed = true;
+          note = "no test summary in the output: cannot tell that any test ran\n";
+        } else if (pass === 0) {
+          failed = true;
+          note = `${pass} pass, ${skip} skip: no test passed\n`;
+        } else if (skip > 0) {
+          note = `${pass} pass, ${skip} skip\n`;
+        }
+      }
       const shown = failed ? summarizeFailure(result.output) : tail(result.output, 1500);
-      evidence.push(`$ ${argv.join(" ")}\n${outcome}\n${shown}`);
+      evidence.push(`$ ${argv.join(" ")}\n${outcome}\n${note}${shown}`);
       if (failed) {
         passed = false;
         break;
