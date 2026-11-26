@@ -14,9 +14,11 @@ import { summarizeFailure } from "./failure.ts";
 import { withRepoLock } from "./git-lock.ts";
 import { testLayers } from "./layers.ts";
 import {
+  disableAutoMerge,
   enableAutoMerge,
   type PrState,
   postPrComment,
+  readAutoMerge,
   readCiStatus,
   readPrMergeStatus,
   readPrState,
@@ -496,7 +498,11 @@ export class Pipeline {
    * After auto-merge is enabled, waits for the pull request to actually merge. GitHub waits silently on a conflict, so a
    * conflicting, closed or never-merging PR blocks the run instead of being taken as delivered.
    */
-  async #confirmMerged(run: RunRecord, prUrl: string, worktree: string): Promise<void> {
+  async #confirmMerged(
+    run: RunRecord,
+    prUrl: string,
+    worktree: string,
+  ): Promise<"merged" | "conflict"> {
     const { config, store } = this.#d;
     const sleep = this.#d.sleep ?? ((ms: number) => Bun.sleep(ms));
     const polls = Math.max(
@@ -517,33 +523,14 @@ export class Pipeline {
         last = `读取 PR 合并状态失败：${tail(read.error)}`;
         continue;
       }
-      if (read.status === "merged") return;
+      if (read.status === "merged") return "merged";
       if (read.status === "closed") await this.#closedBlock(run, prUrl);
-      if (read.status === "conflicting") {
-        await this.#conflictBlock(run, prUrl, worktree, "已开启自动合并，但");
-      }
+      if (read.status === "conflicting") return "conflict";
       last = read.status === "mergeable" ? "PR 可合并但尚未合并" : "GitHub 尚未给出合并状态";
     }
     await store.event(run.key, "merge_timeout", { prUrl });
     throw new Blocked(
       `已开启自动合并，但 PR 在 ${Math.round(config.mergeTimeoutMs / 60_000)} 分钟内没有合并（${last}）：${prUrl}。`,
-    );
-  }
-
-  /** Records `merge_conflict` and blocks: the PR conflicts with the base, so GitHub runs no CI and will not merge it. */
-  async #conflictBlock(
-    run: RunRecord,
-    prUrl: string,
-    worktree: string,
-    lead: string,
-  ): Promise<never> {
-    const { config, store } = this.#d;
-    const files = await this.#conflictFiles(worktree);
-    await store.event(run.key, "merge_conflict", { prUrl, files: files.length });
-    throw new Blocked(
-      `${lead}PR 与 ${config.baseBranch} 冲突，GitHub 不会跑 CI 也不会合并它：${prUrl}。${
-        files.length > 0 ? `冲突文件：${files.join("、")}。` : ""
-      }需要把 ${config.baseBranch} 合并进该分支并解决冲突，推送后 CI 通过即会自动合并。`,
     );
   }
 
@@ -558,12 +545,33 @@ export class Pipeline {
     save: (patch: Partial<RunRecord>) => Promise<void>,
   ): Promise<void> {
     const { config } = this.#d;
+    // Before anything else: pushing to a PR with auto-merge on does not turn it off (we have write access), so it would
+    // merge on green CI without the new commits being reviewed again. Read it every time; an unreadable state blocks.
+    const auto = await readAutoMerge({
+      prRef: prUrl,
+      exec: this.#d.exec,
+      cwd: worktree,
+      env: this.#d.env,
+      timeoutMs: config.commandTimeoutMs,
+    });
+    if (!auto.ok) throw new Blocked(`处理冲突前读取自动合并状态失败，不推送：${tail(auto.error)}`);
+    if (auto.enabled) {
+      const off = await disableAutoMerge({
+        prRef: prUrl,
+        exec: this.#d.exec,
+        cwd: worktree,
+        env: this.#d.env,
+        timeoutMs: config.commandTimeoutMs,
+      });
+      if (!off.ok) throw new Blocked(`处理冲突前关闭自动合并失败，不推送：${tail(off.error)}`);
+      await this.#d.store.event(run.key, "auto_merge_disabled", { prUrl });
+    }
     // A merge the loop started and a restart cut off is continued; it is not a second attempt.
     if (run.conflict === null && run.conflictRound >= config.maxConflictRounds) {
       const files = await this.#conflictFiles(worktree);
       await this.#d.store.event(run.key, "merge_conflict", { prUrl, files: files.length });
       throw new Blocked(
-        `等待 CI 时发现 PR 与 ${config.baseBranch} 冲突，已自动处理过 ${run.conflictRound} 次，不再自动合并：${prUrl}。${
+        `发现 PR 与 ${config.baseBranch} 冲突，已自动处理过 ${run.conflictRound} 次，不再自动合并：${prUrl}。${
           files.length > 0 ? `冲突文件：${files.join("、")}。` : ""
         }需要人把 ${config.baseBranch} 合并进该分支并解决冲突。`,
       );
@@ -1173,7 +1181,7 @@ export class Pipeline {
     if (pushed.code !== 0) throw new Blocked(`git push 失败：${tail(pushed.output)}`);
 
     const commits = await this.#git(
-      ["log", "--reverse", "--format=%s", `${config.baseRef}..HEAD`],
+      ["log", "--reverse", "--no-merges", "--format=%s", `${config.baseRef}..HEAD`],
       worktree,
     );
     const summary = commits.output
@@ -1417,6 +1425,7 @@ export class Pipeline {
           diff.output,
           config.ciChecks,
           retryNote,
+          run.resolvedFiles,
         );
         const result = await this.#turn(run.key, reviewSessionId, prompt, {
           role: "review",
@@ -1566,7 +1575,13 @@ export class Pipeline {
           timeoutMs: config.commandTimeoutMs,
         });
         if (merged.ok) {
-          await this.#confirmMerged(run, prUrl, worktree);
+          const outcome = await this.#confirmMerged(run, prUrl, worktree);
+          if (outcome === "conflict") {
+            // Not delivered: merge the base in (auto-merge is turned off first), then CI and review run again.
+            await this.#handleConflict(run, prUrl, worktree, save);
+            this.#ciGreenSha.delete(run.key);
+            return undefined;
+          }
           await tracker.comment(
             issue,
             `已开 PR：${prUrl}\nCI（${config.ciChecks.join(" / ")}）全部通过，独立评审结论为合并（merge：${verdict.summary}），已开启 GitHub 自动合并（squash）。`,

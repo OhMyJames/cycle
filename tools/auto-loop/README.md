@@ -21,6 +21,16 @@ bun tools/auto-loop/src/cli.ts stats       # 自主完成率（只算 Loop 自�
 
 配置文件可选字段：`planUrl`、`autoLabel`（默认 `auto`）、`featureType`、`bugType`（默认 `Feature`、`Bug`，按名字在 `get_project` 里找类型 id）、`devAgent`、`qaAgent`、`reviewAgent`（默认 `claude`）。必填项缺失时启动报错并指出缺哪一项。不再读 `AUTO_LOOP_*` 环境变量；`CYCLE_HOME`、`CYCLE_SOCKET` 仍用于找 daemon。`workers`（正整数，可选）：该 Project 的 worker 数，命令行 `--workers N` 优先，都没有为 1；写错时启动报错并指出是哪个 Project。改配置后重启生效。
 
+## 冲突处理（CYC-411）
+
+PR 与 main 冲突时，Loop 自己处理，每个工单最多处理 1 次：
+
+- 触发点：等 CI 时读到冲突；开启自动合并后等合并时读到冲突。两处都先把 main 合并进分支（不 rebase、不强推）；干净就继续验证、QA、推送；真有冲突就交给原 Dev 会话解决，按仓库状态判定是否解决。
+- 处理任何冲突之前，先读 PR 是否开着自动合并（`gh pr view --json autoMergeRequest`），开着就关（`gh pr merge <pr> --disable-auto`）。原因：GitHub 文档说，有写权限的人往开了自动合并的 PR 推送，自动合并不会被关掉；Loop 的 token 有写权限，不先关，解决冲突的提交会在 CI 变绿后绕过重新评审直接合并。因 `merge_timeout` 转 Blocked 后被人放回的工单自动合并可能仍开着，所以每个触发点都检查。
+- 之后重新等 CI、重新评审；评审再次为 merge 才重新开启自动合并，确认合并后才记 `delivered`。
+- 转 Blocked 的条件：读不到或关不掉自动合并（不推送）；已处理过 1 次又冲突（原因写明冲突文件和次数）；合并、解决失败。
+- PR 描述的提交列表不列合并提交（`git log --no-merges`）。
+
 ## 调参（tuning，CYC-441）
 
 每个 Project 可选写一个 `tuning` 对象，字段都可不写，不写就用默认值；单位写在字段名里。
