@@ -9,6 +9,7 @@
 import { CriteriaBook, type Criterion } from "./criteria.ts";
 import { deliverEnv, GIT_SAFE, verifyEnv } from "./env.ts";
 import { summarizeFailure } from "./failure.ts";
+import { withRepoLock } from "./git-lock.ts";
 import { testLayers } from "./layers.ts";
 import {
   enableAutoMerge,
@@ -526,11 +527,13 @@ export class Pipeline {
         throw new Blocked(
           `PR 与 ${config.baseBranch} 冲突，但工作区有未提交的改动，不自动合并：\n${tail(status.output)}`,
         );
-      const fetched = await this.#d.exec(["git", ...GIT_SAFE, "fetch", config.remote], {
-        cwd: worktree,
-        env: deliverEnv(this.#d.env),
-        timeoutMs: config.commandTimeoutMs,
-      });
+      const fetched = await withRepoLock(config.repoRoot, () =>
+        this.#d.exec(["git", ...GIT_SAFE, "fetch", config.remote], {
+          cwd: worktree,
+          env: deliverEnv(this.#d.env),
+          timeoutMs: config.commandTimeoutMs,
+        }),
+      );
       if (fetched.code !== 0) throw new Blocked(`合并前 git fetch 失败：${tail(fetched.output)}`);
     }
     // The count is saved before the merge, so a kill in the middle cannot let the same attempt be taken twice.
@@ -580,7 +583,9 @@ export class Pipeline {
   async #conflictFiles(worktree: string): Promise<string[]> {
     const { config, exec, env } = this.#d;
     const opts = { cwd: worktree, env: deliverEnv(env), timeoutMs: config.commandTimeoutMs };
-    await exec(["git", ...GIT_SAFE, "fetch", config.remote], opts);
+    await withRepoLock(config.repoRoot, () =>
+      exec(["git", ...GIT_SAFE, "fetch", config.remote], opts),
+    );
     const merged = await exec(
       [
         "git",
@@ -638,11 +643,13 @@ export class Pipeline {
     if (run.devSessionId === null) {
       // The loop fetches itself: whether the daemon may is undecided (docs/protocol.md, "待定").
       // Fetching needs the remote's credentials; no session has run in the main checkout, so this is safe to give them.
-      const fetched = await this.#d.exec(["git", ...GIT_SAFE, "fetch", config.remote], {
-        cwd: config.repoRoot,
-        env: deliverEnv(this.#d.env),
-        timeoutMs: config.commandTimeoutMs,
-      });
+      const fetched = await withRepoLock(config.repoRoot, () =>
+        this.#d.exec(["git", ...GIT_SAFE, "fetch", config.remote], {
+          cwd: config.repoRoot,
+          env: deliverEnv(this.#d.env),
+          timeoutMs: config.commandTimeoutMs,
+        }),
+      );
       if (fetched.code !== 0) throw new Blocked(`git fetch 失败：${tail(fetched.output)}`);
       const created = await sessions.create({
         role: "dev",

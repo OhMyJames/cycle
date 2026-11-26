@@ -1612,3 +1612,17 @@ test("a command in both testLayers and criteria, retried to a pass, is not execu
   expect(retried[0]).toMatchObject({ passed: true, attempt: 1 });
   expect(events.some((e) => e.kind === "round_failed")).toBe(false);
 });
+
+test("two runs claiming at once never run git fetch at the same time", async () => {
+  const s = setup([ready(), ready({ number: 2, key: "CYC-2", id: 2 })], {
+    dev: dones(4),
+    qa: passes(4),
+  });
+  s.world.fetchLog = [];
+  const results = await Promise.all([s.pipeline.step(), s.pipeline.step()]);
+  expect(results.map((r) => r.status)).toEqual(["delivered", "delivered"]);
+  expect(s.world.fetchLog.length).toBeGreaterThanOrEqual(4);
+  expect(s.world.fetchLog.join(",")).toBe(
+    Array.from({ length: s.world.fetchLog.length / 2 }, () => "start,end").join(","),
+  );
+});
