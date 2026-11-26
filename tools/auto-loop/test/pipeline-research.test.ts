@@ -482,6 +482,53 @@ test("a recovered research run with no saved findings is told to carry on", asyn
   expect(last?.prompt).toContain("The loop was restarted. Carry on with CYC-1.");
 });
 
+test("a restart between making the report and attaching it attaches it once and makes no second one", async () => {
+  const s = setup({ research: [done(reply())], research_qa: [done(PASS)] });
+  const linkDocument = s.tracker.linkDocument.bind(s.tracker);
+  s.tracker.linkDocument = async () => {
+    throw new Error("killed");
+  };
+  await expect(s.pipeline.step()).rejects.toThrow("killed");
+  s.tracker.linkDocument = linkDocument;
+  expect((await s.restart().step()).status).toBe("researched");
+  expect(s.tracker.written).toHaveLength(1);
+  expect(s.tracker.docLinks).toEqual(["CYC-1:1000"]);
+});
+
+test("a restart after the closing comment, before Done, does not comment again", async () => {
+  const s = setup({ research: [done(reply())], research_qa: [done(PASS)] });
+  const move = s.tracker.move.bind(s.tracker);
+  s.tracker.move = async (i, stage) => {
+    if (stage === "done") throw new Error("killed");
+    return move(i, stage);
+  };
+  await expect(s.pipeline.step()).rejects.toThrow("killed");
+  expect(s.tracker.comments).toHaveLength(1);
+  s.tracker.move = move;
+  expect((await s.restart().step()).status).toBe("researched");
+  expect(s.tracker.comments).toHaveLength(1);
+  expect(s.tracker.moves.at(-1)).toBe("CYC-1:done");
+  expect(s.tracker.issues).toHaveLength(3);
+  expect((await s.store.load("CYC-1"))?.phase).toBe("done");
+});
+
+test("a block whose reason quotes a credential from QA names its kind only", async () => {
+  const token = `ghp_${"b2".repeat(18)}`;
+  const leakyFail = `${CHECKED}<verdict>{"pass":false,"findings":[{"severity":"major","where":"问题 1","problem":"the report quotes ${token}","fix":"drop it"}]}</verdict>`;
+  const s = setup(
+    { research: [done(reply())], research_qa: [done(leakyFail)] },
+    { maxFixRounds: 0 },
+  );
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("blocked");
+  expect(s.tracker.comments).toHaveLength(1);
+  expect(s.tracker.comments[0]).toContain("github-token");
+  expect(s.tracker.comments[0]).not.toContain(token);
+  if (result.status === "blocked") expect(result.reason).not.toContain(token);
+  // The research session still gets the findings in full when it is put back.
+  expect((await s.store.load("CYC-1"))?.findings).toContain(token);
+});
+
 // ---- cleanup ----
 
 const removals = (s: ReturnType<typeof setup>) =>

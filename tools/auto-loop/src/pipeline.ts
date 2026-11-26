@@ -1018,12 +1018,19 @@ export class Pipeline {
   async #block(
     run: RunRecord,
     issue: Issue,
-    reason: string,
+    said: string,
     save: (patch: Partial<RunRecord>) => Promise<void>,
     resumeFrom?: RunRecord["phase"],
   ): Promise<StepResult> {
     const { tracker, store } = this.#d;
     const research = run.kind === "research";
+    // A research block can quote what the sessions wrote (QA's findings, draft titles), and the tracker is their only
+    // way out: the same check as before publishing, naming the kinds only.
+    const leaked = research ? findSecrets(said) : [];
+    const reason =
+      leaked.length > 0
+        ? `卡住的原因里有疑似凭据（${leaked.join("、")}），没有贴出原文；详情在调研会话和 QA 会话里。`
+        : said;
     const from =
       run.phase === "blocked" || run.phase === "done" ? (research ? "research" : "dev") : run.phase;
     await save({ phase: "blocked", blockedReason: reason, resumeFrom: resumeFrom ?? from });
