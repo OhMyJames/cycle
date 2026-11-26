@@ -75,6 +75,8 @@ export type Deps = {
   env: Record<string, string | undefined>;
   /** Waits between CI status polls. Defaults to `Bun.sleep`. */
   sleep?: (ms: number) => Promise<void>;
+  /** True once the loop has been asked to stop: no new work item is taken, runs already under way go on. */
+  stopped?: () => boolean;
 };
 
 /** A run cannot go on without a person. The message is what the person is told. */
@@ -86,40 +88,77 @@ const branchOf = (number: number) => `auto/cyc-${number}`;
 
 export class Pipeline {
   readonly #d: Deps;
+  /** Keys of the runs some step is working on now. */
+  readonly #active = new Set<string>();
+  #lock: Promise<void> = Promise.resolve();
 
   constructor(deps: Deps) {
     this.#d = deps;
   }
 
-  /** Takes up one thing: a run to go on with, or else the next work item. */
+  /** Takes up one thing: a run to go on with, or else the next work item. Several steps may run at once. */
   async step(): Promise<StepResult> {
-    const { config, tracker, store } = this.#d;
-    if (config.dryRun) return this.#dryRun();
+    if (this.#d.config.dryRun) return this.#dryRun();
 
+    const chosen = await this.#exclusive(() => this.#choose());
+    if ("result" in chosen) return chosen.result;
+    try {
+      if (chosen.resume !== undefined) {
+        return await this.#resume(chosen.resume.run, chosen.resume.issue, chosen.resume.byPerson);
+      }
+      return await this.#drive(chosen.run, chosen.issue, chosen.book, false);
+    } finally {
+      this.#active.delete(chosen.key);
+    }
+  }
+
+  /** Runs `fn` after every earlier call has finished, one at a time. A failure does not stop the later ones. */
+  #exclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const result = this.#lock.then(fn);
+    this.#lock = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  /**
+   * Cleanup, then the choice: a run to go on with, or else a new work item (claimed here). Only one runs at a time;
+   * the chosen key is in `#active` before the lock is released, so no other step takes the same work item.
+   */
+  async #choose(): Promise<
+    | { result: StepResult }
+    | { key: string; resume: { run: RunRecord; issue: Issue; byPerson: boolean } }
+    | { key: string; resume?: undefined; run: RunRecord; issue: Issue; book: CriteriaBook }
+  > {
+    const { config, tracker, store } = this.#d;
     await this.#cleanup();
 
-    for (const run of (await store.unfinished()).sort((a, b) =>
-      a.startedAt.localeCompare(b.startedAt),
-    )) {
+    const unfinished = await store.unfinished();
+    for (const run of unfinished.sort((a, b) => a.startedAt.localeCompare(b.startedAt))) {
+      if (this.#active.has(run.key)) continue;
       const issue = await tracker.get(run.issueNumber);
       const putBack =
         issue.columnId === config.columns.todo && issue.labelIds.includes(config.autoLabelId);
-      if (run.phase === "blocked") {
-        if (!putBack) continue;
-        return this.#resume(run, issue, true);
-      }
-      // Not blocked and not done: the loop that was on it is gone (this one holds the lock).
-      return this.#resume(run, issue, false);
+      if (run.phase === "blocked" && !putBack) continue;
+      // Not blocked and not done: the loop that was on it is gone (no step holds it).
+      this.#active.add(run.key);
+      return { key: run.key, resume: { run, issue, byPerson: run.phase === "blocked" } };
     }
 
-    const issue = pickNext(await tracker.listTodo(), config);
-    if (issue === undefined) return { status: "idle" };
+    if (this.#d.stopped?.() === true) return { result: { status: "idle" } };
+    const held = new Set([...this.#active, ...unfinished.map((r) => r.key)]);
+    const issue = pickNext(
+      (await tracker.listTodo()).filter((i) => !held.has(i.key)),
+      config,
+    );
+    if (issue === undefined) return { result: { status: "idle" } };
     const pre = preflight(issue, config);
     if (!pre.ok) {
       await tracker.comment(issue, sendBackComment(pre.reasons));
       await tracker.move(issue, "blocked");
       await store.event(issue.key, "preflight_rejected", { reasons: pre.reasons.length });
-      return { status: "rejected", key: issue.key, reasons: pre.reasons };
+      return { result: { status: "rejected", key: issue.key, reasons: pre.reasons } };
     }
 
     const book = CriteriaBook.fromSpecs(pre.specs);
@@ -148,11 +187,17 @@ export class Pipeline {
       startedAt: this.#d.clock.now().toISOString(),
       updatedAt: this.#d.clock.now().toISOString(),
     };
-    await store.saveCriteria(issue.key, book);
-    await store.save(run);
-    await tracker.move(issue, "inProgress");
-    await store.event(issue.key, "claimed", { criteria: pre.specs.length });
-    return this.#drive(run, issue, book, false);
+    this.#active.add(issue.key);
+    try {
+      await store.saveCriteria(issue.key, book);
+      await store.save(run);
+      await tracker.move(issue, "inProgress");
+      await store.event(issue.key, "claimed", { criteria: pre.specs.length });
+    } catch (error) {
+      this.#active.delete(issue.key);
+      throw error;
+    }
+    return { key: issue.key, run, issue, book };
   }
 
   /**
