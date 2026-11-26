@@ -66,16 +66,23 @@ export const findSection = (
   return undefined;
 };
 
-/** Whether 「结论」 is still to be written: absent, empty, or only the template's placeholder. */
+/**
+ * One bracketed note and nothing else, such as the template's 「（做完后回填：…）」 or 「（未完成）」: a note to the
+ * person filling it in, not a conclusion. A blank line inside means more than one paragraph, which is written text.
+ */
+const BRACKETED_NOTE = /^[（(][^（）()]*[）)]$/;
+
+/** Whether 「结论」 is still to be written: absent, empty, or only a placeholder. */
 export const conclusionIsEmpty = (description: string): boolean => {
   const section = findSection(description, CONCLUSION);
   if (section === undefined) return true;
-  const body = description
+  const text = description
     .split("\n")
     .slice(section.heading + 1, section.end)
-    .join("")
-    .replace(/[\s()（）]/g, "")
-    .toLowerCase();
+    .join("\n")
+    .trim();
+  if (BRACKETED_NOTE.test(text) && !/\n\s*\n/.test(text)) return true;
+  const body = text.replace(/[\s()（）]/g, "").toLowerCase();
   return body === "" || PLACEHOLDERS.has(body);
 };
 

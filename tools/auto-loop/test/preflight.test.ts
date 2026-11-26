@@ -175,3 +175,21 @@ test("conclusionIsEmpty reads only the 「结论」 section, up to the next head
   expect(conclusionIsEmpty("## 结论\n### 小结\n")).toBe(false);
   expect(conclusionIsEmpty("## 结论\n能删。")).toBe(false);
 });
+
+test("a 「结论」 that is one bracketed note is empty; text outside it, or a second paragraph, is written", () => {
+  // CYC-445's, and the Research issue template's.
+  expect(conclusionIsEmpty("## 结论\n\n（未完成）\n")).toBe(true);
+  expect(
+    conclusionIsEmpty("## 结论\n（做完后回填：对每个问题的回答和依据。未完成时留空）\n## 附录\nx"),
+  ).toBe(true);
+  expect(conclusionIsEmpty("## 结论\n(not done yet)")).toBe(true);
+  expect(conclusionIsEmpty("## 结论\n（未完成）能删一半。")).toBe(false);
+  expect(conclusionIsEmpty("## 结论\n能删一半（见报告）")).toBe(false);
+  expect(conclusionIsEmpty("## 结论\n（能删一半）\n\n（见报告）")).toBe(false);
+  expect(conclusionIsEmpty("## 结论\n（能删一半\n\n详见报告）")).toBe(false);
+  const template = readyResearch.replace(
+    "（做完后回填）",
+    "（做完后回填：对每个问题的回答和依据。未完成时留空）",
+  );
+  expect(preflight(issue({ description: template, typeId: RESEARCH }), research).ok).toBe(true);
+});
