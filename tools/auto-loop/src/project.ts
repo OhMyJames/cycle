@@ -82,8 +82,16 @@ export type LoopFields = {
 export const resolveLoopFields = (reply: unknown): LoopFields | null => {
   const body = rec(reply);
   const rows = Array.isArray(reply) ? list(reply) : list(body.data ?? body.fields);
-  const phase = rows.find((f) => f.name === PHASE_FIELD && f.fieldType === "select");
-  const started = rows.find((f) => f.name === STARTED_FIELD && f.fieldType === "datetime");
+  // Only fields for every issue type count (a field scoped to one type fails for the others), and a name that
+  // matches twice is ambiguous: neither is taken.
+  const only = (name: string, fieldType: string) => {
+    const found = rows.filter(
+      (f) => f.name === name && f.fieldType === fieldType && (f.issueTypeId ?? null) === null,
+    );
+    return found.length === 1 ? found[0] : undefined;
+  };
+  const phase = only(PHASE_FIELD, "select");
+  const started = only(STARTED_FIELD, "datetime");
   const id = (v: unknown): number =>
     typeof v === "number" || (typeof v === "string" && v.trim() !== "") ? Number(v) : Number.NaN;
   const phaseFieldId = id(phase?.id);

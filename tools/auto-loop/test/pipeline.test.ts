@@ -1708,8 +1708,8 @@ test("a phase write that half-failed is written again when the same phase is res
   w.sessions.script.dev.push(done());
   (w.tracker.issues[0] as Issue).columnId = 22;
   await w.pipeline.step();
-  // The pending clear goes out first, then the resumed phase is written (nothing was skipped as "already written").
-  expect(w.tracker.phases[0]).toBe("CYC-1:clear");
+  // The resumed phase is written (not skipped as "already written"); the old pending clear backs off and is dropped.
+  expect(w.tracker.phases[0]).toBe("CYC-1:verify");
   expect(w.tracker.phases).toContain("CYC-1:verify");
   expect(w.tracker.phases.at(-1)).toBe("CYC-1:clear");
 });
@@ -1730,4 +1730,39 @@ test("a phase write that never answers counts as failed and the run goes on", as
     mirrorTimeoutMs: 5,
   });
   expect((await timed.step()).status).toBe("delivered");
+});
+
+test("a phase write that timed out is aborted and cannot land after a newer one", async () => {
+  const w = setup([ready()], { dev: [done()], qa: [done(PASS)] }, {});
+  let release: () => void = () => {};
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  const late: string[] = [];
+  w.tracker.setLoopPhase = async (i, phase, _at, signal) => {
+    if (phase === "dev") {
+      await gate;
+      if (signal?.aborted) return;
+      late.push("dev landed");
+      return;
+    }
+    w.tracker.phases.push(`${i.key}:${phase ?? "clear"}`);
+  };
+  const timed = new Pipeline({
+    config: config({ stateDir: dir }),
+    tracker: w.tracker,
+    sessions: w.sessions,
+    exec: makeExec(w.world),
+    store: w.store,
+    clock: { now: () => new Date("2026-11-25T00:00:00Z") },
+    log: () => {},
+    env: { PATH: "/bin" },
+    sleep: async () => {},
+    mirrorTimeoutMs: 5,
+  });
+  expect((await timed.step()).status).toBe("delivered");
+  release();
+  await Bun.sleep(5);
+  expect(late).toEqual([]);
+  expect(w.tracker.phases[0]).toBe("CYC-1:verify");
 });

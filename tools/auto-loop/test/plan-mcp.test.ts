@@ -75,3 +75,21 @@ test("a field of the wrong type is not taken", () => {
   expect(resolveLoopFields(bad)).toBeNull();
   expect(resolveLoopFields({ data: [{ ...bad.data[0], id: null }, bad.data[1]] })).toBeNull();
 });
+
+test("a field scoped to one issue type, or a name that matches twice, is not taken", () => {
+  const scoped = fields();
+  (scoped.data[1] as { issueTypeId?: number }).issueTypeId = 3;
+  expect(resolveLoopFields(scoped)).toBeNull();
+  const twice = fields();
+  twice.data.push({ ...(twice.data[1] as object) } as never);
+  expect(resolveLoopFields(twice)).toBeNull();
+});
+
+test("an aborted write does not go on to the second field", async () => {
+  const { t, calls } = tracker();
+  t.setLoopFields(resolveLoopFields(fields()));
+  const abort = new AbortController();
+  abort.abort();
+  await expect(t.setLoopPhase(issue(), "qa", new Date(), abort.signal)).rejects.toThrow();
+  expect(calls).toEqual([]);
+});

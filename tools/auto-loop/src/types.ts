@@ -43,7 +43,13 @@ export interface Tracker {
    * Mirrors the loop's phase (and the time it began) onto the work item's custom fields; `null` clears both. A mirror
    * only: the run record is the truth. A tracker with no such fields does nothing.
    */
-  setLoopPhase(issue: Issue, phase: LoopPhase | null, at: Date): Promise<void>;
+  setLoopPhase(
+    issue: Issue,
+    phase: LoopPhase | null,
+    at: Date,
+    /** Aborted when the write is given up on (too slow, or replaced by a newer one): stop, and write nothing more. */
+    signal?: AbortSignal,
+  ): Promise<void>;
 }
 
 export type ExecResult = { code: number; output: string; timedOut: boolean };

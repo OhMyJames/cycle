@@ -102,14 +102,23 @@ export class PlanTracker implements Tracker {
     });
   }
 
-  async setLoopPhase(issue: Issue, phase: LoopPhase | null, at: Date): Promise<void> {
+  async setLoopPhase(
+    issue: Issue,
+    phase: LoopPhase | null,
+    at: Date,
+    signal?: AbortSignal,
+  ): Promise<void> {
     const f = this.#loopFields;
     if (f === null) return;
-    const set = (fieldId: number, rest: Record<string, unknown>) =>
-      this.#call("execute_write", {
-        name: "set_issue_field_value",
-        arguments: { issueId: issue.id, fieldId, ...rest },
-      });
+    // An abandoned write must not go on to its second field.
+    const set = async (fieldId: number, rest: Record<string, unknown>) => {
+      signal?.throwIfAborted();
+      await this.#call(
+        "execute_write",
+        { name: "set_issue_field_value", arguments: { issueId: issue.id, fieldId, ...rest } },
+        signal,
+      );
+    };
     if (phase === null) {
       await set(f.phaseFieldId, { optionIds: [] });
       await set(f.startedFieldId, { value: null });
@@ -130,8 +139,9 @@ export class PlanTracker implements Tracker {
     return this.#call("get_project", { projectKey: this.#project });
   }
 
-  async #call(name: string, args: Record<string, unknown>): Promise<unknown> {
+  async #call(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
     const response = await fetch(this.#url, {
+      ...(signal !== undefined ? { signal } : {}),
       method: "POST",
       headers: {
         "content-type": "application/json",
