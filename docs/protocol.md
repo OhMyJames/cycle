@@ -1136,6 +1136,7 @@ plugin 是某个 agent 自己的扩展包(skill、命令、子 agent、hook、MC
 
 Loop 服务(`cloud/loop`)是独立于 daemon 的进程:一个进程服务多个 Project,和 daemon 在同一台机器上。桌面端像连 daemon 一样连它,但它不是 daemon,也不转发 ACP;本节只定义桌面端读它的方法。理由见决定笔记 [2026-11-25-loop-server-is-its-own-process](../.agents/notes/2026-11-25-loop-server-is-its-own-process.md)。schema 在 `@cycle/protocol` 的 `loop.ts`,桌面端只依赖这些类型,不依赖 `cloud/loop` 的代码。
 
+- **常驻流水线**:server 进程(`cloud/loop/src/cli.ts`)启动时,除读 `loop.json` 外还读 `auto-loop.json`(`--pipelines` 可改路径),为每个 Project 建好流水线(tracker、store、锁、daemon 连接,经本机 `daemon.sock`)后才一起开始,按各自 `run.json` 接着做未完成的工单;`loop.json` 里的 Project 在 `auto-loop.json` 里没有条目、或任一 Project 建不起来,进程启动失败并说明原因。流水线不依赖 socket 上有没有客户端。协议方法不变。
 - **传输**:JSON-RPC 2.0,换行分隔(§2)。本地是 daemon 数据目录里的 unix socket `loop.sock`。经 SSH 连远端的 Loop 服务还没做;客户端连不上时,按"未连接"处理,不报协议错误。
 - **没有握手和鉴权**:同 §1 的 v1 约定,能连上 socket 的是本机同一用户。
 - **Project 的来源**:服务启动时读一个配置文件(模式必须是 `0600`,组或其他人可读就拒绝启动,附固定原因 `config_mode`)。里面每个 Project 有名字、`projectKey`、仓库地址、forge 类型和访问令牌。令牌只在这个文件里,**任何方法都不返回令牌**,错误对象也不带它。

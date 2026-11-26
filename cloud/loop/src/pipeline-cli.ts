@@ -7,16 +7,11 @@
 
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { type ConfigFile, loadConfigFiles, readTuning } from "./config-file.ts";
-import { effectiveWorkers, idleIntervalMs, parseWorkers, runLoops, workerSpecs } from "./loop.ts";
-import { Pipeline } from "./pipeline.ts";
-import { PlanTracker } from "./plan-mcp.ts";
-import { type LoopFields, resolveLoopFields, resolveProject } from "./project.ts";
-import { runCommand } from "./runner.ts";
-import { DaemonSessions } from "./sessions.ts";
+import { setUpProject } from "./assemble.ts";
+import { type ConfigFile, loadConfigFiles } from "./config-file.ts";
+import { idleIntervalMs, parseWorkers, runLoops, workerSpecs } from "./loop.ts";
 import { computeStats } from "./stats.ts";
-import { acquireLock, RunStore } from "./store.ts";
-import { DEFAULT_CHECK_MINUTES, DEFAULT_MAX_ASK, defaultConfig } from "./types.ts";
+import { RunStore } from "./store.ts";
 
 const args = process.argv.slice(2);
 const flag = (name: string) => args.includes(name);
@@ -66,122 +61,16 @@ try {
 }
 let stop = false;
 
-// Everything one Project owns: tracker, store, lock, daemon connection, pipeline.
-const setUp = async (file: ConfigFile) => {
-  const { stateDir } = file;
-  const name = file.projectKey;
-  const plog = (line: string) => log(`[${name}] ${line}`);
-  const tracker = new PlanTracker({
-    url: file.planUrl,
-    key: file.planKey,
-    projectKey: file.projectKey,
-  });
-  // Research (CYC-447) is resolved only when it is on; the folder is a document, which `get_project` does not list.
-  const research = file.research?.enabled === true ? file.research : null;
-  // The planning node (CYC-322), likewise only when it is on.
-  const planning = file.planning?.enabled === true ? file.planning : null;
-  const {
-    research: found,
-    planning: planned,
-    ...setup
-  } = resolveProject(
-    await tracker.getProject(),
-    file,
-    research === null
-      ? undefined
-      : {
-          type: research.type,
-          folder: research.folder,
-          documents: await tracker.listDocuments(),
-        },
-    planning ?? undefined,
-  );
-  tracker.setColumns(setup.columns);
-  if (planned !== null) tracker.setBacklogColumn(planned.backlogColumn);
-  // The phase fields only mirror the run: if they cannot be used, say why once and do not write them.
-  let loopFields: LoopFields | null = null;
-  try {
-    const resolved = resolveLoopFields(await tracker.getCustomFields());
-    if ("fields" in resolved) loopFields = resolved.fields;
-    else plog(`warning: the phase fields are off: ${resolved.problem}`);
-  } catch (error) {
-    plog(
-      `warning: the phase fields are off: list_custom_fields failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  tracker.setLoopFields(loopFields);
-  const config = {
-    ...defaultConfig({ repoRoot: file.repoRoot, stateDir, ...setup }),
-    ...(file.devAgent !== undefined ? { devAgent: file.devAgent } : {}),
-    ...(file.qaAgent !== undefined ? { qaAgent: file.qaAgent } : {}),
-    ...(file.reviewAgent !== undefined ? { reviewAgent: file.reviewAgent } : {}),
-    ...(file.devModel !== undefined ? { devModel: file.devModel } : {}),
-    ...(file.qaModel !== undefined ? { qaModel: file.qaModel } : {}),
-    ...(file.reviewModel !== undefined ? { reviewModel: file.reviewModel } : {}),
-    ...(file.devEffort !== undefined ? { devEffort: file.devEffort } : {}),
-    ...(file.qaEffort !== undefined ? { qaEffort: file.qaEffort } : {}),
-    ...(file.reviewEffort !== undefined ? { reviewEffort: file.reviewEffort } : {}),
-    research:
-      research === null || found === null
-        ? null
-        : { ...found, readRoots: research.readRoots, maxFollowups: research.maxFollowups },
-    planning:
-      planning === null || planned === null
-        ? null
-        : {
-            ...planned,
-            maxPending: planning.maxPending,
-            intervalMinutes: planning.intervalMinutes,
-            maxSplit: planning.maxSplit,
-            checkMinutes: planning.checkMinutes ?? DEFAULT_CHECK_MINUTES,
-            maxAsk: planning.maxAsk ?? DEFAULT_MAX_ASK,
-          },
+const setUp = (file: ConfigFile) =>
+  setUpProject(file, {
+    dataDir,
+    configPath,
+    once,
     dryRun,
-  };
-  const tuning = {
-    initial: file.tuning ?? {},
-    reload: () => readTuning(configPath, file.projectKey),
-  };
-  const store = new RunStore(stateDir, clock.now);
-  const release = dryRun ? async () => {} : await acquireLock(stateDir);
-  const sessions = new DaemonSessions(
-    process.env.CYCLE_SOCKET ?? join(dataDir, "daemon.sock"),
-    (sessionId, title) => {
-      plog(`waiting for a person in session ${sessionId}: ${title}`);
-      void store.unfinished().then((runs) => {
-        const run = runs.find(
-          (r) =>
-            r.devSessionId === sessionId ||
-            r.qaSessionId === sessionId ||
-            r.reviewSessionId === sessionId,
-        );
-        if (run !== undefined) return store.event(run.key, "permission_pending");
-      });
-    },
-    (run, kind, data) => store.event(run, kind, data),
-  );
-  if (!dryRun) await sessions.start();
-  const pipeline = new Pipeline({
-    config,
-    tracker,
-    sessions,
-    exec: runCommand,
-    store,
-    clock,
-    log: plog,
-    env: process.env,
+    workersFlag,
     stopped: () => stop,
-    tuning,
+    log,
   });
-  const close = async () => {
-    await release();
-    if (!dryRun) await sessions.close();
-  };
-  const workers = effectiveWorkers({ once, dryRun, flag: workersFlag, file: file.workers });
-  if (workers > 4)
-    plog(`warning: ${workers} workers; each one holds a session and a worktree, watch memory`);
-  return { name, pipeline, release, close, workers };
-};
 
 // Set up every Project before any loop starts, so a bad one stops the process rather than half of it.
 const projects: Awaited<ReturnType<typeof setUp>>[] = [];
