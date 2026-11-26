@@ -39,3 +39,11 @@ bun tools/auto-loop/src/cli.ts stats       # 自主完成率（只算 Loop 自�
 - 内存：每个 worker 各占一个会话和 worktree，N 越大内存越高，目标机器是 2 核 4 GB，从 2 开始试。
 - Ctrl-C：第一次表示「每个 worker 做完当前这步就退出」，不再领新单；第二次立刻退出（释放锁，进行中的 run 重启后接着走）。
 - 领单互斥只在进程内；一个 stateDir 只允许一个进程（锁在 `<stateDir>/loop.lock`），不要对同一个 stateDir 起第二个进程。
+
+## 网络错误（CYC-444）
+
+访问 GitHub 的命令（`git fetch`、`git push`、`gh pr create` / `edit` / `view`、`gh run rerun`，包括读 PR 状态和读 CI 状态）失败时，先按输出判断是不是网络类错误（`src/network.ts`）：`Could not resolve host`、`Connection reset`、`Connection refused`、`Connection timed out`、`TLS handshake timeout`、`unable to access`、`i/o timeout`、`EOF`、HTTP 502/503/504 等。权限、认证（401/403/404）、找不到分支、合并冲突、推送被拒绝**不算**网络错误，照旧转 Blocked。
+
+- 网络类错误：原地重试，最多 3 次（`maxNetworkRetries`），间隔 10、30、60 秒（`networkRetryDelaysMs`）。重试每次记一条 `network_retry` 事件（命令名、第几次、是否成功），不记命令输出。
+- 重试用完仍是网络错误：不转 Blocked、不评论、不移列，这次 `step()` 返回 `network_wait`，记一条 `network_down` 事件。run 留在原阶段，Loop 等一个间隔（`--interval`）后再 `step()`；续跑规则会先接着做这张单，不领新单。
+- 这两个值在 `Config` 里，暂不进配置文件（CYC-441 之后可调）。itsaplan 调用和 agent 会话的断连不在这里处理。

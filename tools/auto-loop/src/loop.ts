@@ -19,7 +19,7 @@ export const runLoop = async (spec: LoopSpec): Promise<void> => {
     try {
       const result = await spec.step();
       spec.log(`[${spec.name}] ${JSON.stringify(result)}`);
-      pause = result.status === "idle";
+      pause = result.status === "idle" || result.status === "network_wait";
     } catch (error) {
       if (spec.once) throw error;
       // A tracker or daemon hiccup must not end an unattended loop: log it, wait, try again.

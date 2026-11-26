@@ -94,6 +94,10 @@ export type Config = {
   maxQaRetries: number;
   /** Maximum number of times a failed (not timed-out) verify command is re-run in place before the failure counts as a fix round. */
   maxVerifyRetries: number;
+  /** Times a GitHub command is run again after a network error, before the loop waits instead (CYC-444). */
+  maxNetworkRetries: number;
+  /** Waits before each of those retries; the last entry is reused if there are fewer entries than retries. */
+  networkRetryDelaysMs: number[];
   /** How often to poll GitHub CI status while waiting for checks to finish. */
   ciPollIntervalMs: number;
   /** Maximum time to wait for a single CI run to finish before blocking. */
@@ -138,6 +142,8 @@ export const defaultConfig = (
   maxInterruptRetries: 3,
   maxQaRetries: 2,
   maxVerifyRetries: 1,
+  maxNetworkRetries: 3,
+  networkRetryDelaysMs: [10_000, 30_000, 60_000],
   ciPollIntervalMs: 30_000,
   ciTimeoutMs: 30 * 60_000,
   mergePollIntervalMs: 30_000,

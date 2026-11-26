@@ -11,6 +11,7 @@ import { deliverEnv, GIT_SAFE, verifyEnv } from "./env.ts";
 import { summarizeFailure } from "./failure.ts";
 import { withRepoLock } from "./git-lock.ts";
 import { testLayers } from "./layers.ts";
+import { isNetworkError } from "./network.ts";
 import {
   enableAutoMerge,
   type PrState,
@@ -63,7 +64,9 @@ export type StepResult =
   | { status: "rejected"; key: string; reasons: string[] }
   | { status: "would-take"; key: string; criteria: number }
   | { status: "delivered"; key: string; prUrl: string; autoMerge: boolean }
-  | { status: "blocked"; key: string; reason: string };
+  | { status: "blocked"; key: string; reason: string }
+  /** GitHub could not be reached after the retries: the run stays where it was and the loop waits (CYC-444). */
+  | { status: "network_wait"; key: string; command: string };
 
 export type Deps = {
   config: Config;
@@ -83,6 +86,13 @@ export type Deps = {
 
 /** A run cannot go on without a person. The message is what the person is told. */
 class Blocked extends Error {}
+
+/** A GitHub command still fails with a network error after its retries: the run waits where it is, nothing is blocked. */
+class NetworkWait extends Error {
+  constructor(readonly command: string) {
+    super(`network down: ${command}`);
+  }
+}
 
 const PR_STATE_READS = 3;
 
@@ -381,6 +391,13 @@ export class Pipeline {
         }
       }
     } catch (error) {
+      if (error instanceof NetworkWait) {
+        await this.#d.store.event(run.key, "network_down", {
+          command: error.command,
+          phase: run.phase,
+        });
+        return { status: "network_wait", key: run.key, command: error.command };
+      }
       if (!(error instanceof Blocked)) throw error;
       return this.#block(run, issue, error.message, save);
     }
@@ -392,13 +409,19 @@ export class Pipeline {
     const prUrl = this.#need(run.prUrl ?? undefined);
     let lastError = "";
     for (let attempt = 0; attempt < PR_STATE_READS; attempt++) {
-      const read = await readPrState({
-        prRef: prUrl,
-        exec: this.#d.exec,
-        cwd: run.worktree ?? config.repoRoot,
-        env: this.#d.env,
-        timeoutMs: config.commandTimeoutMs,
-      });
+      const read = await this.#net(
+        run.key,
+        "gh pr view",
+        () =>
+          readPrState({
+            prRef: prUrl,
+            exec: this.#d.exec,
+            cwd: run.worktree ?? config.repoRoot,
+            env: this.#d.env,
+            timeoutMs: config.commandTimeoutMs,
+          }),
+        (r) => (r.ok ? undefined : r.error),
+      );
       if (read.ok) return { prUrl, state: read.state };
       lastError = read.error;
     }
@@ -527,12 +550,14 @@ export class Pipeline {
         throw new Blocked(
           `PR 与 ${config.baseBranch} 冲突，但工作区有未提交的改动，不自动合并：\n${tail(status.output)}`,
         );
-      const fetched = await withRepoLock(config.repoRoot, () =>
-        this.#d.exec(["git", ...GIT_SAFE, "fetch", config.remote], {
-          cwd: worktree,
-          env: deliverEnv(this.#d.env),
-          timeoutMs: config.commandTimeoutMs,
-        }),
+      const fetched = await this.#netExec(run.key, "git fetch", () =>
+        withRepoLock(config.repoRoot, () =>
+          this.#d.exec(["git", ...GIT_SAFE, "fetch", config.remote], {
+            cwd: worktree,
+            env: deliverEnv(this.#d.env),
+            timeoutMs: config.commandTimeoutMs,
+          }),
+        ),
       );
       if (fetched.code !== 0) throw new Blocked(`合并前 git fetch 失败：${tail(fetched.output)}`);
     }
@@ -643,12 +668,14 @@ export class Pipeline {
     if (run.devSessionId === null) {
       // The loop fetches itself: whether the daemon may is undecided (docs/protocol.md, "待定").
       // Fetching needs the remote's credentials; no session has run in the main checkout, so this is safe to give them.
-      const fetched = await withRepoLock(config.repoRoot, () =>
-        this.#d.exec(["git", ...GIT_SAFE, "fetch", config.remote], {
-          cwd: config.repoRoot,
-          env: deliverEnv(this.#d.env),
-          timeoutMs: config.commandTimeoutMs,
-        }),
+      const fetched = await this.#netExec(run.key, "git fetch", () =>
+        withRepoLock(config.repoRoot, () =>
+          this.#d.exec(["git", ...GIT_SAFE, "fetch", config.remote], {
+            cwd: config.repoRoot,
+            env: deliverEnv(this.#d.env),
+            timeoutMs: config.commandTimeoutMs,
+          }),
+        ),
       );
       if (fetched.code !== 0) throw new Blocked(`git fetch 失败：${tail(fetched.output)}`);
       const created = await sessions.create({
@@ -928,9 +955,11 @@ export class Pipeline {
     const env = deliverEnv(this.#d.env);
     const timeoutMs = config.commandTimeoutMs;
 
-    const pushed = await this.#d.exec(
-      ["git", ...GIT_SAFE, "push", config.remote, `HEAD:refs/heads/${run.remoteBranch}`],
-      { cwd: worktree, env, timeoutMs },
+    const pushed = await this.#netExec(run.key, "git push", () =>
+      this.#d.exec(
+        ["git", ...GIT_SAFE, "push", config.remote, `HEAD:refs/heads/${run.remoteBranch}`],
+        { cwd: worktree, env, timeoutMs },
+      ),
     );
     if (pushed.code !== 0) throw new Blocked(`git push 失败：${tail(pushed.output)}`);
 
@@ -963,28 +992,34 @@ export class Pipeline {
     let prUrl: string | undefined;
     if (run.prUrl !== null) {
       // Pushing a CI fix to the same branch: keep the existing pull request and refresh its description.
-      const edited = await this.#d.exec(
-        ["gh", "pr", "edit", run.prUrl, "--title", title, "--body-file", bodyPath],
-        { cwd: worktree, env, timeoutMs },
+      const prUrlNow = run.prUrl;
+      const edited = await this.#netExec(run.key, "gh pr edit", () =>
+        this.#d.exec(["gh", "pr", "edit", prUrlNow, "--title", title, "--body-file", bodyPath], {
+          cwd: worktree,
+          env,
+          timeoutMs,
+        }),
       );
       if (edited.code !== 0) throw new Blocked(`gh pr edit 失败：${tail(edited.output)}`);
       prUrl = run.prUrl;
     } else {
-      const created = await this.#d.exec(
-        [
-          "gh",
-          "pr",
-          "create",
-          "--base",
-          config.baseBranch,
-          "--head",
-          run.remoteBranch,
-          "--title",
-          title,
-          "--body-file",
-          bodyPath,
-        ],
-        { cwd: worktree, env, timeoutMs },
+      const created = await this.#netExec(run.key, "gh pr create", () =>
+        this.#d.exec(
+          [
+            "gh",
+            "pr",
+            "create",
+            "--base",
+            config.baseBranch,
+            "--head",
+            run.remoteBranch,
+            "--title",
+            title,
+            "--body-file",
+            bodyPath,
+          ],
+          { cwd: worktree, env, timeoutMs },
+        ),
       );
       prUrl = findUrl(created.output);
       if (created.code !== 0 || prUrl === undefined) {
@@ -996,9 +1031,11 @@ export class Pipeline {
         prUrl = findUrl(existing.output);
         if (existing.code !== 0 || prUrl === undefined)
           throw new Blocked(`gh pr create 失败：${tail(created.output)}`);
-        const edited = await this.#d.exec(
-          ["gh", "pr", "edit", run.remoteBranch, "--title", title, "--body-file", bodyPath],
-          { cwd: worktree, env, timeoutMs },
+        const edited = await this.#netExec(run.key, "gh pr edit", () =>
+          this.#d.exec(
+            ["gh", "pr", "edit", run.remoteBranch, "--title", title, "--body-file", bodyPath],
+            { cwd: worktree, env, timeoutMs },
+          ),
         );
         if (edited.code !== 0) throw new Blocked(`gh pr edit 失败：${tail(edited.output)}`);
       }
@@ -1017,26 +1054,39 @@ export class Pipeline {
     // No new commit since the red run: a push starts no CI, so rerun the failed jobs and wait for that result.
     let staleFailedUrls: Set<string> | undefined;
     if (run.ciRound > 0 && run.ciFailedSha === headSha) {
-      const read = await readCiStatus({
-        prRef: prUrl,
-        requiredChecks: config.ciChecks,
-        expectedHeadSha: headSha,
-        exec: this.#d.exec,
-        cwd: worktree,
-        env: this.#d.env,
-        timeoutMs: config.commandTimeoutMs,
-      });
+      const read = await this.#net(
+        run.key,
+        "gh pr view",
+        () =>
+          readCiStatus({
+            prRef: prUrl,
+            requiredChecks: config.ciChecks,
+            expectedHeadSha: headSha,
+            exec: this.#d.exec,
+            cwd: worktree,
+            env: this.#d.env,
+            timeoutMs: config.commandTimeoutMs,
+          }),
+        (r) => (r.ok ? undefined : r.error),
+      );
       if (!read.ok) throw new Blocked(`读取 CI 状态失败：${tail(read.error)}`);
       if (read.status.state === "failed") {
-        const rerun = await rerunFailedCi({
-          failed: read.status.failed,
-          ciRound: run.ciRound,
-          maxCiRetries: config.maxCiRetries,
-          exec: this.#d.exec,
-          cwd: worktree,
-          env: this.#d.env,
-          timeoutMs: config.commandTimeoutMs,
-        });
+        const failedChecks = read.status.failed;
+        const rerun = await this.#net(
+          run.key,
+          "gh run rerun",
+          () =>
+            rerunFailedCi({
+              failed: failedChecks,
+              ciRound: run.ciRound,
+              maxCiRetries: config.maxCiRetries,
+              exec: this.#d.exec,
+              cwd: worktree,
+              env: this.#d.env,
+              timeoutMs: config.commandTimeoutMs,
+            }),
+          (r) => (r.ok ? undefined : r.error),
+        );
         if (!rerun.ok) throw new Blocked(`重新运行 CI 失败：${tail(rerun.error)}`);
         await store.event(run.key, "ci_rerun", { ciRound: run.ciRound, runs: rerun.runIds.length });
         staleFailedUrls = new Set(
@@ -1045,20 +1095,26 @@ export class Pipeline {
       }
     }
 
-    const result = await waitForCi({
-      staleFailedUrls,
-      prRef: prUrl,
-      requiredChecks: config.ciChecks,
-      expectedHeadSha: headSha,
-      exec: this.#d.exec,
-      cwd: worktree,
-      env: this.#d.env,
-      commandTimeoutMs: config.commandTimeoutMs,
-      pollIntervalMs: config.ciPollIntervalMs,
-      timeoutMs: config.ciTimeoutMs,
-      clock,
-      sleep: this.#d.sleep ?? ((ms) => Bun.sleep(ms)),
-    });
+    const result = await this.#net(
+      run.key,
+      "gh pr view",
+      () =>
+        waitForCi({
+          staleFailedUrls,
+          prRef: prUrl,
+          requiredChecks: config.ciChecks,
+          expectedHeadSha: headSha,
+          exec: this.#d.exec,
+          cwd: worktree,
+          env: this.#d.env,
+          commandTimeoutMs: config.commandTimeoutMs,
+          pollIntervalMs: config.ciPollIntervalMs,
+          timeoutMs: config.ciTimeoutMs,
+          clock,
+          sleep: this.#d.sleep ?? ((ms) => Bun.sleep(ms)),
+        }),
+      (r) => (r.outcome === "error" ? r.error : undefined),
+    );
 
     await this.#assertNotClosed(run);
     if (result.outcome === "error") {
@@ -1460,6 +1516,41 @@ export class Pipeline {
     const head = await this.#git(["rev-parse", "HEAD"], worktree);
     const status = await this.#git(["status", "--porcelain"], worktree);
     return `${head.output.trim()}\n${status.output}`;
+  }
+
+  /**
+   * Runs a GitHub command; on a network error runs it again after a growing wait, up to `maxNetworkRetries` times.
+   * Out of retries it throws `NetworkWait`. Any other failure is returned as it is, for the caller to block on.
+   * `failure` gives the output of a failed result, or undefined when it succeeded.
+   */
+  async #net<T>(
+    key: string,
+    command: string,
+    fn: () => Promise<T>,
+    failure: (result: T) => string | undefined,
+  ): Promise<T> {
+    const { config, store } = this.#d;
+    const sleep = this.#d.sleep ?? ((ms: number) => Bun.sleep(ms));
+    let result = await fn();
+    const down = (r: T) => {
+      const f = failure(r);
+      return f !== undefined && isNetworkError(f);
+    };
+    if (!down(result)) return result;
+    const delays = config.networkRetryDelaysMs;
+    for (let attempt = 1; attempt <= config.maxNetworkRetries; attempt++) {
+      await sleep(delays[Math.min(attempt - 1, delays.length - 1)] ?? 0);
+      result = await fn();
+      const ok = !down(result);
+      await store.event(key, "network_retry", { command, attempt, ok });
+      if (ok) return result;
+    }
+    throw new NetworkWait(command);
+  }
+
+  /** `#net` for a command that returns an `ExecResult`. */
+  #netExec(key: string, command: string, fn: () => Promise<ExecResult>): Promise<ExecResult> {
+    return this.#net(key, command, fn, (r) => (r.code !== 0 ? r.output : undefined));
   }
 
   async #git(args: string[], cwd: string): Promise<ExecResult> {
