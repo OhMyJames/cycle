@@ -115,23 +115,33 @@ describe("withSettingsLock", () => {
 
   test("a holder that outlasts the stale limit keeps its lock", async () => {
     const path = agySettingsPath(tempHome());
-    mkdirSync(dirname(path), { recursive: true });
-    const { utimesSync } = await import("node:fs");
+    // Heartbeat is 12x shorter than the stale limit, and the hold spans more than two stale limits.
+    const timing = { staleMs: 250, heartbeatMs: 20 };
     let second = false;
-    const first = withSettingsLock(path, async () => {
-      // Looks abandoned (old mtime) until the holder's heartbeat touches it.
-      const old = new Date(Date.now() - 25_000);
-      utimesSync(`${path}.lock`, old, old);
-      await Bun.sleep(5_500);
-      expect(second).toBe(false);
-    });
-    await Bun.sleep(100);
-    const waiting = withSettingsLock(path, async () => {
-      second = true;
-    });
+    let secondBeforeRelease = false;
+    let released = false;
+    const first = withSettingsLock(
+      path,
+      async () => {
+        await Bun.sleep(600);
+        secondBeforeRelease = second;
+        released = true;
+      },
+      timing,
+    );
+    await Bun.sleep(30);
+    const waiting = withSettingsLock(
+      path,
+      async () => {
+        second = true;
+        expect(released).toBe(true);
+      },
+      timing,
+    );
     await Promise.all([first, waiting]);
+    expect(secondBeforeRelease).toBe(false);
     expect(second).toBe(true);
-  }, 15_000);
+  }, 3_000);
 
   test("takes over a lock a dead process left behind", async () => {
     const path = agySettingsPath(tempHome());

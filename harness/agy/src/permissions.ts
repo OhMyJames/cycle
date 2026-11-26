@@ -96,7 +96,14 @@ const LOCK_WAIT_MS = 5 * 60_000;
  * all sessions but each session has its own level, and agy reads it only as a session starts, so "write my level, start
  * my session" must not interleave with another session's. A lock left by a process that died is taken over.
  */
-export const withSettingsLock = async <T>(path: string, work: () => Promise<T>): Promise<T> => {
+export const withSettingsLock = async <T>(
+  path: string,
+  work: () => Promise<T>,
+  /** Only for tests: shorter timings so they need not wait real seconds. */
+  timing: { staleMs?: number; heartbeatMs?: number } = {},
+): Promise<T> => {
+  const staleMs = timing.staleMs ?? LOCK_STALE_MS;
+  const heartbeatMs = timing.heartbeatMs ?? LOCK_HEARTBEAT_MS;
   const lock = `${path}.lock`;
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const deadline = Date.now() + LOCK_WAIT_MS;
@@ -110,7 +117,7 @@ export const withSettingsLock = async <T>(path: string, work: () => Promise<T>):
         (info) => Date.now() - info.mtimeMs,
         () => 0,
       );
-      if (age > LOCK_STALE_MS) {
+      if (age > staleMs) {
         await rm(lock, { recursive: true, force: true });
         continue;
       }
@@ -122,7 +129,7 @@ export const withSettingsLock = async <T>(path: string, work: () => Promise<T>):
   const heartbeat = setInterval(() => {
     const now = new Date();
     utimes(lock, now, now).catch(() => undefined);
-  }, LOCK_HEARTBEAT_MS);
+  }, heartbeatMs);
   try {
     return await work();
   } finally {
