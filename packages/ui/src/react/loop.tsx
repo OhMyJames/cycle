@@ -337,14 +337,13 @@ function Board({
   };
   const notices = useAppState((s) => s.loop.notices[projectKey]);
   const request = useAppState((s) => s.loop.request);
-  const [open, setOpen] = useState<string | undefined>(
-    request?.projectKey === projectKey ? request.identifier : undefined,
-  );
-  const askedN = request?.n;
-  // A pressed notification asks for its ticket, also while the board is already shown.
+  const [open, setOpen] = useState<string | undefined>();
+  // A pressed notification asks for its ticket once: it is taken (cleared) here, so reopening the page does not repeat it.
   useEffect(() => {
-    if (askedN !== undefined && request?.projectKey === projectKey) setOpen(request.identifier);
-  }, [askedN, projectKey, request]);
+    if (request === undefined || request.projectKey !== projectKey) return;
+    setOpen(request.identifier);
+    store.takeLoopRequest(request.n);
+  }, [request, projectKey, store]);
   const [problem, setProblem] = useState<LoopActFailure | undefined>();
   const [version, setVersion] = useState(0);
   // Returns the words of a failure (the approve dialog shows them inline); the other buttons show them on the board.

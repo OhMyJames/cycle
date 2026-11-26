@@ -157,12 +157,12 @@ type Column = { id: number; name: string; stateType: string; position?: number }
 export type Role = "progress" | "review" | "blocked";
 
 export const roleOf = (columns: Column[], column: Column): Role | undefined => {
-  const started = columns
-    .map((c, i) => ({ c, at: Number(c.position ?? i) }))
-    .filter((e) => e.c.stateType === "started")
-    .sort((a, b) => a.at - b.at)
-    .map((e) => e.c.id);
-  const nth = started.indexOf(column.id);
+  const started = columns.filter((c) => c.stateType === "started");
+  // By `position` only when every one has it: a mix of positions and array order could swap two roles.
+  const ordered = started.every((c) => typeof c.position === "number")
+    ? [...started].sort((a, b) => Number(a.position) - Number(b.position))
+    : started;
+  const nth = ordered.findIndex((c) => c.id === column.id);
   return nth === 0 ? "progress" : nth === 1 ? "review" : nth === 2 ? "blocked" : undefined;
 };
 
@@ -478,6 +478,8 @@ export const actOnTicket = async (
 /** What Loop's `#block` writes: `自动化在「<阶段>」卡住了：<原因>`, then the Dev session's name in `「[<工单号>] Dev」`. */
 const BLOCKED_COMMENT =
   /^自动化在「[^」]*」卡住了：([\s\S]*?)(?:\n\n现场已保留：Dev 会话「([^」]+)」|$)/;
+/** How Loop's comments say a person must decide: the review escalated, hit its round limit, failed, or auto-merge could not be turned on. */
+const ESCALATED = ["升级给人", "需要人工处理"];
 const REVIEW_COMMENT = /^已开 PR：(\S+)\n([\s\S]*)$/;
 /** The longest reason or conclusion kept: they are comments, and may be long. */
 const TEXT_MAX = 1500;
@@ -505,13 +507,13 @@ export const attentionOf = async (
   issue: Record<string, unknown>,
   role: "blocked" | "review",
 ): Promise<Attention | undefined> => {
-  let comments: string[] | undefined;
-  try {
-    comments = await commentsOf(t, issue.id);
-  } catch {}
-  // A comment that cannot be read does not hide the ticket: it is in a column that waits for a person.
-  if (comments === undefined) return { kind: role, text: "" };
   if (role === "blocked") {
+    let comments: string[] = [];
+    try {
+      comments = await commentsOf(t, issue.id);
+    } catch {
+      // A comment that cannot be read does not hide a Blocked ticket: it waits for a person, reason or not.
+    }
     for (const body of comments) {
       const m = BLOCKED_COMMENT.exec(body);
       if (m)
@@ -523,10 +525,16 @@ export const attentionOf = async (
     }
     return { kind: "blocked", text: "" };
   }
+  // Whether a review needs a person is only known from the comments: a read that fails throws, so that no In Review
+  // ticket is taken for an escalation on a guess (the caller reports the read as failed and keeps what it knew).
+  const comments = await commentsOf(t, issue.id);
+  // Only the newest `已开 PR：` comment counts: an older escalation is stale once a later round has passed.
   for (const body of comments) {
     const m = REVIEW_COMMENT.exec(body);
-    if (m && body.includes("升级给人"))
-      return { kind: "review", text: cut((m[2] ?? "").trim()), prUrl: m[1] ?? "" };
+    if (!m) continue;
+    return ESCALATED.some((word) => body.includes(word))
+      ? { kind: "review", text: cut((m[2] ?? "").trim()), prUrl: m[1] ?? "" }
+      : undefined;
   }
   // In Review for another reason (a PR merged outside the loop): nothing for a person to decide.
   return undefined;

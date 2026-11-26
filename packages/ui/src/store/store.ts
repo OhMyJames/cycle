@@ -339,19 +339,27 @@ export class AppStore extends StoreBase {
   loadLoopTicket = this.#loop.loadTicket;
   actOnLoopTicket = this.#loop.act;
   loadLoopNotices = this.#loop.loadNotices;
+  takeLoopRequest = this.#loop.takeRequest;
 
   /** Shows the Dev session of a ticket (`[CYC-1] Dev`) in place of the Loop page; false when no session has that name. */
-  joinLoopSession = (identifier: string): boolean => {
-    for (const [locationId, list] of Object.entries(this.getState().sessions)) {
-      const found = list.find((x) => !x.archived && x.title?.trim() === `[${identifier}] Dev`);
-      if (found !== undefined) {
-        this.set((s) => ({ focusRequests: s.focusRequests + 1 }));
-        void this.focusSession(locationId, found.sessionId);
-        this.track("loop_session_joined", {});
-        return true;
-      }
-    }
-    return false;
+  joinLoopSession = (
+    identifier: string,
+    at?: { locationId: string; sessionId: string },
+  ): boolean => {
+    const wanted = `[${identifier}] Dev`;
+    const sessions = Object.entries(this.getState().sessions).flatMap(([locationId, list]) =>
+      list.filter((x) => !x.archived && x.title?.trim() === wanted).map((x) => ({ locationId, x })),
+    );
+    // The one the Notice named, else one waiting on an answer, else the first.
+    const found =
+      sessions.find((e) => e.locationId === at?.locationId && e.x.sessionId === at.sessionId) ??
+      sessions.find((e) => e.x.state === "requires_action") ??
+      sessions[0];
+    if (found === undefined) return false;
+    this.set((s) => ({ focusRequests: s.focusRequests + 1 }));
+    void this.focusSession(found.locationId, found.x.sessionId);
+    this.track("loop_session_joined", {});
+    return true;
   };
 
   // ---- connectors ----

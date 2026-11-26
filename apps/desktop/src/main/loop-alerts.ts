@@ -30,26 +30,37 @@ export type PollDeps = {
 /** One look at every Project. A Project that cannot be read keeps what was known of it: it is not "all clear". */
 export const noticePoller = (deps: PollDeps) => {
   const seen = new Map<string, Set<string>>();
-  return {
-    async tick(): Promise<void> {
-      let projects: LoopProjectInfo[];
-      try {
-        projects = await deps.projects();
-      } catch {
-        return;
-      }
-      for (const { projectKey } of projects) {
-        const answer = await deps.read(projectKey).catch(() => undefined);
-        if (answer?.kind !== "ok") continue;
-        const alerts = newAlerts(seen.get(projectKey), answer.notices);
-        seen.set(projectKey, new Set(answer.notices.map(keyOf)));
-        for (const notice of alerts) {
-          try {
-            deps.alert(projectKey, notice);
-          } catch {
-            // A notification that cannot be shown is one missed, not a poll that failed.
-          }
+  let running = false;
+  const once = async (): Promise<void> => {
+    let projects: LoopProjectInfo[];
+    try {
+      projects = await deps.projects();
+    } catch {
+      return;
+    }
+    for (const { projectKey } of projects) {
+      const answer = await deps.read(projectKey).catch(() => undefined);
+      if (answer?.kind !== "ok") continue;
+      const alerts = newAlerts(seen.get(projectKey), answer.notices);
+      seen.set(projectKey, new Set(answer.notices.map(keyOf)));
+      for (const notice of alerts) {
+        try {
+          deps.alert(projectKey, notice);
+        } catch {
+          // A notification that cannot be shown is one missed, not a poll that failed.
         }
+      }
+    }
+  };
+  return {
+    /** A tick that finds the one before still reading does nothing: two would tell the same new Notice twice. */
+    async tick(): Promise<void> {
+      if (running) return;
+      running = true;
+      try {
+        await once();
+      } finally {
+        running = false;
       }
     },
   };

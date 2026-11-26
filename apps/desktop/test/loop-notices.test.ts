@@ -3,7 +3,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LoopNotice, LoopNoticesAnswer } from "@cycle/ui/api";
-import { actionsOf, actOnTicket, answerNotices, answerTicket } from "../src/main/loop.ts";
+import { actionsOf, actOnTicket, answerNotices, answerTicket, roleOf } from "../src/main/loop.ts";
 import { type Alertable, newAlerts, noticePoller, showAlert } from "../src/main/loop-alerts.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "desktop-notices-"));
@@ -150,7 +150,15 @@ describe("Notices", () => {
       String(init.body).includes("execute_read")
         ? new Response("no", { status: 500 })
         : base(u as never, init)) as unknown as typeof fetch;
-    const answer = await answerNotices(loop, "CYC", () => [], noop, failing);
+    const onlyBlocked = world({ tickets: { 35: state.tickets[35] }, comments: {} }).fetchImpl;
+    const answer = await answerNotices(loop, "CYC", () => [], noop, (async (
+      u: unknown,
+      init: RequestInit,
+    ) =>
+      String(init.body).includes("execute_read")
+        ? new Response("no", { status: 500 })
+        : onlyBlocked(u as never, init)) as unknown as typeof fetch);
+    void failing;
     if (answer.kind !== "ok") throw new Error("expected notices");
     expect(answer.notices.find((n) => n.kind === "blocked")).toMatchObject({ reason: "" });
   });
@@ -170,6 +178,50 @@ describe("Notices", () => {
     // Back in Todo with its labels untouched, so Loop takes it up again.
     expect(writes[0]?.columnId).toBe(22);
     expect(writes[0]).not.toHaveProperty("labelIds");
+  });
+
+  test("a review needs a person on either wording, and only the newest PR comment decides", async () => {
+    const manual =
+      "已开 PR：https://github.com/o/r/pull/9\n独立评审结论为合并，但未满足自动合并前置条件，需要人工处理：\nCI 未全绿";
+    const passed =
+      "已开 PR：https://github.com/o/r/pull/9\nCI 全部通过，独立评审结论为合并，已开启 GitHub 自动合并（squash）。";
+    const { fetchImpl } = world({
+      tickets: {
+        34: [
+          { id: 1, identifier: "CYC-1", columnId: 34 },
+          { id: 2, identifier: "CYC-2", columnId: 34 },
+        ],
+      },
+      // Newest first: ticket 2 was escalated once, then a later round passed.
+      comments: { 1: [manual], 2: [passed, REVIEW] },
+    });
+    const answer = await answerNotices(loop, "CYC", () => [], noop, fetchImpl);
+    if (answer.kind !== "ok") throw new Error("expected notices");
+    expect(answer.notices.map((n) => n.identifier)).toEqual(["CYC-1"]);
+  });
+
+  test("comments that cannot be read make the read fail, not an escalation of every In Review ticket", async () => {
+    const base = world(state).fetchImpl;
+    const failing = (async (u: unknown, init: RequestInit) =>
+      String(init.body).includes("execute_read")
+        ? new Response("no", { status: 500 })
+        : base(u as never, init)) as unknown as typeof fetch;
+    const answer = await answerNotices(loop, "CYC", () => [], noop, failing);
+    expect(answer).toEqual({ kind: "unreachable" });
+  });
+
+  test("roles go by position only when every started column has one", () => {
+    const c = (id: number, position?: number) => ({
+      id,
+      name: String(id),
+      stateType: "started",
+      ...(position === undefined ? {} : { position }),
+    });
+    // Array order is progress, review, blocked; one position alone must not reorder them.
+    const mixed = [c(1), c(2, 1), c(3)];
+    expect(roleOf(mixed, mixed[1] as never)).toBe("review");
+    const placed = [c(1, 9), c(2, 1), c(3, 5)];
+    expect(roleOf(placed, placed[1] as never)).toBe("progress");
   });
 
   test("an escalated review's page shows the conclusion and the PR address", async () => {
@@ -305,5 +357,35 @@ describe("the notification itself", () => {
     const m = make(true);
     m.alert("CYC", notice);
     expect(m.shown).toEqual([]);
+  });
+});
+
+describe("overlapping ticks", () => {
+  test("a tick that finds the last still reading does nothing, so a new Notice is told once", async () => {
+    let release = () => {};
+    let calls = 0;
+    const told: string[] = [];
+    let answer: LoopNoticesAnswer = { kind: "ok", notices: [] };
+    const poller = noticePoller({
+      projects: async () => [
+        { name: "C", projectKey: "CYC", repo: { displayName: "o/r", forge: "github" } },
+      ],
+      read: async () => {
+        calls += 1;
+        if (calls === 2) await new Promise<void>((r) => (release = r));
+        return answer;
+      },
+      alert: (_k, n) => told.push(n.identifier),
+    });
+    await poller.tick();
+    answer = {
+      kind: "ok",
+      notices: [{ kind: "blocked", identifier: "CYC-1", title: "", reason: "" }],
+    };
+    const slow = poller.tick();
+    await poller.tick();
+    release();
+    await slow;
+    expect(told).toEqual(["CYC-1"]);
   });
 });

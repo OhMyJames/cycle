@@ -62,23 +62,38 @@ export class LoopSlice {
     }));
   };
 
+  /** The latest ask per Project: an answer that is not for it is old, and is dropped. */
+  #requests = 0;
+  readonly #noticeAsk = new Map<string, number>();
+
   loadNotices = async (projectKey: string): Promise<void> => {
+    const ask = (this.#noticeAsk.get(projectKey) ?? 0) + 1;
+    this.#noticeAsk.set(projectKey, ask);
     const answer = await this.#kit.bridge
       .loopNotices(projectKey)
       .catch(() => ({ kind: "unreachable" }) as const);
+    if (this.#noticeAsk.get(projectKey) !== ask) return;
     this.#kit.set((s) => {
       const had = s.loop.notices[projectKey];
-      // A read that failed leaves the Notices that were read: they are still the last that is known.
-      if (had?.kind === "ok" && answer.kind !== "ok") return {};
+      // A read that failed to reach the tracker leaves the Notices that were read; no key at all replaces them.
+      if (had?.kind === "ok" && answer.kind === "unreachable") return {};
       return { loop: { ...s.loop, notices: { ...s.loop.notices, [projectKey]: answer } } };
     });
   };
+
+  /** The ticket a pressed notification asked for is handed over once: the page that takes it clears it. */
+  takeRequest = (n: number): void =>
+    this.#kit.set((s) => {
+      if (s.loop.request?.n !== n) return {};
+      const { request: _taken, ...rest } = s.loop;
+      return { loop: rest };
+    });
 
   requestTicket = (projectKey: string, identifier: string): void =>
     this.#kit.set((s) => ({
       loop: {
         ...s.loop,
-        request: { projectKey, identifier, n: (s.loop.request?.n ?? 0) + 1 },
+        request: { projectKey, identifier, n: ++this.#requests },
       },
     }));
 
