@@ -5,7 +5,6 @@ import { type AgentWord, agentOf, type EventName, type EventProps } from "@cycle
 import { type Channel, type ClientEvents, CycleClient, ProtocolMismatchError } from "@cycle/client";
 import type { AppEvent, LocationConfig, LocationStatus, SessionSummary } from "@cycle/ui";
 import {
-  baseRelease,
   type DaemonStop,
   daemonTooOld,
   daemonUpgradeCommand,
@@ -403,20 +402,24 @@ export class Runtime {
           ? "daemon"
           : "app";
     const { appVersion } = this.options;
+    const target = appVersion === undefined ? undefined : this.#daemonTarget(appVersion);
     return {
       with: side,
       supported: error.supported,
       requested: error.requested,
-      ...(side === "daemon" && location.kind !== "local" && appVersion !== undefined
-        ? { command: daemonUpgradeCommand(this.#daemonTarget(appVersion)) }
+      ...(side === "daemon" && location.kind !== "local" && target !== undefined
+        ? { command: daemonUpgradeCommand(target) }
         : {}),
     };
   }
 
-  /** The version a remote daemon is updated to: the app's, or for an alpha (which has no release) its base release. */
-  #daemonTarget(appVersion: string): string {
+  /**
+   * The version a remote daemon is updated to: the app's, or for an alpha (which has no release) the release it was
+   * cut from. Undefined when an alpha does not say, rather than a guess at a release that may not exist.
+   */
+  #daemonTarget(appVersion: string): string | undefined {
     if (parseVersion(appVersion)?.alpha === undefined) return appVersion;
-    return this.options.appBaseVersion ?? baseRelease(appVersion) ?? appVersion;
+    return this.options.appBaseVersion;
   }
 
   /** What a connected remote location's daemon is, and whether it is too old for this app to work with. */
@@ -424,7 +427,8 @@ export class Runtime {
     const version = client.serverVersion;
     if (location.kind === "local" || version === undefined) return {};
     const { appVersion } = this.options;
-    const old = appVersion !== undefined && daemonTooOld(version);
+    const target = appVersion === undefined ? undefined : this.#daemonTarget(appVersion);
+    const old = target !== undefined && daemonTooOld(version);
     // A daemon that is no longer too old has been updated: what was said about the update is done with.
     if (!old) this.#upgrading.delete(location.id);
     const doing = this.#upgrading.get(location.id);
@@ -434,8 +438,8 @@ export class Runtime {
         ...(old
           ? {
               upgrade: {
-                to: this.#daemonTarget(appVersion),
-                command: daemonUpgradeCommand(this.#daemonTarget(appVersion)),
+                to: target,
+                command: daemonUpgradeCommand(target),
                 ...(doing !== undefined ? doing : {}),
               },
             }
