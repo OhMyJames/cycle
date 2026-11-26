@@ -446,6 +446,21 @@ export class PlanTracker implements Tracker {
     });
   }
 
+  /** The rows `list_issues` gives for one column, as listed: no `get` per issue (the board, CYC-482). */
+  async listRows(columnId: number, limit: number): Promise<unknown[]> {
+    return this.#rows(columnId, limit);
+  }
+
+  /** Puts the issue in a column by id, whatever stage the loop calls it. */
+  async moveToColumn(issue: Pick<Issue, "id">, columnId: number): Promise<void> {
+    await this.#call("update_issue", { issueId: issue.id, columnId });
+  }
+
+  /** Replaces the labels of the issue: the caller has just read them. */
+  async setLabelIds(issue: Pick<Issue, "id">, labelIds: number[]): Promise<void> {
+    await this.#tool("execute_write", "update_issue", { issueId: issue.id, labelIds });
+  }
+
   async #listColumn(columnId: number, limit: number): Promise<Issue[]> {
     const rows = await this.#rows(columnId, limit);
     // The list may not carry the description: read each in full.
