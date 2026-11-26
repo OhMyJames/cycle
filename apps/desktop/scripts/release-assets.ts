@@ -24,6 +24,7 @@ const info = JSON.parse(readFileSync(buildFile, "utf8")) as {
   version: string;
   platform: string;
   arch: string;
+  shell?: string;
 };
 
 rmSync(OUT_DIR, { recursive: true, force: true });
@@ -51,6 +52,8 @@ writeFileSync(
   manifest,
   `${JSON.stringify({
     ...manifestFor(info, { sha256, size: statSync(archive).size }, tree),
+    // Which interface bundles work with this app: the release workflow keeps the bundles of the last releases' shells.
+    ...(info.shell !== undefined ? { shell: info.shell } : {}),
     pack: packToJson({ file: packFile, ...blocks }),
   })}\n`,
 );

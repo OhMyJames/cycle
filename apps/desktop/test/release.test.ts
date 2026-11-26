@@ -267,3 +267,12 @@ test("a version becomes the two numbers Info.plist can hold", () => {
     CFBundleVersion: "0.3.32",
   });
 });
+
+test("a manifest that also names the shell it was built with is read as before", () => {
+  const build = { version: "0.2.0", platform: "darwin", arch: "arm64" };
+  const text = JSON.stringify({
+    ...manifestFor(build, { sha256: hash, size: 5 }),
+    shell: "0".repeat(32),
+  });
+  expect(parseManifest(text)).toEqual(manifestFor(build, { sha256: hash, size: 5 }));
+});
