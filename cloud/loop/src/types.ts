@@ -28,6 +28,8 @@ export type Issue = {
   blockerColumnIds: number[] | null;
   /** The parent issue's internal id, or null for a top-level issue. */
   parentId: number | null;
+  /** The tracker's development links (PRs, MRs) as it sent them, for reading addresses out of; unset when absent. */
+  development?: unknown;
   /** The parent's number and title, when the tracker said them (the planning node shows them; CYC-322). */
   parent?: { number: number; key: string; title: string };
   /** Links to other issues, when the tracker said them: `outward` is this issue blocking or relating to the other. */
