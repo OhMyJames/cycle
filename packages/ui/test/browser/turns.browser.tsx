@@ -73,12 +73,13 @@ const openWith = async (
   await user.click(await screen.findByRole("option", { name: /work/ }));
   const log = await screen.findByRole("log", { name: "Conversation" });
   let version = updates.length;
-  const emit = (update: SessionUpdate) => {
-    version += 1;
-    return act(() =>
-      script.emit({ type: "update", locationId: "local", sessionId: "s1", update, version }),
-    );
-  };
+  const emit = (...batch: SessionUpdate[]) =>
+    act(() => {
+      for (const update of batch) {
+        version += 1;
+        script.emit({ type: "update", locationId: "local", sessionId: "s1", update, version });
+      }
+    });
   /** The agent asks for leave, as the next thing the session says. */
   const ask = (request: PermissionRequest) => {
     version += 1;
@@ -803,7 +804,9 @@ test("a conversation that grows from a few blocks to many draws the ones near it
   const { log, emit } = await open(...turnsOf(1));
   expect(drawn(log)).toBe(2);
   constrain(log);
-  for (const update of turnsOf(300, 1)) await emit(update);
+  const updates = turnsOf(300, 1);
+  // Emit in bursts so the view grows incrementally across the virtualization threshold without 600 serial flushes.
+  for (let i = 0; i < updates.length; i += 20) await emit(...updates.slice(i, i + 20));
   await waitFor(() => expect(log.textContent).toContain("answer 300"));
   await waitFor(() => expect(drawn(log)).toBeLessThan(80));
   expect(log.textContent).not.toContain("question 20");

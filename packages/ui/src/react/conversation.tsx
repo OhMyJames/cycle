@@ -807,13 +807,21 @@ export function ConversationView({
     redraw();
   }, [follow]);
 
+  // Keeps the reader's view pinned to the end and records the new scrollTop so a delayed scroll event from this
+  // programmatic move is never mistaken for the reader scrolling away when more content arrives in the meantime.
+  const stickToEnd = useCallback((el: HTMLElement) => {
+    el.scrollTop = el.scrollHeight;
+    lastSeen.current.top = el.scrollTop;
+    view.current.top = el.scrollTop;
+  }, []);
+
   // After every content growth while following the end: keep the end in view.
   useEffect(() => {
     const el = ref.current;
     if (el === null || loading || !stuck.current) return;
     if (blocks.length === 0 && conversation.status === "idle" && follow === 0) return;
-    el.scrollTop = el.scrollHeight;
-  }, [blocks, conversation.status, follow, loading]);
+    stickToEnd(el);
+  }, [blocks, conversation.status, follow, loading, stickToEnd]);
 
   // What is drawn can grow after it is laid out: code is coloured when its highlighter loads, a code block off screen is
   // measured when it comes near. While following the end, the end is kept in view through that too; when reading above
@@ -836,7 +844,7 @@ export function ConversationView({
         stuck.current = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_END_PX;
         return;
       }
-      el.scrollTop = el.scrollHeight;
+      stickToEnd(el);
     });
     for (const child of Array.from(el.children)) keep.observe(child);
     // The view itself too: a line that comes under the title bar takes its height from it, and the end stays in view.
@@ -883,7 +891,7 @@ export function ConversationView({
       el.removeEventListener("keydown", act, true);
       el.removeEventListener("click", pin);
     };
-  }, [refit, pinned]);
+  }, [refit, pinned, stickToEnd]);
 
   // Away from the end, a button takes the reader back to it, and says when something arrived there meanwhile.
   const store = useAppStore();
@@ -909,11 +917,11 @@ export function ConversationView({
       if (!returning.current) return;
       returning.current = false;
       // Blocks drawn on the way were measured, and the end moved: it is gone to again, however near it was.
-      if (el.scrollHeight - el.scrollTop - el.clientHeight > 1) el.scrollTop = el.scrollHeight;
+      if (el.scrollHeight - el.scrollTop - el.clientHeight > 1) stickToEnd(el);
     };
     el.addEventListener("scrollend", ended);
     return () => el.removeEventListener("scrollend", ended);
-  }, []);
+  }, [stickToEnd]);
   const toEnd = () => {
     const el = ref.current;
     if (el === null) return;
@@ -931,17 +939,20 @@ export function ConversationView({
     const was = lastSeen.current;
     view.current.top = el.scrollTop;
     lastSeen.current = { height: el.clientHeight, top: el.scrollTop };
-    // The layout moved it, not the reader: the end that was followed is kept in view. A scroll up is the reader's.
+    const fromEnd = el.scrollHeight - el.scrollTop - el.clientHeight;
+    // The layout or content growing under a programmatic follow-the-end scroll moved it, not the reader: the end that
+    // was followed is kept in view. A scroll up (`el.scrollTop < was.top`) or a control the reader just opened is theirs.
     if (
-      el.clientHeight !== was.height &&
-      el.scrollTop >= was.top &&
       stuck.current &&
-      !following.current.loading
+      !following.current.loading &&
+      el.scrollTop >= was.top &&
+      performance.now() - acted.current >= ACTED_MS &&
+      (el.clientHeight !== was.height || fromEnd >= NEAR_END_PX)
     ) {
-      el.scrollTop = el.scrollHeight;
+      stickToEnd(el);
+      refit();
       return;
     }
-    const fromEnd = el.scrollHeight - el.scrollTop - el.clientHeight;
     setAway(fromEnd > AWAY_PX);
     if (fromEnd < NEAR_END_PX) setFresh(false);
     stuck.current = fromEnd < NEAR_END_PX;
