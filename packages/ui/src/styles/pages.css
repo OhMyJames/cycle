@@ -1458,13 +1458,24 @@ button[data-slot="loop-ticket-title"] {
 /* ---- Right-side Ticket Drawer ---- */
 @keyframes loop-drawer-in {
   from {
-    opacity: 0;
-    transform: translateX(16px);
+    transform: translateX(100%);
+  }
+}
+
+@keyframes loop-drawer-out {
+  to {
+    transform: translateX(100%);
   }
 }
 
 @keyframes loop-scrim-in {
   from {
+    opacity: 0;
+  }
+}
+
+@keyframes loop-scrim-out {
+  to {
     opacity: 0;
   }
 }
@@ -1481,7 +1492,20 @@ button[data-slot="loop-ticket-title"] {
   position: absolute;
   inset: 0;
   background: var(--cycle-scrim);
-  animation: loop-scrim-in var(--cycle-motion-state) var(--cycle-ease) both;
+  animation: loop-scrim-in var(--cycle-motion-drawer) var(--cycle-ease) both;
+}
+
+/* Closing: the panel slides all the way out and the scrim fades out; the drawer is unmounted afterwards. */
+[data-slot="loop-drawer-layer"][data-state="closing"] {
+  pointer-events: none;
+}
+
+[data-slot="loop-drawer-layer"][data-state="closing"] [data-slot="loop-drawer-backdrop"] {
+  animation: loop-scrim-out var(--cycle-motion-drawer) var(--cycle-ease) both;
+}
+
+[data-slot="loop-drawer-layer"][data-state="closing"] [data-slot="loop-drawer"] {
+  animation: loop-drawer-out var(--cycle-motion-drawer) var(--cycle-ease) both;
 }
 
 [data-slot="loop-drawer"] {
@@ -1494,7 +1518,7 @@ button[data-slot="loop-ticket-title"] {
   border-left: 1px solid var(--cycle-border-default);
   background: var(--cycle-surface-workspace);
   box-shadow: var(--cycle-shadow-dialog);
-  animation: loop-drawer-in var(--cycle-motion-enter) var(--cycle-ease) both;
+  animation: loop-drawer-in var(--cycle-motion-drawer) var(--cycle-ease) both;
 }
 
 [data-slot="loop-drawer-head"] {
@@ -2059,6 +2083,8 @@ html[data-platform="darwin"] [data-slot="loop-crumb"] {
 @media (prefers-reduced-motion: reduce) {
   [data-slot="loop-drawer"],
   [data-slot="loop-drawer-backdrop"],
+  [data-slot="loop-drawer-layer"][data-state="closing"] [data-slot="loop-drawer"],
+  [data-slot="loop-drawer-layer"][data-state="closing"] [data-slot="loop-drawer-backdrop"],
   [data-slot="loop-batch-bar"],
   [data-slot="loop-skeleton"],
   [data-kind="loop-refresh"][data-busy] > svg {

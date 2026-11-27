@@ -429,6 +429,19 @@ export function Board({
     return undefined;
   }, [columns, openIdentifier]);
 
+  // The drawer stays mounted after it is closed until its slide-out has played (CYC-506); a new ticket picked
+  // meanwhile replaces it at once.
+  const [held, setHeld] = useState<{ identifier: string; summary: LoopTicket | undefined }>();
+  if (
+    openIdentifier !== undefined &&
+    (held?.identifier !== openIdentifier || held.summary !== openSummary)
+  ) {
+    setHeld({ identifier: openIdentifier, summary: openSummary });
+  }
+  const drawerId = openIdentifier ?? held?.identifier;
+  const drawerSummary = openIdentifier !== undefined ? openSummary : held?.summary;
+  const drawerClosing = openIdentifier === undefined;
+
   const togglePick = (identifier: string) =>
     setPicked((prev) => {
       const next = new Set(prev);
@@ -739,12 +752,14 @@ export function Board({
         />
       ) : null}
 
-      {openIdentifier !== undefined ? (
+      {drawerId !== undefined ? (
         <TicketDrawer
-          key={openIdentifier}
+          key={drawerId}
           projectKey={projectKey}
-          identifier={openIdentifier}
-          summary={openSummary}
+          identifier={drawerId}
+          summary={drawerSummary}
+          closing={drawerClosing}
+          onExited={() => setHeld(undefined)}
           act={act}
           busyAction={busyAction}
           onChatStarted={onChatStarted}

@@ -277,6 +277,7 @@
   --cycle-motion-state: 100ms;
   --cycle-motion-disclosure: 160ms;
   --cycle-motion-enter: 200ms;
+  --cycle-motion-drawer: 280ms;
 
   /* ui-sdk, remapped. Its primary is what solid buttons, selection and checked states use. */
   --ui-background: var(--cycle-surface-workspace);
