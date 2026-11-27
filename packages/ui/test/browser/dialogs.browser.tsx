@@ -68,7 +68,7 @@ test("a location is not added twice by a double click", async () => {
   await act(async () => finish());
 });
 
-test("agent defaults are saved only once they are the ones of the agent shown", async () => {
+test("agent defaults can be saved only once they are read, and a save that failed is not said to be saved", async () => {
   const user = userEvent.setup();
   let release: (value: Record<string, string>) => void = () => {};
   const read = () =>

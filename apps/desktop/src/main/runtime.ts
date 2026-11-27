@@ -282,7 +282,12 @@ export class Runtime {
       connect: this.options.channelFor(location),
       name: "cycle-desktop",
       ackReturns: true,
-      ...(this.options.appVersion !== undefined ? { appVersion: this.options.appVersion } : {}),
+      // A release says its version: that is what `cycle update` on the daemon's machine installs. An alpha (no longer
+      // built, CYC-468) has no release, so it says nothing rather than a version the daemon would not take.
+      ...(this.options.appVersion !== undefined &&
+      parseVersion(this.options.appVersion)?.alpha === undefined
+        ? { appVersion: this.options.appVersion }
+        : {}),
       ...(this.options.protocolVersion !== undefined
         ? { protocolVersion: this.options.protocolVersion }
         : {}),
