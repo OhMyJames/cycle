@@ -45,7 +45,13 @@ export const todoIntake = (host: FlowHost): Intake => ({
       if (!full.ok) return { reject: issue, reasons: full.reasons };
       return {
         take: issue,
-        accepted: { ok: true, kind: "dev", specs: full.specs, docs: full.docs },
+        accepted: {
+          ok: true,
+          kind: "dev",
+          specs: full.specs,
+          docs: full.docs,
+          ...(full.graphSpecs !== undefined ? { graphSpecs: full.graphSpecs } : {}),
+        },
       };
     }
     const pre = preflight(issue, config);

@@ -13,6 +13,7 @@ import type { StoreOps } from "../db/store.ts";
 
 import type { Tuning } from "../config-file.ts";
 import type { CriteriaBook } from "../criteria.ts";
+import type { TaskGraph } from "../graph.ts";
 import type { Forge } from "../ports/forge.ts";
 import type { Tracker } from "../ports/tracker.ts";
 import type { Workspace } from "../ports/workspace.ts";
@@ -131,6 +132,7 @@ export const tail = (text: string, max = 800): string =>
 /** The phases as a person reads them, in the comment that says where a run stopped. */
 export const PHASE_NAMES: Record<string, string> = {
   claimed: "领单",
+  graph_plan: "规划执行图",
   dev: "开发",
   verify: "验证",
   qa: "独立审查",
@@ -172,6 +174,8 @@ export type Opening = {
   state: { kind: "dev"; dev: DevState } | { kind: "research"; research: ResearchState };
   /** The data of the `claimed` event. */
   claimed: EventData;
+  /** CYC-508: optional Level-2 Task Graph parsed at preflight, persisted in the same transaction as the run. */
+  graph?: TaskGraph;
 };
 
 /** The parts of `Engine` a flow may use. `d` is read at each use: it carries the config of the step under way. */

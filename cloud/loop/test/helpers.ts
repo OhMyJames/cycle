@@ -267,6 +267,7 @@ export type Script = {
 
 export class FakeSessions implements Sessions {
   created: string[] = [];
+  titles: { id: string; role: SessionRole; title: string }[] = [];
   inputs: { role: SessionRole; model: string | undefined; effort: string | undefined }[] = [];
   /** Where each session was asked to run: `cwd`, and the `worktree` the daemon was asked to make or find. */
   places: {
@@ -307,6 +308,7 @@ export class FakeSessions implements Sessions {
   }
   async create(input: {
     role: SessionRole;
+    title: string;
     cwd: string;
     model?: string;
     effort?: string;
@@ -323,6 +325,7 @@ export class FakeSessions implements Sessions {
     }
     const id = `${input.role}-${this.created.length + 1}`;
     this.created.push(id);
+    this.titles.push({ id, role: input.role, title: input.title });
     return {
       sessionId: id,
       cwd: input.role === "dev" || input.role === "research" ? WT : input.cwd,

@@ -267,6 +267,7 @@ export class Engine {
     try {
       store.transaction((tx) => {
         tx.saveCriteria(issue.key, book);
+        if (opening.graph !== undefined) tx.saveGraph(opening.graph);
         tx.save(run);
         writeIntent(tx, {
           run: issue.key,

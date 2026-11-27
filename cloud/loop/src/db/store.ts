@@ -8,6 +8,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { CriteriaBook } from "../criteria.ts";
+import { type TaskGraph, TaskGraphSchema } from "../graph.ts";
 import {
   type CiState,
   type LoopEvent,
@@ -227,6 +228,125 @@ export class StoreOps {
     } | null;
     if (row === null) throw missing(`no criteria for ${key}`);
     return CriteriaBook.restore(JSON.parse(row.items));
+  }
+
+  loadGraph(key: string): TaskGraph | undefined {
+    const meta = this.db
+      .query(
+        "SELECT run_key, source, revision, current_node_id, created_at, updated_at FROM run_graphs WHERE run_key = ?",
+      )
+      .get(key) as {
+      run_key: string;
+      source: string;
+      revision: number;
+      current_node_id: string | null;
+      created_at: string;
+      updated_at: string;
+    } | null;
+    if (meta === null) return undefined;
+    const rows = this.db
+      .query(
+        `SELECT node_id, position, origin, title, goal, depends_on, files_hint, verify, status,
+                session_id, commit_sha, rounds, last_error, summary, started_at, finished_at
+         FROM graph_nodes WHERE run_key = ? ORDER BY position`,
+      )
+      .all(key) as {
+      node_id: string;
+      position: number;
+      origin: string;
+      title: string;
+      goal: string;
+      depends_on: string;
+      files_hint: string;
+      verify: string;
+      status: string;
+      session_id: string | null;
+      commit_sha: string | null;
+      rounds: number;
+      last_error: string | null;
+      summary: string | null;
+      started_at: string | null;
+      finished_at: string | null;
+    }[];
+    return TaskGraphSchema.parse({
+      runKey: meta.run_key,
+      source: meta.source,
+      revision: meta.revision,
+      currentNodeId: meta.current_node_id,
+      createdAt: meta.created_at,
+      updatedAt: meta.updated_at,
+      nodes: rows.map((r) => ({
+        id: r.node_id,
+        position: r.position,
+        origin: r.origin,
+        title: r.title,
+        goal: r.goal,
+        dependsOn: JSON.parse(r.depends_on),
+        filesHint: JSON.parse(r.files_hint),
+        verify: JSON.parse(r.verify),
+        status: r.status,
+        sessionId: r.session_id,
+        commitSha: r.commit_sha,
+        rounds: r.rounds,
+        lastError: r.last_error,
+        summary: r.summary,
+        startedAt: r.started_at,
+        finishedAt: r.finished_at,
+      })),
+    });
+  }
+
+  /** Atomically replaces the run's Task Graph metadata and nodes, stamping `updatedAt`. */
+  saveGraph(graph: TaskGraph): TaskGraph {
+    const now = this.now().toISOString();
+    const next = TaskGraphSchema.parse({ ...graph, updatedAt: now });
+    this.db.transaction(() => {
+      this.db
+        .query(
+          `INSERT INTO run_graphs (run_key, source, revision, current_node_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT (run_key) DO UPDATE SET source = excluded.source, revision = excluded.revision,
+             current_node_id = excluded.current_node_id, updated_at = excluded.updated_at`,
+        )
+        .run(
+          next.runKey,
+          next.source,
+          next.revision,
+          next.currentNodeId,
+          next.createdAt,
+          next.updatedAt,
+        );
+      this.db.query("DELETE FROM graph_nodes WHERE run_key = ?").run(next.runKey);
+      const insert = this.db.query(
+        `INSERT INTO graph_nodes (
+           run_key, node_id, position, origin, title, goal, depends_on, files_hint, verify, status,
+           session_id, commit_sha, rounds, last_error, summary, started_at, finished_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      for (const n of next.nodes) {
+        insert.run(
+          next.runKey,
+          n.id,
+          n.position,
+          n.origin,
+          n.title,
+          n.goal,
+          JSON.stringify(n.dependsOn),
+          JSON.stringify(n.filesHint),
+          JSON.stringify(n.verify),
+          n.status,
+          n.sessionId,
+          n.commitSha,
+          n.rounds,
+          n.lastError,
+          n.summary,
+          n.startedAt,
+          n.finishedAt,
+          now,
+        );
+      }
+    })();
+    return next;
   }
 
   appendProgress(key: string, round: number, text: string): void {
@@ -676,6 +796,12 @@ export class SqliteStore implements LoopStore {
   }
   async loadCriteria(key: string) {
     return this.#ops.loadCriteria(key);
+  }
+  async loadGraph(key: string) {
+    return this.#ops.loadGraph(key);
+  }
+  async saveGraph(graph: TaskGraph) {
+    return this.#ops.saveGraph(graph);
   }
   async appendProgress(key: string, round: number, text: string) {
     this.#ops.appendProgress(key, round, text);

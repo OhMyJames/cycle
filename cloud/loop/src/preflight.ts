@@ -1,4 +1,5 @@
 import { type CriterionSpec, listUnder, parseCriteria } from "./criteria.ts";
+import type { TaskNodeSpec } from "./graph.ts";
 import { criterionSpecs } from "./parse/blocks.ts";
 import type { Config, Issue } from "./types.ts";
 
@@ -9,6 +10,8 @@ export type Preflight =
       specs: CriterionSpec[];
       /** 大档 (CYC-328): the documents and versions the run starts on; absent for a small one. */
       docs?: { id: number; title: string; version: number }[];
+      /** CYC-508: structured Level-2 Task Graph parsed from the Plan document, when present. */
+      graphSpecs?: TaskNodeSpec[];
     }
   | { ok: true; kind: "research"; questions: string[] }
   | { ok: false; reasons: string[] };

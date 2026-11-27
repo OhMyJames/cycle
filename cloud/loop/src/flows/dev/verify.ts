@@ -4,6 +4,7 @@ import { summarizeFailure } from "../../failure.ts";
 import { testLayers } from "../../layers.ts";
 import type { Exec, ExecResult } from "../../types.ts";
 import { type DevRun, type FlowHost, type Save, where } from "./context.ts";
+import { nodeVerify } from "./graph.ts";
 import { restoreNodeModules } from "./node-modules.ts";
 import { nextRound } from "./qa.ts";
 
@@ -13,6 +14,10 @@ export async function verify(
   book: CriteriaBook,
   save: Save,
 ): Promise<void> {
+  if (run.dev.activeNodeId != null) {
+    await nodeVerify(h, run, save);
+    return;
+  }
   const { config, store, clock } = h.d;
   const worktree = h.need(run.worktree ?? undefined);
   // Every way into verify (after Dev, a clean conflict merge, a resume) passes here.
@@ -87,7 +92,13 @@ export async function verify(
   });
 
   if (failures.length > 0) {
-    await nextRound(h, run, failures.join("\n\n"), save);
+    const failedVerify = book.items
+      .filter((c) => c.status === "failed")
+      .flatMap((c) => c.verify.map((argv) => argv.join(" ")));
+    await nextRound(h, run, failures.join("\n\n"), save, "dev", {
+      fixTitle: "修复整单验收失败",
+      fixVerify: failedVerify.length > 0 ? failedVerify : ["bun run check"],
+    });
     return;
   }
   // The person's edit has been judged by the checks: a later fix turn need not be told of it again.
