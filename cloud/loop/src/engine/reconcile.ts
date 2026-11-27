@@ -1,7 +1,7 @@
 // The tracker made to match what the loop wrote down (CYC-480). Whatever the loop writes for people to read (a
 // comment, a move, a label, the phase field) is first an intent, in the same SQLite transaction as the change that
 // calls for it. The reconciler then does what is still to do, in order, one work item at a time. A failure leaves the
-// intent pending and counts; the next flush (every `step()` starts with one) tries again. Each intent is safe to run
+// intent pending and counts, except a network failure, which waits and does not count; the next flush (every `step()` starts with one) tries again. Each intent is safe to run
 // twice: it looks at the work item first, and a comment carries a marker the reconciler looks for before it writes.
 
 import type { Intent, StoreOps } from "../db/store.ts";
@@ -12,6 +12,11 @@ import type { Clock, Config, Issue, Logger, LoopPhase, Stage } from "../types.ts
 
 /** More failed attempts than this and an intent is `stuck`: a person is told, and the loop stops trying. */
 export const MAX_ATTEMPTS = 10;
+/** How long an intent waits after its 1st, 2nd, 3rd… network failure; the last is the longest. */
+export const BACKOFF_MS = [30_000, 60_000, 120_000, 240_000, 480_000, 600_000] as const;
+/** The wait after `waits` network failures so far. */
+export const backoffMs = (waits: number): number =>
+  BACKOFF_MS[Math.min(waits, BACKOFF_MS.length - 1)] as number;
 /** How many work items are reconciled at once. */
 const PARALLEL = 4;
 /** How many of the newest comments are searched for a marker. */
@@ -53,8 +58,15 @@ type Parts = {
   log: Logger;
 };
 
+/** The tracker said plainly that the work item is not there. */
+class IssueNotFound extends Error {}
+
+/** Failures that say nothing against the intent: the network, a timeout, the tracker being down. They wait, uncounted. */
+const isTransient = (kind: string): boolean => kind === "network" || kind === "timeout";
+
 /** What went wrong, as a kind and nothing else: the message may carry text from the tracker. */
 export const failureKind = (error: unknown): string => {
+  if (error instanceof IssueNotFound) return "not_found";
   if (error instanceof Error && error.name === "TimeoutError") return "timeout";
   if (error instanceof Error && isNetworkError(error.message)) return "network";
   return "error";
@@ -150,9 +162,27 @@ export class Reconciler {
     const mine = this.#pending().filter(
       (i) => targetOf(i)?.issueId === issueId && (i.kind === "phase") === phase,
     );
+    // A comment or a move that gave up holds back every later comment and move of the work item: a move must not
+    // pass the comment that explains it. The phase field and labels are not held.
+    const held = phase
+      ? Number.POSITIVE_INFINITY
+      : (this.#parts()
+          .store.transaction((tx) => tx.stuckIntents())
+          .filter(
+            (i) => (i.kind === "comment" || i.kind === "move") && targetOf(i)?.issueId === issueId,
+          )
+          .map((i) => i.id)
+          .sort((a, b) => a - b)[0] ?? Number.POSITIVE_INFINITY);
     for (const intent of mine) {
+      if ((intent.kind === "comment" || intent.kind === "move") && intent.id > held) continue;
       const current = this.#pending().find((i) => i.id === intent.id);
       if (current === undefined) continue;
+      // Waiting for the network: nothing behind it goes first.
+      if (
+        current.nextAt !== null &&
+        Date.parse(current.nextAt) > this.#parts().clock.now().getTime()
+      )
+        return;
       if (!(await this.#attempt(current))) return;
     }
   }
@@ -166,25 +196,35 @@ export class Reconciler {
       return true;
     } catch (error) {
       const kind = failureKind(error);
-      const stuck = intent.attempts + 1 > MAX_ATTEMPTS;
+      if (isTransient(kind)) {
+        const at = new Date(this.#parts().clock.now().getTime() + backoffMs(intent.waits));
+        store.transaction((tx) => tx.deferIntent(intent.id, kind, at.toISOString()));
+        return false;
+      }
+      const stuck = kind === "not_found" || intent.attempts + 1 > MAX_ATTEMPTS;
       store.transaction((tx) => {
         tx.markIntent(intent.id, stuck ? "stuck" : "pending", kind);
-        if (stuck) {
+        // The Notice is the stuck intent itself (`loop/notices/list`); no second one is written here.
+        if (stuck)
           tx.event(intent.runKey, "intent_stuck", {
             intent: intent.id,
             what: intent.kind,
             failure: kind,
           });
-          tx.notice(
-            intent.runKey,
-            "intent_stuck",
-            `写给 tracker 的${intent.kind}连续失败 ${intent.attempts + 1} 次（${kind}），已不再重试：${intent.dedupe}`,
-            `intent_stuck:${intent.id}`,
-          );
-        }
       });
       if (stuck) log(`${intent.runKey}: intent ${intent.dedupe} is stuck (${kind})`);
       return false;
+    }
+  }
+
+  /** `tracker.get`, where a work item that is not there is told apart from a tracker that cannot be reached. */
+  async #get(number: number): Promise<Issue> {
+    try {
+      return await this.#parts().tracker.get(number);
+    } catch (error) {
+      if (error instanceof Error && /not found|\b404\b/i.test(error.message))
+        throw new IssueNotFound("work item not found");
+      throw error;
     }
   }
 
@@ -198,11 +238,11 @@ export class Reconciler {
         (i) => i.kind === "phase" && i.runKey === intent.runKey && i.id > intent.id,
       );
       if (newer) return;
-      const issue = await tracker.get(target.issueNumber);
+      const issue = await this.#get(target.issueNumber);
       await tracker.setLoopPhase(issue, p.phase as LoopPhase | null, new Date(p.at as string));
       return;
     }
-    const issue = await tracker.get(target.issueNumber);
+    const issue = await this.#get(target.issueNumber);
     if (intent.kind === "move") {
       const to = p.to as Stage;
       // A move is replayed only while it is still what the run wants: a newer move for the run replaces it, and the

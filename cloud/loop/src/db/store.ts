@@ -41,6 +41,10 @@ export interface Intent {
   status: IntentStatus;
   attempts: number;
   lastError: string | null;
+  /** A pending intent is not tried before this time (an ISO time), or null. */
+  nextAt: string | null;
+  /** How many times it waited for the network; sets the next wait. */
+  waits: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -385,6 +389,11 @@ export class StoreOps {
     return this.#intents("SELECT * FROM intents WHERE status = 'stuck' ORDER BY id");
   }
 
+  /** Whether an intent of this id exists, whatever its status. */
+  intentExists(id: number): boolean {
+    return this.db.query("SELECT 1 FROM intents WHERE id = ?").get(id) !== null;
+  }
+
   /** The intents still to do, oldest first. */
   pendingIntents(): Intent[] {
     return this.#intents("SELECT * FROM intents WHERE status = 'pending' ORDER BY id");
@@ -425,6 +434,8 @@ export class StoreOps {
       status: IntentStatus;
       attempts: number;
       last_error: string | null;
+      next_at: string | null;
+      waits: number;
       created_at: string;
       updated_at: string;
     }[];
@@ -437,6 +448,8 @@ export class StoreOps {
       status: r.status,
       attempts: r.attempts,
       lastError: r.last_error,
+      nextAt: r.next_at,
+      waits: r.waits,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
     }));
@@ -450,6 +463,30 @@ export class StoreOps {
       )
       .run(status, error, this.now().toISOString(), id).changes;
     if (changed === 0) throw new Error(`no intent ${id}`);
+  }
+
+  /** An attempt failed for a reason that is not the intent's fault (the network): stays pending, not counted, tried again at `nextAt`. */
+  deferIntent(id: number, error: string, nextAt: string): void {
+    const changed = this.db
+      .query(
+        `UPDATE intents SET waits = waits + 1, next_at = ?, last_error = ?, updated_at = ? WHERE id = ? AND status = 'pending'`,
+      )
+      .run(nextAt, error, this.now().toISOString(), id).changes;
+    if (changed === 0) throw new Error(`no pending intent ${id}`);
+  }
+
+  /** A stuck intent goes back to pending with nothing counted. Returns the intents it changed. */
+  requeueIntents(ids: number[]): number[] {
+    const out: number[] = [];
+    for (const id of ids) {
+      const changed = this.db
+        .query(
+          `UPDATE intents SET status = 'pending', attempts = 0, waits = 0, next_at = NULL, updated_at = ? WHERE id = ? AND status = 'stuck'`,
+        )
+        .run(this.now().toISOString(), id).changes;
+      if (changed > 0) out.push(id);
+    }
+    return out;
   }
 
   /** The loop is alive on this run. */
@@ -664,6 +701,12 @@ export class SqliteStore implements LoopStore {
   }
   markIntent(id: number, status: IntentStatus, error: string | null = null) {
     this.#ops.markIntent(id, status, error);
+  }
+  deferIntent(id: number, error: string, nextAt: string) {
+    this.#ops.deferIntent(id, error, nextAt);
+  }
+  requeueIntents(ids: number[]) {
+    return this.#ops.requeueIntents(ids);
   }
   beat(runKey: string, detail: string | null = null) {
     this.#ops.beat(runKey, detail);

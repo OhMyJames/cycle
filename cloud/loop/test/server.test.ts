@@ -381,8 +381,86 @@ describe("loop/notices/list", () => {
     );
     expect(notices.find((n) => n.kind === "intent_stuck")).toMatchObject({
       key: "CYC-30",
-      text: "tracker said no",
+      text: expect.stringContaining("tracker said no"),
     });
+  });
+
+  test("a stuck intent is one Notice, even when an older version also wrote one to the notices table", async () => {
+    store.intent("CYC-31", "comment", {}, "stuck-2");
+    const intent = store.pendingIntents().find((i) => i.dedupe === "stuck-2");
+    store.markIntent(intent?.id ?? 0, "stuck", "error");
+    store.transaction((tx) => tx.notice("CYC-31", "intent_stuck", "old text", "intent_stuck:old"));
+    const { notices } = LoopNoticesListResultSchema.parse(
+      (await call("loop/notices/list", { project: "CYC" })).result,
+    );
+    expect(notices.filter((n) => n.key === "CYC-31")).toHaveLength(1);
+  });
+});
+
+describe("loop/intents/retry", () => {
+  const stick = (key: string, dedupe: string) => {
+    store.intent(key, "comment", { issueId: 1, issueNumber: Number(key.slice(4)) }, dedupe);
+    const id = store.pendingIntents().find((i) => i.dedupe === dedupe)?.id ?? 0;
+    store.markIntent(id, "stuck", "error");
+    return id;
+  };
+  const retry = (over: Record<string, unknown>) =>
+    call("loop/intents/retry", {
+      project: "CYC",
+      actor: "james",
+      actorKind: "desktop",
+      ...over,
+    });
+
+  test("by id: back to pending with attempts cleared, one action, and the Notice is gone", async () => {
+    const id = stick("CYC-70", "r-1");
+    const before = store.actions("CYC-70").length;
+    expect((await retry({ id })).result).toEqual({ retried: 1 });
+    const intent = store.pendingIntents().find((i) => i.id === id);
+    expect(intent).toMatchObject({ status: "pending", attempts: 0, nextAt: null });
+    const actions = store.actions("CYC-70");
+    expect(actions).toHaveLength(before + 1);
+    expect(actions.at(-1)?.kind).toBe("intent_retry");
+    const { notices } = LoopNoticesListResultSchema.parse(
+      (await call("loop/notices/list", { project: "CYC" })).result,
+    );
+    expect(notices.some((n) => n.key === "CYC-70")).toBe(false);
+  });
+
+  test("by key: every stuck intent of the ticket, and no other ticket's", async () => {
+    stick("CYC-71", "r-2");
+    stick("CYC-71", "r-3");
+    const other = stick("CYC-72", "r-4");
+    expect((await retry({ key: "CYC-71" })).result).toEqual({ retried: 2 });
+    expect(store.stuckIntents().some((i) => i.id === other)).toBe(true);
+  });
+
+  test("an intent that is not stuck is left alone", async () => {
+    store.intent("CYC-73", "comment", {}, "r-5");
+    const id = store.pendingIntents().find((i) => i.dedupe === "r-5")?.id ?? 0;
+    expect((await retry({ id })).result).toEqual({ retried: 0 });
+  });
+
+  test("without actor, or with neither or both of id and key, nothing is changed", async () => {
+    const id = stick("CYC-74", "r-6");
+    const before = store.actions().length;
+    for (const over of [
+      { id, actor: undefined },
+      { id, actorKind: "stranger" },
+      { id, actor: "" },
+    ])
+      expect((await retry(over)).error).toMatchObject({
+        code: -32602,
+        data: { reason: "actor_required" },
+      });
+    for (const over of [{}, { id, key: "CYC-74" }])
+      expect((await retry(over)).error).toMatchObject({
+        code: -32602,
+        data: { reason: "invalid_params" },
+      });
+    expect((await retry({ id: 999999 })).error).toMatchObject({ data: { reason: "not_found" } });
+    expect(store.stuckIntents().some((i) => i.id === id)).toBe(true);
+    expect(store.actions().length).toBe(before);
   });
 });
 

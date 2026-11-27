@@ -102,6 +102,7 @@ export const LOOP_RUN_GET = "loop/run/get";
 export const LOOP_NOTICES_LIST = "loop/notices/list";
 export const LOOP_TICKET_GET = "loop/ticket/get";
 export const LOOP_TICKETS_ACT = "loop/tickets/act";
+export const LOOP_INTENTS_RETRY = "loop/intents/retry";
 export const LOOP_STATUS = "loop/status";
 
 /** The most bytes of one request line; a connection that sends more without a newline is closed. */
@@ -269,6 +270,20 @@ export const LoopTicketResultSchema = z.discriminatedUnion("status", [
 export type LoopTicketResult = z.infer<typeof LoopTicketResultSchema>;
 export const LoopTicketsActResultSchema = z.object({ results: z.array(LoopTicketResultSchema) });
 export type LoopTicketsActResult = z.infer<typeof LoopTicketsActResultSchema>;
+
+/** Puts intents the loop gave up on back in the queue: one by `id`, or all of a ticket by `key`; exactly one of the two. */
+export const LoopIntentsRetryParamsSchema = z
+  .object({
+    project: z.string().min(1),
+    id: z.number().int().min(1).optional(),
+    key: z.string().min(1).optional(),
+    actor: z.string().min(1).max(100),
+    actorKind: LoopActorKindSchema,
+  })
+  .refine((p) => (p.id === undefined) !== (p.key === undefined));
+export type LoopIntentsRetryParams = z.infer<typeof LoopIntentsRetryParamsSchema>;
+export const LoopIntentsRetryResultSchema = z.object({ retried: z.number().int().min(0) });
+export type LoopIntentsRetryResult = z.infer<typeof LoopIntentsRetryResultSchema>;
 
 export const LoopTicketGetParamsSchema = z.object({
   project: z.string().min(1),

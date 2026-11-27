@@ -114,6 +114,9 @@ export const MIGRATIONS: readonly string[] = [
   // CYC-482: the session a notice is about, so a client can open it without parsing the text.
   `ALTER TABLE notices ADD COLUMN session_kind TEXT`,
   `ALTER TABLE notices ADD COLUMN session_id TEXT`,
+  // CYC-497: when a pending intent may be tried again, and how many network waits it has had (they do not count as attempts).
+  `ALTER TABLE intents ADD COLUMN next_at TEXT`,
+  `ALTER TABLE intents ADD COLUMN waits INTEGER NOT NULL DEFAULT 0`,
 ];
 
 /** The statements a migration may be made of. */
