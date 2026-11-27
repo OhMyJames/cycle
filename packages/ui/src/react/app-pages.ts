@@ -18,7 +18,7 @@ export function usePages(appRef: RefObject<HTMLElement | null>) {
   const [harnessFrom, setHarnessFrom] = useState<"settings" | "blank" | "other">("settings");
   const [connectors, setConnectors] = useState<ConnectorsSection | undefined>(undefined);
   const lastConnectorsSection = useRef<ConnectorsSection>(CONNECTORS_SECTIONS[0]);
-  // The Loop page: open or not, and which Project it was left on (the Projects are its sections).
+  // The Loop mode: active or not, and which view (overview, Project Kanban, or ticket drawer) it was left on.
   const [loop, setLoop] = useState<LoopView | undefined>(undefined);
   const lastLoopView = useRef<LoopView | undefined>(undefined);
   // The Loop is a mode of the sidebar and the main area, not a page over the window: it is not in `pageOpen`.

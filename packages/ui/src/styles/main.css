@@ -82,9 +82,10 @@ html[data-platform="darwin"] [data-slot="titlebar"] button {
   min-width: var(--cycle-panel-width, 0);
 }
 
-/* Closed, the panel takes no room, even before its column is fitted on starting (the saved layout may have it open), and
-   its handle is not drawn at the window's edge. */
-[data-slot="resizable-panel"]#panel:empty {
+/* Closed or hidden by a mode, the panel takes no room, even before its column is fitted on starting (the saved layout
+   may have it open), and its handle is not drawn at the window's edge. */
+[data-slot="resizable-panel"]#panel:empty,
+[data-slot="resizable-panel"]#panel:has(> [data-slot="side-panel"][hidden]) {
   max-width: 0;
 }
 

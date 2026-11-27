@@ -352,8 +352,9 @@ function AppWindow() {
           onSidebarWidth={(width) =>
             appRef.current?.style.setProperty("--cycle-sidebar-width", `${width}px`)
           }
+          panelHidden={pages.loop !== undefined}
           panel={
-            pages.loop === undefined && panelKey !== undefined && sidePanel?.open === true
+            panelKey !== undefined && sidePanel?.open === true
               ? {
                   content: (
                     <SidePanel
@@ -410,6 +411,7 @@ function AppWindow() {
               onConnectors={pages.openConnectors}
               onLoop={pages.openLoop}
               onSessions={() => {
+                if (pages.loop === undefined) return;
                 store.track("sessions_mode_shown", {});
                 pages.leaveLoop();
               }}

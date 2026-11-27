@@ -207,7 +207,7 @@ export function LoopNav({ view, onView }: { view: LoopView; onView: (view: LoopV
   const away = connected === false;
   const chosenKey = projects.find((p) => p.projectKey === viewProject(view))?.projectKey;
   return (
-    <section data-slot="loop-nav" aria-label={t("loop.title")}>
+    <section data-slot="loop-nav" aria-label={t("loop.nav")}>
       <button
         type="button"
         data-slot="loop-nav-item"
@@ -258,7 +258,7 @@ export function LoopMain({
 }: {
   view: LoopView;
   onView: (view: LoopView) => void;
-  /** One level up (ticket → board → overview); nothing from the overview. */
+  /** Closes the open ticket drawer back to its board; does nothing elsewhere in the Loop mode. */
   onBack: () => void;
   /** Out of the Loop: a conversation about a ticket was started. */
   onClose: () => void;

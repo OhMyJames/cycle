@@ -7,7 +7,7 @@ import type {
   LoopTicket,
   LoopTicketDetail,
 } from "../../src/api.ts";
-import { fakeBridge } from "../fake-bridge.ts";
+import { fakeBridge, summary } from "../fake-bridge.ts";
 import { openSettings } from "./account-menu.ts";
 import { renderApp } from "./render-app.tsx";
 
@@ -959,6 +959,8 @@ test("the Loop keeps the sidebar's frame: Sessions and Loop side by side, the ac
   const loop = screen.getByRole("button", { name: "Loop" });
   expect(loop.getAttribute("aria-pressed")).toBe("true");
   expect(sessions.getAttribute("aria-pressed")).toBe("false");
+  expect(screen.getByRole("navigation", { name: "Loop" })).toBeTruthy();
+  expect(screen.getByRole("region", { name: "Loop navigation" })).toBeTruthy();
   expect(document.querySelector('[data-kind="sidebar-toggle"]')).not.toBeNull();
   expect(document.querySelector('[data-kind="account-menu"]')).not.toBeNull();
   expect(screen.getByRole("button", { name: "New session" })).toBeTruthy();
@@ -973,7 +975,57 @@ test("the Loop keeps the sidebar's frame: Sessions and Loop side by side, the ac
   // Sessions brings the list back.
   await user.click(sessions);
   expect(await screen.findByRole("button", { name: "Show archived" })).toBeTruthy();
+  expect(screen.getByRole("navigation", { name: "Sessions" })).toBeTruthy();
   expect(sessions.getAttribute("aria-pressed")).toBe("true");
+});
+
+test("the right panel stays mounted but hidden in the Loop mode and returns intact", async () => {
+  const user = userEvent.setup();
+  const fake = fakeBridge({
+    connected: true,
+    ...overviewScript(),
+  });
+  fake.bridge.sessions = async () => [{ ...summary("s1"), title: "Work" }];
+  await renderApp(fake.bridge);
+  await user.click(await screen.findByRole("option", { name: /Work/ }));
+  await user.click(await screen.findByRole("button", { name: "Show panel" }));
+  const sidePanel = await waitFor(() => {
+    const el = document.querySelector<HTMLElement>('[data-slot="side-panel"]');
+    expect(el).not.toBeNull();
+    return el as HTMLElement;
+  });
+  expect(sidePanel.hidden).toBe(false);
+  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  await screen.findByRole("region", { name: "Projects" });
+  expect(document.querySelector('[data-slot="side-panel"]')).toBe(sidePanel);
+  expect(sidePanel.hidden).toBe(true);
+  expect(sidePanel.inert).toBe(true);
+  await user.click(screen.getByRole("button", { name: "Sessions" }));
+  await waitFor(() => expect(sidePanel.hidden).toBe(false));
+  expect(document.querySelector('[data-slot="side-panel"]')).toBe(sidePanel);
+  expect(sidePanel.inert).toBe(false);
+});
+
+test("a focus-session request while Settings is open over the Loop leaves both Settings and the Loop", async () => {
+  const user = userEvent.setup();
+  const fake = fakeBridge({
+    connected: true,
+    ...overviewScript(),
+  });
+  fake.bridge.sessions = async () => [{ ...summary("s1"), title: "Work" }];
+  await renderApp(fake.bridge);
+  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  await screen.findByRole("region", { name: "Projects" });
+  await openSettings(user);
+  await screen.findByRole("tab", { name: "General" });
+  act(() => fake.emit({ type: "focus-session", locationId: "local", sessionId: "s1" }));
+  await waitFor(() => {
+    expect(screen.queryByRole("tab", { name: "General" })).toBeNull();
+    expect(document.querySelector('[data-kind="loop-overview"]')).toBeNull();
+  });
+  expect(screen.getByRole("button", { name: "Sessions" }).getAttribute("aria-pressed")).toBe(
+    "true",
+  );
 });
 
 test("New session leaves the Loop mode", async () => {

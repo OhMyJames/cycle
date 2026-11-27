@@ -381,7 +381,7 @@ export function Board({
     store.takeLoopRequest(request.n);
   }, [request, projectKey, store, onOpen]);
 
-  // Esc clears batch selection before bubbling to PageLayout (when no ticket drawer is open).
+  // Escape clears batch selection before reaching LoopMain (when no ticket drawer is open).
   useEffect(() => {
     if (picked.size === 0 || openIdentifier !== undefined) return;
     const onKey = (event: KeyboardEvent) => {
