@@ -40,10 +40,7 @@ for (const harness of HARNESSES) {
   }
 }
 
-// `CYCLE_VERSION` names an alpha's version without touching package.json.
-const version =
-  process.env.CYCLE_VERSION ||
-  String((await Bun.file(join(root, "../desktop/package.json")).json()).version);
+const version = String((await Bun.file(join(root, "../desktop/package.json")).json()).version);
 
 if (!parseVersion(version)) throw new Error(`The version ${version} is not a version.`);
 
