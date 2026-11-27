@@ -506,7 +506,8 @@ export class Engine {
       }
       if (!(error instanceof Blocked)) throw error;
       await this.#clear(run, issue);
-      return flow.block({ run, issue, said: error.message, save, resumeFrom: error.resumeFrom });
+      const { resumeFrom, asked } = error;
+      return flow.block({ run, issue, said: error.message, save, resumeFrom, asked });
     }
   }
 
