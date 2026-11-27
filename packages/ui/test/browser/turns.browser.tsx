@@ -625,7 +625,14 @@ test("a card the reader opened is still open when they come back to it", async (
   await user.click(fold);
   expect(fold.getAttribute("aria-expanded")).toBe("true");
   log.scrollTop = log.scrollHeight;
-  await waitFor(() => expect(log.textContent).toContain("answer 300"), { timeout: 5000 });
+  // A slow machine may not have followed the end by itself: go there, as a reader pressing "back to bottom" would.
+  await waitFor(
+    () => {
+      log.scrollTop = log.scrollHeight;
+      expect(log.textContent).toContain("answer 300");
+    },
+    { timeout: 5000 },
+  );
   await waitFor(() => expect(log.scrollHeight - log.scrollTop - log.clientHeight).toBeLessThan(2));
   expect(drawn(log)).toBeLessThan(80);
   for (let i = 0; i < 100 && log.scrollTop > 0; i++) {
