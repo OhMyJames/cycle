@@ -117,3 +117,56 @@ test("a search reads only what was added since the last one", async () => {
   expect(daemon.searchProcessed).toBeLessThan(before * 2 + 1);
   expect((await find("quokka")).hits.length).toBe(1);
 });
+
+test("punctuation in the query does not hide a message", async () => {
+  const { say, find } = await start();
+  await say("hello, world: what's up?", "fine");
+  expect((await find("hello, world")).hits.length).toBe(1);
+  expect((await find("what's up?")).hits.length).toBe(1);
+  expect((await find("HELLO")).hits[0]?.snippet).toContain("hello");
+});
+
+test("a reply streamed in chunks is one message", async () => {
+  const { sessionId, find } = await start();
+  const file = join(dir, "sessions", `${sessionId}.jsonl`);
+  const line = (seq: number, data: object) =>
+    `${JSON.stringify({ seq, ts: "2026-11-26T00:00:00.000Z", kind: "update", data })}\n`;
+  const chunk = (seq: number, text: string) =>
+    line(seq, {
+      sessionUpdate: "agent_message_chunk",
+      messageId: "m-split",
+      content: { type: "text", text },
+    });
+  const before = (await readFile(file, "utf8").catch(() => "")).split("\n").filter(Boolean).length;
+  const { appendFile } = await import("node:fs/promises");
+  await appendFile(
+    file,
+    chunk(before + 1, "the zebra") +
+      chunk(before + 2, "fish parser was ") +
+      chunk(before + 3, "fixed"),
+  );
+  const found = await find("zebrafish parser");
+  expect(found.hits.length).toBe(1);
+  expect(found.hits[0]?.seq).toBe(before + 1);
+  expect(found.hits[0]?.snippet).toContain("fixed");
+  expect((await find("parser was fixed")).hits.length).toBe(1);
+});
+
+test("a file rewritten and grown past the old offset is indexed again", async () => {
+  const { sessionId, find } = await start();
+  const file = join(dir, "sessions", `${sessionId}.jsonl`);
+  const line = (seq: number, text: string) =>
+    `${JSON.stringify({ seq, ts: "2026-11-26T00:00:00.000Z", kind: "update", data: { sessionUpdate: "user_message", messageId: `u${seq}`, content: [{ type: "text", text }] } })}\n`;
+  const { writeFile } = await import("node:fs/promises");
+  await writeFile(file, line(1, "alpha one") + line(2, "alpha two"));
+  expect((await find("alpha")).hits.length).toBe(2);
+  // Rewritten with other content, and longer than before.
+  await writeFile(
+    file,
+    line(1, "beta one padded padded padded") +
+      line(2, "beta two padded padded") +
+      line(3, "beta three"),
+  );
+  expect((await find("alpha")).hits.length).toBe(0);
+  expect((await find("beta")).hits.length).toBe(3);
+});
