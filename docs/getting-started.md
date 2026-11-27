@@ -62,12 +62,12 @@ cycle stop --force   # 立即停:进行中的回合标为"已中断",排队的�
 ## 4. 在应用里添加远端主机
 
 1. 先在 Mac 终端里手动 `ssh user@host true` 一次。应用的 ssh 是非交互的(`BatchMode=yes`),不会问你是否信任主机、也不会问密码,所以主机密钥要已经在 `known_hosts` 里,登录要用密钥(或 ssh-agent)。
-2. 应用里点 "Add location":名字随便起;Address 填 `ssh` 能认的(`user@host`,或 `~/.ssh/config` 里的别名);命令默认 `cycle proxy`。
+2. 打开设置页(侧栏底部的设置按钮),在 Work in 分区点 "Add location":名字随便起;Address 填 `ssh` 能认的(`user@host`,或 `~/.ssh/config` 里的别名);命令默认 `cycle proxy`。
 3. 如果连不上并提示找不到命令,是因为 ssh 非交互会话的 PATH 里没有 `~/.local/bin`。把命令改成绝对路径:`/home/<用户>/.local/bin/cycle proxy`。
 
 ## 更新
 
-应用启动时检查一次更新,之后每分钟检查一次;侧栏底部 App settings 菜单(齿轮)里的 "Check for updates" 可以立即检查。发现新版本时顶部出现横幅,点 "Update and restart" 并确认,应用会下载、校验、替换自己并重新打开。"This computer" 上正在工作的会话会被中断,远端主机上的会话不受影响。
+应用启动时检查一次更新,之后每分钟检查一次;点侧栏底部的版本行("Check for updates"),或设置页 General 里的同名按钮,可以立即检查。发现新版本时顶部出现横幅,点 "Update and restart" 并确认,应用会下载、校验、替换自己并重新打开。"This computer" 上正在工作的会话会被中断,远端主机上的会话不受影响。
 
 应用放在你有写权限的目录(`/Applications` 通常可以,`~/Applications` 也行)。直接从下载位置打开的应用不能更新自己,先把它移到应用程序里。
 
@@ -75,7 +75,7 @@ cycle stop --force   # 立即停:进行中的回合标为"已中断",排队的�
 
 ## 5. 用
 
-选工作位置,"New session",选工作目录,开始对话。Claude 要执行命令或改文件时会弹出确认卡片,Allow 或 Deny。输入框下方工具条显示上下文用量、累计费用以及权限模式和模型设置,点击可切换,齿轮按钮可改全部会话设置;"Agent defaults" 设新会话的默认值。
+选工作位置,"New session",选工作目录,开始对话。Claude 要执行命令或改文件时会弹出确认卡片,Allow 或 Deny。输入框下方工具条显示上下文用量、累计费用以及权限模式和模型设置,点击可切换,齿轮按钮可改全部会话设置;新会话的默认值在设置页对应 agent 的 Harness 分区里(Session defaults)。
 
 ## 排障
 

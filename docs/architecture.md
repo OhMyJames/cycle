@@ -30,8 +30,8 @@ Desktop(Electron) ──L1──▶ Daemon ──L2(ACP)──▶ Agent 适配�
 ### L3:agent 适配
 
 - 不使用官方 `claude-agent-acp`,自己写 Claude 适配(见 [决策 0001](decisions/0001-claude-acp-adapter.md)),基于 Claude Agent SDK,对外说 ACP v2。
-- 每个 agent = 一个 ACP 进程 + 一份 manifest。
-- manifest:id、启动命令、环境变量、可配置项的 schema。
+- 每个 agent = 一个说 ACP 的适配进程 + `apps/daemon/src/harnesses.ts` 里 `HARNESSES` 清单的一项(`Harness`:id、名字、启动适配的方式、随 daemon 发的二进制、命令行和环境)。加一个 agent 的步骤见 [daemon.md](daemon.md)。
+- agent 的可配置项以 schema 的形式经协议(`_cycle/agent_setup/*`)给到客户端。
 - 客户端按 schema 渲染配置界面,不需要认识具体 agent。
 - 适配进程是**自包含**的:所有配置(模型、权限模式、MCP、环境变量、凭证)都通过协议或显式参数传入,不隐式读取宿主机的用户目录。适配进程运行在 workspace 所在的位置,本机、远程机器或云端 sandbox 都是同一种形态。
 
@@ -39,7 +39,7 @@ Desktop(Electron) ──L1──▶ Daemon ──L2(ACP)──▶ Agent 适配�
 
 - 用系统 `ssh`,复用 `~/.ssh/config`、密钥和 known_hosts。
 - daemon 在远端长驻,只监听 unix socket 或 loopback。
-- 候选方式:`ssh -L` 转发,或 `ssh host <cmd> proxy`(stdio 桥接到 socket)。倾向后者。
+- 方式:`ssh host cycle proxy`,把 stdio 桥接到 daemon 的 unix socket(不用 `ssh -L` 转发)。
 - 本地模式是同一个 daemon 加本地 socket,只有一条代码路径。
 
 ## 仓库结构
@@ -49,9 +49,16 @@ packages/protocol          Cycle 对 ACP 的扩展:_cycle/* 方法、_meta 键�
 packages/client            纯 Node 客户端 CycleClient + 客户端传输(unix socket、stdio、ssh)
 packages/analytics         产品分析事件字典(zod)与 PostHog 客户端
 packages/ui                前端纯会话模型、Store、React UI、Gallery
-harness/claude             Claude 适配进程(基于 Claude Agent SDK)和配置定义(后续 codex、agy 等并列在此)
+packages/line-rpc          按行的 JSON-RPC 子进程通道,Codex 的 app-server 和 agy 的 ACP 都走它
+packages/model-gateway     模型 provider 网关(基于 pi-ai),让 agent 用其他 provider 的模型
+packages/oidc              桌面端账号登录(OIDC)
+packages/clawdot-plugins   随 daemon 发的内置插件
+harness/claude             Claude 适配进程(基于 Claude Agent SDK)
+harness/codex              Codex 适配(驱动 Codex CLI 的 app-server)
+harness/agy                agy 适配
 apps/daemon                完整 daemon:会话管理、事件日志(JSONL)、服务端传输、serve 和 proxy
 apps/desktop               Electron(main:ssh 与 daemon 连接;renderer:UI)
+cloud/loop                 自动化闭环服务(从工单到合并的 PR),桌面端经它的 unix socket 读取(protocol.md §17)
 docs/
 ```
 

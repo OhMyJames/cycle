@@ -254,14 +254,6 @@
   margin-top: 0.5rem;
 }
 
-/* A group's name names the rows under it: smaller and quieter than a row, so it is not read as one. */
-[data-slot="listbox-group-label"] {
-  padding: 0.25rem 0.5rem;
-  font-size: var(--cycle-text-meta);
-  font-weight: var(--cycle-weight);
-  color: var(--ui-muted-foreground);
-}
-
 /* A row's two small cells are one line of the title (1lh), so what is in them sits on the middle of the title's line.
    The lead holds the agent's logo; every row keeps its 16px, logo or not, so titles start on one line with the
    actions' labels. A mark (needs you, running, unread) stands where the time would, at the row's end. */

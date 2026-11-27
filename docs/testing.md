@@ -75,7 +75,7 @@ mac-mini 上用同一 Developer ID 团队 `AGKXLGRXJ7` 对发布提交 0.3.6、0
 
 ## 每次全跑
 
-七个套件每次都全跑,不按改动挑选,也不记录历史耗时:全跑一遍约 35 秒,挑选省下的比维护挑选规则的代价小。理由和被否掉的做法见 [决定笔记](../.agents/notes/2026-11-21-integration-runs-every-suite.md)。`bun run test:integration web` 只跑名字里有 web 的。
+8 个套件每次都全跑,不按改动挑选,也不记录历史耗时:全跑一遍约 35 秒,挑选省下的比维护挑选规则的代价小。理由和被否掉的做法见 [决定笔记](../.agents/notes/2026-11-21-integration-runs-every-suite.md)。`bun run test:integration web` 只跑名字里有 web 的。
 
 ## 界面现象的验收写法
 

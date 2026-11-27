@@ -37,7 +37,7 @@ const rules: Rule[] = [
   },
 ];
 
-const sources = new Glob("{packages,harness,apps,tools,cloud,scripts}/**/*.{ts,tsx,json}");
+const sources = new Glob("{packages,harness,apps,cloud,scripts}/**/*.{ts,tsx,json}");
 const failures: string[] = [];
 for await (const file of sources.scan({ cwd: root })) {
   if (file.includes("node_modules/")) continue;
@@ -74,9 +74,7 @@ for await (const file of sources.scan({ cwd: root })) {
   }
   const manifests = [
     "package.json",
-    ...Array.from(
-      new Glob("{packages,harness,apps,tools,cloud}/*/package.json").scanSync({ cwd: root }),
-    ),
+    ...Array.from(new Glob("{packages,harness,apps,cloud}/*/package.json").scanSync({ cwd: root })),
   ];
   for (const file of manifests) {
     const pkg = (await Bun.file(root + file).json()) as Manifest;

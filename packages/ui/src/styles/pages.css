@@ -1282,13 +1282,6 @@ button[data-slot="loop-ticket-title"] {
   min-width: 0;
 }
 
-[data-slot="loop-ticket-criteria"] {
-  color: var(--cycle-ink-muted);
-  font-size: var(--cycle-text-meta);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
 [data-slot="loop-ticket-stage"] {
   display: inline-flex;
   align-items: center;

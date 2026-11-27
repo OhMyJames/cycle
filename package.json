@@ -8,7 +8,6 @@
       "packages/*",
       "harness/*",
       "apps/*",
-      "tools/*",
       "cloud/*"
     ],
     "catalog": {

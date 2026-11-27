@@ -10,14 +10,6 @@ import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
 /** A piece of content. Only `text` and `image` are drawn; anything else is kept and shown plainly. */
 export type Block = { type: string; [key: string]: unknown };
 
-export type ToolStatus =
-  | "pending"
-  | "in_progress"
-  | "paused"
-  | "completed"
-  | "failed"
-  | "cancelled";
-
 /**
  * Every item says which turn it began in: the number of turns that had ended before it. A turn is what ACP v2 leaves
  * out (it has only `running` and `idle`), but the daemon's log keeps how each one ended, so it can be told from the

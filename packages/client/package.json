@@ -8,8 +8,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "catalog:",
-    "@cycle/protocol": "workspace:*",
-    "zod": "catalog:"
+    "@cycle/protocol": "workspace:*"
   },
   "devDependencies": {
     "@cycle/daemon": "workspace:*"

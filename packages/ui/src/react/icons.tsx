@@ -243,16 +243,6 @@ export const ErrorCircleIcon = ({ size = 16, ...rest }: IconProps) => (
 );
 
 /** iconmcp: brain */
-export const ThoughtIcon = ({ size = 16, ...rest }: IconProps) => (
-  <Svg size={size} {...rest}>
-    <g>
-      <path d="M8 3.5 A2.25 2.25 0 0 0 4 4.25 A2.5 2.5 0 0 0 2.75 8.5 A2.5 2.5 0 0 0 5 12.75 A2 2 0 0 0 8 13" />
-      <path d="M8 3.5 A2.25 2.25 0 0 1 12 4.25 A2.5 2.5 0 0 1 13.25 8.5 A2.5 2.5 0 0 1 11 12.75 A2 2 0 0 1 8 13" />
-      <line x1="8" y1="3.5" x2="8" y2="13" />
-    </g>
-  </Svg>
-);
-
 /** iconmcp: sidebar-left */
 export const SidebarIcon = ({ size = 16, ...rest }: IconProps) => (
   <Svg size={size} {...rest}>
