@@ -1099,6 +1099,8 @@ export const enUS = {
   // A setting the agent offers: the choice it suggests, and high-risk options
   "config.nextTurn":
     "Changes take effect from the next turn. A turn already running keeps the setting it started with.",
+  "config.providerLimits":
+    "A session cannot switch between Codex's own models and a provider's, or between providers. Provider models have no web search or image generation, and apply_patch only for some.",
   "config.recommended": "Recommended",
   "config.caution": "Caution",
   // A session's setting the daemon has no record of yet: not today's default, which it may not have

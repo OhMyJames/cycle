@@ -993,6 +993,8 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "providers.problem.failed": "改动没有到达 {location}:{reason}",
 
   "config.nextTurn": "改动从下一轮开始生效，正在进行的这一轮仍按开始时的设置。",
+  "config.providerLimits":
+    "同一会话不能在 Codex 自有模型与服务商模型之间、或不同服务商之间切换模型。服务商模型没有联网搜索和图片生成，apply_patch 只有部分模型可用。",
   "config.recommended": "推荐",
   "config.caution": "注意",
   "config.notSet": "未设置",
