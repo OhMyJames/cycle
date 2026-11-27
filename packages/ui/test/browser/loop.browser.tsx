@@ -7,7 +7,7 @@ import type {
   LoopTicket,
   LoopTicketDetail,
 } from "../../src/api.ts";
-import { fakeBridge } from "../fake-bridge.ts";
+import { fakeBridge, summary } from "../fake-bridge.ts";
 import { openSettings } from "./account-menu.ts";
 import { renderApp } from "./render-app.tsx";
 
@@ -73,7 +73,7 @@ test("the Loop page shows a full-width board as a row of columns, with Done open
     loopProjects: { kind: "ok", projects: [cycle, docs] },
     loopBoards: { CYC: board },
   });
-  await user.click(await screen.findByRole("tab", { name: /Cycle/ }));
+  await user.click(await screen.findByRole("button", { name: "Cycle Kanban" }));
   const text = (name: string) =>
     within(screen.getByRole("region", { name }))
       .getAllByRole("listitem")
@@ -109,12 +109,12 @@ test("with the Loop server away, the Projects it had are greyed out and the page
   const store = await renderApp(fake.bridge);
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "Loop" }));
-  const tab = await screen.findByRole("tab", { name: /Cycle/ });
+  const tab = await screen.findByRole("button", { name: "Cycle Kanban" });
   expect(tab.hasAttribute("disabled") || tab.getAttribute("aria-disabled") === "true").toBe(false);
   // The server goes away: the next read says so, and the Project stays listed, greyed, with the reason.
   options.loopProjects = { kind: "disconnected" };
   await act(() => store.loadLoopProjects());
-  const grey = await screen.findByRole("tab", { name: /Cycle/ });
+  const grey = await screen.findByRole("button", { name: "Cycle Kanban" });
   expect(grey.hasAttribute("disabled") || grey.getAttribute("aria-disabled") === "true").toBe(true);
   expect(within(grey).getByText("Offline")).toBeTruthy();
   expect(await screen.findByText("The Loop server is not running")).toBeTruthy();
@@ -139,9 +139,9 @@ test("a stale board says its data may be out of date, and a fresh one does not",
     loopProjects: { kind: "ok", projects: [cycle, docs] },
     loopBoards: { CYC: { ...board, stale: true } as LoopBoardAnswer, DOC: board },
   });
-  await user.click(await screen.findByRole("tab", { name: /Cycle/ }));
+  await user.click(await screen.findByRole("button", { name: "Cycle Kanban" }));
   expect(await screen.findByText("Data may be out of date")).toBeTruthy();
-  await user.click(screen.getByRole("tab", { name: /Docs/ }));
+  await user.click(screen.getByRole("button", { name: "Docs Kanban" }));
   await screen.findByRole("region", { name: "In Progress" });
   expect(screen.queryByText("Data may be out of date")).toBeNull();
 });
@@ -152,11 +152,13 @@ test("leaving the Loop and coming back lands on the level it was left on", async
     loopBoards: { CYC: board },
   });
   await screen.findByRole("region", { name: "In Progress" });
-  // Board → overview → out of the Loop, one Escape each.
-  await user.keyboard("{Escape}");
+  // Overview, then out of the Loop (Sessions) and back in: Escape does not leave the Loop.
+  await user.click(screen.getByRole("button", { name: "Overview" }));
   await screen.findByRole("region", { name: "Projects" });
   await user.keyboard("{Escape}");
-  await waitFor(() => expect(document.querySelector('[data-kind="loop-board"]')).toBeNull());
+  expect(document.querySelector('[data-kind="loop-overview"]')).not.toBeNull();
+  await user.click(screen.getByRole("button", { name: "Sessions" }));
+  await waitFor(() => expect(document.querySelector('[data-kind="loop-overview"]')).toBeNull());
   await user.click(await screen.findByRole("button", { name: "Loop" }));
   await screen.findByRole("region", { name: "Projects" });
 });
@@ -340,15 +342,15 @@ test("a card clicked while the drawer closes opens that ticket", async () => {
 test("leaving the Loop from a ticket drawer and coming back lands on the level it was left on", async () => {
   const { user } = await openTicketDrawer("new");
   await screen.findByRole("complementary", { name: "CYC-700" });
-  // Ticket drawer → board → overview → out of the Loop, one Escape each.
+  // Ticket drawer → board by Escape; the board stays, out of the Loop by Sessions, and back on the board.
   await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("complementary", { name: "CYC-700" })).toBeNull());
   await user.keyboard("{Escape}");
-  await screen.findByRole("region", { name: "Projects" });
-  await user.keyboard("{Escape}");
+  expect(document.querySelector('[data-kind="loop-board"]')).not.toBeNull();
+  await user.click(screen.getByRole("button", { name: "Sessions" }));
   await waitFor(() => expect(document.querySelector('[data-kind="loop-board"]')).toBeNull());
   await user.click(await screen.findByRole("button", { name: "Loop" }));
-  await screen.findByRole("region", { name: "Projects" });
+  await waitFor(() => expect(document.querySelector('[data-kind="loop-board"]')).not.toBeNull());
 });
 
 const overviewScript = (extra: Parameters<typeof fakeBridge>[0] = {}) => ({
@@ -382,13 +384,13 @@ test("with two Projects the Loop lands on the overview, with each Project's coun
   await screen.findByRole("region", { name: "In Progress" });
 });
 
-test("with one Project the Loop lands on its board, and Escape goes up to the overview", async () => {
+test("with one Project the Loop lands on its board, and Overview in the sidebar goes up", async () => {
   const { user } = await mount({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: { CYC: board },
   });
   await screen.findByRole("region", { name: "In Progress" });
-  await user.keyboard("{Escape}");
+  await user.click(screen.getByRole("button", { name: "Overview" }));
   await screen.findByRole("region", { name: "Projects" });
 });
 
@@ -407,7 +409,7 @@ test("Needs you is on the overview, not on the board, and absent when empty", as
   );
   const notices = await screen.findByRole("region", { name: "Needs you" });
   expect(within(notices).getByText("CYC-9")).toBeTruthy();
-  await user.click(screen.getByRole("tab", { name: /Cycle/ }));
+  await user.click(screen.getByRole("button", { name: "Cycle Kanban" }));
   await screen.findByRole("region", { name: "In Progress" });
   expect(screen.queryByRole("region", { name: "Needs you" })).toBeNull();
 });
@@ -426,8 +428,8 @@ test("a Project opens on its board with clean breadcrumbs leading back to Overvi
   await screen.findByRole("region", { name: "In Progress" });
   // No placeholder "Coming later" tab clutter.
   expect(screen.queryByText("Coming later")).toBeNull();
-  const heading = screen.getByRole("heading", { level: 2 });
-  expect(heading.textContent).toBe("Cycle/Board");
+  const heading = screen.getByRole("navigation", { name: "Where you are" });
+  expect(heading.textContent).toBe("Cycle/Kanban");
   // The Project name leads back to the Loop overview.
   await user.click(within(heading).getByRole("button", { name: "Cycle" }));
   await screen.findByRole("region", { name: "Projects" });
@@ -440,7 +442,7 @@ test("opening a ticket drawer updates breadcrumbs to Project / ticket and clicki
   });
   await user.click(await screen.findByRole("button", { name: /Ticket 388/ }));
   await screen.findByRole("complementary", { name: "CYC-388" });
-  const heading = screen.getByRole("heading", { level: 2 });
+  const heading = screen.getByRole("navigation", { name: "Where you are" });
   expect(heading.textContent).toBe("Cycle/CYC-388");
   await user.click(within(heading).getByRole("button", { name: "Cycle" }));
   await waitFor(() => expect(screen.queryByRole("complementary", { name: "CYC-388" })).toBeNull());
@@ -595,7 +597,7 @@ test("an In Progress card shows Loop's stage and how long, with a nudge past 30 
       }),
     },
   });
-  await user.click(await screen.findByRole("tab", { name: /Cycle/ }));
+  await user.click(await screen.findByRole("button", { name: "Cycle Kanban" }));
   const quick = await screen.findByText("QA · 3 min");
   expect(quick.getAttribute("data-slow")).toBeNull();
   const slow = screen.getByText("Developing · 1 h 12 min");
@@ -796,7 +798,9 @@ test("Notices show research and QA sessions too, and pressing one joins its sess
   // A session that is not in any location falls back to the ticket's page.
   await user.click(within(notices).getByRole("button", { name: /Blocked/ }));
   await screen.findByRole("complementary", { name: "CYC-23" });
-  expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("Cycle/CYC-23");
+  expect(screen.getByRole("navigation", { name: "Where you are" }).textContent).toBe(
+    "Cycle/CYC-23",
+  );
 });
 
 test("the Settings page has a name field for itsaplan and no key field", async () => {
@@ -965,7 +969,7 @@ test("reopening the Loop page reads the run state again, and applies what change
   const { user, options } = await mount(script);
   const projects = await screen.findByRole("region", { name: "Projects" });
   await waitFor(() => expect(runState(projects, "CYC")).toBe("Not running"));
-  await user.keyboard("{Escape}");
+  await user.click(screen.getByRole("button", { name: "Sessions" }));
   await waitFor(() => expect(document.querySelector('[data-kind="loop-overview"]')).toBeNull());
   // Loop started while the page was closed, and nothing was pushed to it.
   options.loopRuns = { kind: "ok", running: { CYC: ["CYC-386"], DOC: [] } };
@@ -978,7 +982,7 @@ test("a pushed run state that changes who Loop is running reads the board again"
   const { named, emit, user } = await mount(
     overviewScript({ loopRuns: { kind: "ok", running: { CYC: [], DOC: [] } } }),
   );
-  await user.click(await screen.findByRole("tab", { name: /Cycle/ }));
+  await user.click(await screen.findByRole("button", { name: "Cycle Kanban" }));
   await screen.findByRole("region", { name: "In Progress" });
   const reads = named("loopBoard").length;
   act(() => emit({ type: "loop-runs", runs: { kind: "ok", running: { CYC: ["CYC-386"] } } }));
@@ -1012,6 +1016,113 @@ test("an older board read that lands last does not replace a newer one", async (
   act(() => waiting[0]?.(board));
   await new Promise((r) => setTimeout(r, 50));
   expect(projects.querySelector('[data-project="CYC"]')?.textContent).toContain("Todo 2");
+});
+
+test("the Loop keeps the sidebar's frame: Sessions and Loop side by side, the account menu, the fold button", async () => {
+  const { user } = await mount(overviewScript());
+  await screen.findByRole("region", { name: "Projects" });
+  const sessions = screen.getByRole("button", { name: "Sessions" });
+  const loop = screen.getByRole("button", { name: "Loop" });
+  expect(loop.getAttribute("aria-pressed")).toBe("true");
+  expect(sessions.getAttribute("aria-pressed")).toBe("false");
+  expect(screen.getByRole("navigation", { name: "Loop" })).toBeTruthy();
+  expect(screen.getByRole("region", { name: "Loop navigation" })).toBeTruthy();
+  expect(document.querySelector('[data-kind="sidebar-toggle"]')).not.toBeNull();
+  expect(document.querySelector('[data-kind="account-menu"]')).not.toBeNull();
+  expect(screen.getByRole("button", { name: "New session" })).toBeTruthy();
+  // The lower half is the Loop's: Overview and each Project's Kanban, not the sessions' list.
+  expect(screen.getByRole("button", { name: "Overview" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Show archived" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Cycle Kanban" }));
+  await screen.findByRole("region", { name: "In Progress" });
+  expect(screen.getByRole("button", { name: "Cycle Kanban" }).getAttribute("aria-current")).toBe(
+    "page",
+  );
+  // Sessions brings the list back.
+  await user.click(sessions);
+  expect(await screen.findByRole("button", { name: "Show archived" })).toBeTruthy();
+  expect(screen.getByRole("navigation", { name: "Sessions" })).toBeTruthy();
+  expect(sessions.getAttribute("aria-pressed")).toBe("true");
+});
+
+test("the right panel stays mounted but hidden in the Loop mode and returns intact", async () => {
+  const user = userEvent.setup();
+  const fake = fakeBridge({
+    connected: true,
+    ...overviewScript(),
+  });
+  fake.bridge.sessions = async () => [{ ...summary("s1"), title: "Work" }];
+  await renderApp(fake.bridge);
+  await user.click(await screen.findByRole("option", { name: /Work/ }));
+  await user.click(await screen.findByRole("button", { name: "Show panel" }));
+  const sidePanel = await waitFor(() => {
+    const el = document.querySelector<HTMLElement>('[data-slot="side-panel"]');
+    expect(el).not.toBeNull();
+    return el as HTMLElement;
+  });
+  expect(sidePanel.hidden).toBe(false);
+  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  await screen.findByRole("region", { name: "Projects" });
+  expect(document.querySelector('[data-slot="side-panel"]')).toBe(sidePanel);
+  expect(sidePanel.hidden).toBe(true);
+  expect(sidePanel.inert).toBe(true);
+  await user.click(screen.getByRole("button", { name: "Sessions" }));
+  await waitFor(() => expect(sidePanel.hidden).toBe(false));
+  expect(document.querySelector('[data-slot="side-panel"]')).toBe(sidePanel);
+  expect(sidePanel.inert).toBe(false);
+});
+
+test("a focus-session request while Settings is open over the Loop leaves both Settings and the Loop", async () => {
+  const user = userEvent.setup();
+  const fake = fakeBridge({
+    connected: true,
+    ...overviewScript(),
+  });
+  fake.bridge.sessions = async () => [{ ...summary("s1"), title: "Work" }];
+  await renderApp(fake.bridge);
+  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  await screen.findByRole("region", { name: "Projects" });
+  await openSettings(user);
+  await screen.findByRole("tab", { name: "General" });
+  act(() => fake.emit({ type: "focus-session", locationId: "local", sessionId: "s1" }));
+  await waitFor(() => {
+    expect(screen.queryByRole("tab", { name: "General" })).toBeNull();
+    expect(document.querySelector('[data-kind="loop-overview"]')).toBeNull();
+  });
+  expect(screen.getByRole("button", { name: "Sessions" }).getAttribute("aria-pressed")).toBe(
+    "true",
+  );
+});
+
+test("New session leaves the Loop mode", async () => {
+  const { user } = await mount(overviewScript());
+  await screen.findByRole("region", { name: "Projects" });
+  await user.click(screen.getByRole("button", { name: "New session" }));
+  await waitFor(() => expect(document.querySelector('[data-kind="loop-overview"]')).toBeNull());
+  expect(screen.getByRole("button", { name: "Sessions" }).getAttribute("aria-pressed")).toBe(
+    "true",
+  );
+});
+
+test("the sidebar folds in the Loop and the title bar then has the button to show it, without sideways overflow", async () => {
+  const { user } = await mount(overviewScript());
+  await screen.findByRole("region", { name: "Projects" });
+  await user.click(screen.getByRole("button", { name: "Hide sidebar" }));
+  const header = document.querySelector<HTMLElement>('[data-kind="loop-header"]');
+  expect(header?.querySelector('[data-kind="sidebar-toggle"]')).not.toBeNull();
+  const root = document.documentElement;
+  expect(root.scrollWidth).toBeLessThanOrEqual(root.clientWidth);
+  await user.click(within(header as HTMLElement).getByRole("button", { name: "Show sidebar" }));
+  expect(screen.getByRole("button", { name: "Overview" })).toBeTruthy();
+});
+
+test("Settings opened from the Loop returns to the Loop", async () => {
+  const { user } = await mount(overviewScript());
+  await screen.findByRole("region", { name: "Projects" });
+  await openSettings(user);
+  await user.keyboard("{Escape}");
+  await screen.findByRole("region", { name: "Projects" });
+  expect(screen.getByRole("button", { name: "Loop" }).getAttribute("aria-pressed")).toBe("true");
 });
 
 test("a parent card folds a sub-ticket list; children keep their cards and name the parent", async () => {

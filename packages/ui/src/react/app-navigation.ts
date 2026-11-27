@@ -192,9 +192,11 @@ export function useWorkspaceTrust(
 export function useMarkRead(
   session: SessionSummary | undefined,
   status: Record<string, LocationStatus>,
+  /** False while something else (the Loop) is shown in the session's place: it is not seen, so it is not read. */
+  shown = true,
 ) {
   const store = useAppStore();
-  const inFront = useInFront();
+  const inFront = useInFront() && shown;
   // Once for what the list says (the session, how far it goes, and whether the app is in front): a daemon that refuses it
   // would otherwise be asked again for each new list, and each ask lists again.
   const told = useRef("");

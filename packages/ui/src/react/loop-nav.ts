@@ -6,11 +6,11 @@ export type LoopView =
   | { at: "ticket"; projectKey: string; identifier: string };
 
 /**
- * One level up (Escape, Back): ticket → board → Loop overview → out of the Loop (undefined).
+ * One level up (Escape on a ticket's drawer): ticket → board. Nothing from a board or the overview: Escape does not move
+ * between them or leave the Loop; the sidebar does (CYC-500).
  */
 export function up(view: LoopView): LoopView | undefined {
   if (view.at === "ticket") return { at: "project", projectKey: view.projectKey, tab: "kanban" };
-  if (view.at === "project") return { at: "overview" };
   return undefined;
 }
 

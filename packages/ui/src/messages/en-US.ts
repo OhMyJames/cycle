@@ -604,6 +604,7 @@ export const enUS = {
   "sidebar.newSession": "New session",
   // What the sidebar buttons show; their accessible names stay the full ones above
   "sidebar.newShort": "New",
+  "sidebar.mode": "Sidebar mode",
   "sidebar.searchShort": "Search",
   // What a row says of its session, in words (the dot is its colour and shape)
   "mark.needsYou": "Needs you",
@@ -641,11 +642,12 @@ export const enUS = {
   // Loop: the Projects of the Loop server and their boards (docs/protocol.md §17)
   "loop.open": "Loop",
   "loop.title": "Loop",
-  "loop.sections": "Projects",
+  "loop.nav": "Loop navigation",
   "loop.projects": "Projects",
   "loop.overview": "Overview",
   "loop.crumbs": "Where you are",
-  "loop.tab.kanban": "Board",
+  "loop.tab.kanban": "Kanban",
+  "loop.kanbanOf": "{project} Kanban",
   "loop.col.doing": "Doing",
   "loop.col.todo": "Todo",
   "loop.col.backlog": "Backlog",

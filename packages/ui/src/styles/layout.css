@@ -542,6 +542,10 @@ html[data-platform="darwin"] [data-slot="page-header"] {
   background: var(--cycle-surface-sidebar);
 }
 
+[data-slot="side-panel"][hidden] {
+  display: none;
+}
+
 [data-kind="panel-tabs"] {
   display: flex;
   flex-direction: column;

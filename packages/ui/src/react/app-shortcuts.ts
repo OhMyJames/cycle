@@ -16,6 +16,8 @@ export type Shortcuts = {
   dialogOpen: boolean;
   /** Settings or Connectors is over the sessions. */
   pageOpen: boolean;
+  /** The Loop is shown in place of the session: the keys that act on the session are not taken. */
+  loopOpen: boolean;
   toggleSettings: () => void;
   search: () => void;
   newSession: (() => void) | undefined;
@@ -63,6 +65,7 @@ function onShortcut(event: KeyboardEvent, s: Shortcuts) {
   }
   // A page is over the sessions: only what leaves it (a search, a new session) is taken.
   else if (s.pageOpen && key !== "k" && key !== "n") return;
+  else if (s.loopOpen && key !== "k" && key !== "n" && key !== "b") return;
   else if (key === "k") run(s.search);
   else if (key === "n" && s.newSession !== undefined) run(s.newSession);
   else if (key === "b") run(s.toggleSidebar);

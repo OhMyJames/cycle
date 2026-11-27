@@ -65,6 +65,20 @@ test("opening the search from the sidebar is counted, with how it was opened", a
   expect(tracked(calls)).toEqual([["panel_opened", { panel: "search", via: "click" }]]);
 });
 
+test("pressing Sessions in the Loop mode is counted once, and does nothing while already in Sessions", async () => {
+  const { user, calls } = await mount();
+  const sessions = await screen.findByRole("button", { name: "Sessions" });
+  await user.click(sessions);
+  expect(tracked(calls)).toEqual([]);
+  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  await user.click(sessions);
+  await user.click(sessions);
+  expect(tracked(calls)).toEqual([
+    ["panel_opened", { panel: "loop", via: "click" }],
+    ["sessions_mode_shown", {}],
+  ]);
+});
+
 test("toggling the sidebar and opening remote location panels report only fixed event properties", async () => {
   const script = fakeBridge({
     connected: true,

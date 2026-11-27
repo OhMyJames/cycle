@@ -2092,6 +2092,20 @@ html[data-platform="darwin"] [data-slot="loop-crumb"] {
   }
 }
 
+/* The Loop's title bar in the main area: the overview's name, or the crumbs, beside the sidebar toggle when it is put away. */
+[data-slot="loop-heading"] {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-ui);
+  font-weight: 600;
+  letter-spacing: var(--cycle-tracking-display);
+  line-height: var(--cycle-leading-ui);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 /* Parent/child (CYC-503): the parent id on a child card, and the foldable sub-ticket list on a parent card.
    Both sit above the card-wide title button so pressing them does not open the card. */
 [data-slot="loop-ticket-parent"] {

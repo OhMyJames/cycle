@@ -18,10 +18,11 @@ export function usePages(appRef: RefObject<HTMLElement | null>) {
   const [harnessFrom, setHarnessFrom] = useState<"settings" | "blank" | "other">("settings");
   const [connectors, setConnectors] = useState<ConnectorsSection | undefined>(undefined);
   const lastConnectorsSection = useRef<ConnectorsSection>(CONNECTORS_SECTIONS[0]);
-  // The Loop page: open or not, and which Project it was left on (the Projects are its sections).
+  // The Loop mode: active or not, and which view (overview, Project Kanban, or ticket drawer) it was left on.
   const [loop, setLoop] = useState<LoopView | undefined>(undefined);
   const lastLoopView = useRef<LoopView | undefined>(undefined);
-  const pageOpen = settings !== undefined || connectors !== undefined || loop !== undefined;
+  // The Loop is a mode of the sidebar and the main area, not a page over the window: it is not in `pageOpen`.
+  const pageOpen = settings !== undefined || connectors !== undefined;
 
   // Settings, from wherever it is asked for: over the sessions, or in place of the Connectors page.
   const openSettings = (via: "click" | "shortcut" = "click", section?: SettingsSection) => {
@@ -29,7 +30,6 @@ export function usePages(appRef: RefObject<HTMLElement | null>) {
     setHarnessFrom("settings");
     setHarnessLocation(undefined);
     setConnectors(undefined);
-    setLoop(undefined);
     setSettings(lastSection.current);
     store.track("panel_opened", { panel: "settings", via });
   };
@@ -45,7 +45,6 @@ export function usePages(appRef: RefObject<HTMLElement | null>) {
     setHarnessLocation(locationId);
     setHarnessFrom("blank");
     setConnectors(undefined);
-    setLoop(undefined);
     setSettings(section);
     store.track("panel_opened", { panel: "settings", via: "click" });
   };
@@ -54,11 +53,11 @@ export function usePages(appRef: RefObject<HTMLElement | null>) {
     setHarnessFrom("settings");
   };
   const openConnectors = () => {
-    setLoop(undefined);
     setConnectors(lastConnectorsSection.current);
     store.track("panel_opened", { panel: "connectors", via: "click" });
   };
   const openLoop = () => {
+    if (loop !== undefined) return;
     setSettings(undefined);
     setConnectors(undefined);
     setLoop(enter(lastLoopView.current));
@@ -69,17 +68,16 @@ export function usePages(appRef: RefObject<HTMLElement | null>) {
     lastLoopView.current = view;
     setLoop(view);
   };
-  // Escape or Back: one level up, and out of the Loop from the top.
+  // Escape closes a ticket's drawer, back to its board. It goes no higher and does not leave the Loop: the sidebar's
+  // Overview and Sessions do.
   const loopBack = () => {
     const parent = loop === undefined ? undefined : up(loop);
-    if (parent === undefined) leaveLoop();
-    else showLoopView(parent);
+    if (parent !== undefined) showLoopView(parent);
   };
   const leaveLoop = () => {
-    returnFocus.current = '[data-page-open="loop"]';
     setLoop(undefined);
   };
-  // Whichever page is over the sessions is left: they are what is asked for.
+  // Whichever page is over the sessions, and the Loop mode, is left: the sessions are what is asked for.
   const closePage = () => {
     setSettings(undefined);
     setConnectors(undefined);
@@ -114,7 +112,7 @@ export function usePages(appRef: RefObject<HTMLElement | null>) {
   const [shownRequests, setShownRequests] = useState(focusRequests);
   if (shownRequests !== focusRequests) {
     setShownRequests(focusRequests);
-    if (pageOpen) closePage();
+    if (pageOpen || loop !== undefined) closePage();
   }
   // A Loop notification was pressed: that Project's page, over whatever is open (the ticket is opened by the page).
   const loopRequest = useAppState((s) => s.loop.request);

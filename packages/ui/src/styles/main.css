@@ -1,6 +1,14 @@
 /* The main column: its header, the notices, the search palette, the account menu. */
 
 /* Main */
+[data-slot="session-body"] {
+  display: contents;
+}
+
+[data-slot="session-body"][hidden] {
+  display: none;
+}
+
 [data-slot="main"] {
   display: flex;
   flex-direction: column;
@@ -74,9 +82,10 @@ html[data-platform="darwin"] [data-slot="titlebar"] button {
   min-width: var(--cycle-panel-width, 0);
 }
 
-/* Closed, the panel takes no room, even before its column is fitted on starting (the saved layout may have it open), and
-   its handle is not drawn at the window's edge. */
-[data-slot="resizable-panel"]#panel:empty {
+/* Closed or hidden by a mode, the panel takes no room, even before its column is fitted on starting (the saved layout
+   may have it open), and its handle is not drawn at the window's edge. */
+[data-slot="resizable-panel"]#panel:empty,
+[data-slot="resizable-panel"]#panel:has(> [data-slot="side-panel"][hidden]) {
   max-width: 0;
 }
 
@@ -86,7 +95,9 @@ html[data-platform="darwin"] [data-slot="titlebar"] button {
 }
 
 /* The room kept for the traffic lights comes and goes with the slide, not before it. */
-html[data-platform="darwin"] [data-slot="split"][data-animate] [data-slot="main"] > :first-child {
+html[data-platform="darwin"]
+  [data-slot="split"][data-animate]
+  :is([data-slot="main"] > :first-child, [data-slot="session-body"] > :first-child) {
   transition: padding-left var(--cycle-motion-disclosure) var(--cycle-ease);
 }
 
@@ -123,8 +134,7 @@ html[data-platform="darwin"] :is([data-slot$="-backdrop"], [data-slot$="-content
 /* With the sidebar folded the traffic lights sit in the main area's top-left corner: clear them on whatever is at the top. */
 html[data-platform="darwin"]
   [data-slot="app"]:has([data-slot="resizable-panel"]#sidebar[data-collapsed])
-  [data-slot="main"]
-  > :first-child {
+  :is([data-slot="main"] > :first-child, [data-slot="session-body"] > :first-child) {
   padding-left: 5.5rem;
 }
 

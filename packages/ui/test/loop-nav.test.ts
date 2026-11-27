@@ -4,9 +4,9 @@ import { enter, type LoopView, up, viewProject } from "../src/react/loop-nav.ts"
 const ticket: LoopView = { at: "ticket", projectKey: "CYC", identifier: "CYC-1" };
 const board: LoopView = { at: "project", projectKey: "CYC", tab: "kanban" };
 
-test("up goes ticket → board → overview → out of the Loop", () => {
+test("up closes a ticket to its board and goes no higher", () => {
   expect(up(ticket)).toEqual(board);
-  expect(up(board)).toEqual({ at: "overview" });
+  expect(up(board)).toBeUndefined();
   expect(up({ at: "overview" })).toBeUndefined();
 });
 
