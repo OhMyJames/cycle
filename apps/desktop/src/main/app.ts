@@ -358,7 +358,9 @@ export const startApp = async (options: AppOptions) => {
   const methods: Handlers = {
     updateState: () => updater.state,
     checkForUpdate: async () => {
-      const state = await checkEverything(updater, interfaceUpdater);
+      const state = await checkEverything(updater, interfaceUpdater, (message) =>
+        console.warn(`[interface] ${message}`),
+      );
       const result = updateResult(state.kind);
       if (result !== undefined) analytics.track("update_checked", { result });
       return state;

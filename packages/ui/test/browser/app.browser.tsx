@@ -1192,7 +1192,7 @@ test("an update that is found is offered, asks before it restarts, and the foote
   await user.click(check);
   expect(named("checkForUpdate")).toHaveLength(2);
   // Up to date is said where it can be seen, though the menu has closed.
-  expect(await screen.findByText("You’re up to date")).toBeTruthy();
+  expect(await screen.findByText("You're up to date")).toBeTruthy();
 });
 
 test("a check asked for says it is under way, then what it found, from the menu and from Settings", async () => {
@@ -1206,13 +1206,13 @@ test("a check asked for says it is under way, then what it found, from the menu 
   await user.click(await screen.findByRole("button", { name: "Check for updates" }));
   expect(await screen.findByText("Checking for updates…")).toBeTruthy();
   await act(async () => finish({ current: "0.1.0", kind: "up-to-date", checkedAt: 0 }));
-  expect(await screen.findByText("You’re up to date")).toBeTruthy();
+  expect(await screen.findByText("You're up to date")).toBeTruthy();
   await user.keyboard("{Escape}");
 
   await user.click(await accountMenu());
   await user.click(await screen.findByRole("menuitem", { name: /^Check for updates/ }));
   await act(async () => finish({ current: "0.1.0", kind: "error", message: "offline" }));
-  expect(await screen.findByText("Could not check for updates")).toBeTruthy();
+  expect(await screen.findByText("Could not check for updates: offline")).toBeTruthy();
 });
 
 test("a daemon too old for the app says so in one line with a button, and updating asks first", async () => {

@@ -58,7 +58,9 @@ export class DiffModes {
 
 export class AppStore extends StoreBase {
   #stop: (() => void) | undefined;
-  #updateChecks = 0;
+  #updateEpoch = 0;
+  #updateInflight = 0;
+  #updateAnswer: "up-to-date" | "failed" | undefined;
   #updateCheckTimer: ReturnType<typeof setTimeout> | undefined;
   /** Which view each session's Diff tab shows: kept while the window is open, so a tab looked away from finds it again. */
   readonly diffModes = new DiffModes();
@@ -114,6 +116,8 @@ export class AppStore extends StoreBase {
 
   stop(): void {
     clearTimeout(this.#updateCheckTimer);
+    // A check still out is not waited for: whatever it brings is dropped.
+    this.#updateEpoch += 1;
     this.#stop?.();
   }
 
@@ -487,30 +491,38 @@ export class AppStore extends StoreBase {
   // ---- the app itself ----
 
   checkForUpdate = async (): Promise<void> => {
-    const serial = ++this.#updateChecks;
+    const epoch = this.#updateEpoch;
     clearTimeout(this.#updateCheckTimer);
+    this.#updateInflight += 1;
     this.set({ updateCheck: "checking" });
-    let answer: "up-to-date" | "failed" | undefined;
     try {
       const update = await this.bridge.checkForUpdate();
-      if (serial !== this.#updateChecks) return;
-      answer =
-        update.kind === "up-to-date"
-          ? "up-to-date"
-          : update.kind === "error"
-            ? "failed"
-            : undefined;
-      // Asked for by the person: a version they put off before is said again.
-      this.set({
-        update,
-        updateCheck: answer,
-        ...(update.kind === "available" ? { updateDeferred: undefined } : {}),
-      });
+      if (epoch !== this.#updateEpoch) return;
+      // A check already under way answers "checking": that is not an answer, the one it belongs to will give it.
+      if (update.kind !== "checking") {
+        this.#updateAnswer =
+          update.kind === "up-to-date"
+            ? "up-to-date"
+            : update.kind === "error"
+              ? "failed"
+              : undefined;
+        // Asked for by the person: a version they put off before is said again.
+        this.set({
+          update,
+          ...(update.kind === "available" ? { updateDeferred: undefined } : {}),
+        });
+      }
     } catch {
-      if (serial !== this.#updateChecks) return;
-      answer = "failed";
-      this.set({ updateCheck: answer });
+      if (epoch !== this.#updateEpoch) return;
+      this.#updateAnswer = "failed";
+    } finally {
+      if (epoch === this.#updateEpoch) this.#updateInflight -= 1;
     }
+    if (epoch !== this.#updateEpoch || this.#updateInflight > 0) return;
+    // The last check asked for has settled: its answer, for a few seconds, or nothing when there is nothing to say.
+    const answer = this.#updateAnswer;
+    this.#updateAnswer = undefined;
+    this.set({ updateCheck: answer });
     if (answer !== undefined)
       this.#updateCheckTimer = setTimeout(
         () => this.set({ updateCheck: undefined }),

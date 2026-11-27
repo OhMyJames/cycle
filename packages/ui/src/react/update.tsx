@@ -65,7 +65,9 @@ export function UpdateNotice() {
           check === "checking"
             ? t("update.checking")
             : check === "failed"
-              ? t("update.checkFailed")
+              ? update?.kind === "error"
+                ? t("update.checkFailedReason", { reason: update.message })
+                : t("update.checkFailed")
               : t("update.upToDateNow")
         }
       />

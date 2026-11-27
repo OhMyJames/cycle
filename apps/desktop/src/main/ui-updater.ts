@@ -196,7 +196,8 @@ export class UiUpdater {
 export const checkEverything = async <S>(
   app: { check: (manual: boolean) => Promise<S> },
   page: { check: () => Promise<unknown> } | undefined,
+  log: (message: string) => void = () => {},
 ): Promise<S> => {
-  page?.check().catch(() => {});
+  page?.check().catch((error) => log(`Interface update check: ${String(error)}`));
   return app.check(true);
 };

@@ -1061,6 +1061,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "update.checking": "正在检查更新…",
   "update.upToDate": "已是最新",
   "update.upToDateNow": "已是最新版本",
+  "update.checkFailedReason": "无法检查更新:{reason}",
   "update.checkFailed": "无法检查更新",
   "update.available": "有新版本 {version}",
   "update.downloading": "正在下载 {version}：{received} / {total} MB",
