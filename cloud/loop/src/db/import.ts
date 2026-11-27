@@ -168,6 +168,8 @@ export const importLegacyState = async (
     same("the planning memory", planMemory, await store.loadPlanMemory());
     store.close(); // checkpoints the WAL away, so the file alone is the database
     store = null;
+    // Closing can leave empty `-wal` and `-shm` files behind; they belong to no database after the rename.
+    for (const suffix of ["-wal", "-shm"]) rmSync(`${importing}${suffix}`, { force: true });
 
     // Switch. The bodies of planning rounds stay files (a session reads them): they are copied to the new `plans/`.
     const date = now().toISOString().slice(0, 10);
