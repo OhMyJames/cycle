@@ -82,7 +82,7 @@ export const EVENTS = {
   /** The person turned usage statistics on or off. Sent last when turning off, first when turning on. */
   analytics_toggled: o({ enabled: z.boolean() }),
   /** The Loop page read a Project's board: how it came out, never what is on it. */
-  loop_board_read: o({ result: z.enum(["ok", "no_key", "unreachable"]) }),
+  loop_board_read: o({ result: z.enum(["ok", "no_server", "unreachable"]) }),
   /** The person opened a ticket's page on the Loop page. */
   loop_ticket_opened: o({}),
   /** The person asked to talk about a ticket with an agent: how it came out; never which ticket or what was said. */
@@ -91,7 +91,7 @@ export const EVENTS = {
       "started",
       "needs_model",
       "not_allowed",
-      "no_key",
+      "no_server",
       "offline",
       "refused",
       "failed",
@@ -105,7 +105,7 @@ export const EVENTS = {
     result: z.enum([
       "ok",
       "unconfirmed",
-      "no_key",
+      "no_server",
       "forbidden",
       "conflict",
       "not_allowed",
@@ -113,9 +113,10 @@ export const EVENTS = {
       "refused",
     ]),
   }),
-  /** The person approved or returned a batch of tickets waiting for approval: which, and how many came out how; never which tickets. */
+  /** The person approved or returned a batch of tickets waiting for approval: which, how many were asked for, and how many came out how; never which tickets. One event for one press, however many requests it took. */
   loop_tickets_acted: o({
     action: z.enum(["approve_many", "return_many"]),
+    total: z.number(),
     ok: z.number(),
     skipped: z.number(),
     failed: z.number(),
@@ -488,6 +489,7 @@ export const UI_EVENTS = [
   "background_shown_from_conversation",
   "file_previewed",
   "loop_notice_opened",
+  "loop_tickets_acted",
   "loop_session_joined",
   "diff_view_changed",
   "diff_file_opened",

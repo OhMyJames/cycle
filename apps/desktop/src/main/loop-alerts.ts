@@ -5,7 +5,7 @@
 import type { LoopNotice, LoopNoticesAnswer, LoopProjectInfo } from "@cycle/ui/api";
 import type { NotificationLike, NotifyWindow } from "./attention.ts";
 
-export type Alertable = Extract<LoopNotice, { kind: "blocked" | "review" }>;
+export type Alertable = LoopNotice & { kind: "blocked" | "review" };
 
 const keyOf = (n: LoopNotice): string => `${n.kind}:${n.identifier}`;
 
@@ -98,8 +98,8 @@ export const showAlert = (deps: AlertDeps) => (projectKey: string, notice: Alert
   const window = deps.window();
   if (window === undefined || window.isDestroyed() || window.isFocused()) return false;
   if (!deps.supported()) return undefined;
-  const line = `${notice.identifier} ${notice.title}`.replace(/\s+/g, " ").trim();
-  const title = Array.from(line).slice(0, 80).join("");
+  // Only the ticket's number: a Notice's text is the Loop server's words about it, not for a notification.
+  const title = Array.from(notice.identifier).slice(0, 80).join("");
   const notification = deps.create({ title, body: deps.say(notice.kind) });
   held.add(notification);
   const done = () => void held.delete(notification);

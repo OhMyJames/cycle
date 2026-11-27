@@ -1,5 +1,5 @@
 // The Loop page's reads (docs/protocol.md §17): the Projects of the Loop server on this computer, and each Project's
-// board. Both come through main; the key that reads the board never gets here.
+// board. Both come through main, which asks the Loop server; no itsaplan key is here or in main.
 import type {
   LoopAction,
   LoopActResult,
@@ -27,8 +27,8 @@ export type LoopState = {
   request?: { projectKey: string; identifier: string; n: number };
 };
 
-/** The most tickets main takes in one batch (`MANY_MAX` there). */
-const MANY_CHUNK = 100;
+/** The most tickets the Loop server takes in one request. */
+const MANY_CHUNK = 50;
 
 export const initialLoop = (): LoopState => ({ projects: [], boards: {}, notices: {} });
 
@@ -87,7 +87,7 @@ export class LoopSlice {
     this.#kit.set((s) => {
       const had = s.loop.notices[projectKey];
       // A read that failed to reach the tracker leaves the Notices that were read, for a few failures: after that they
-      // are too old to show as they are. No key at all replaces them at once.
+      // are too old to show as they are. No server at all replaces them at once.
       if (answer.kind === "unreachable") {
         const failures = (this.#noticeFailures.get(projectKey) ?? 0) + 1;
         this.#noticeFailures.set(projectKey, failures);
@@ -141,7 +141,7 @@ export class LoopSlice {
     confirmed = false,
     reason?: string,
   ): Promise<LoopManyResult> => {
-    // The main process takes at most this many at a time: a longer selection goes in chunks, results merged.
+    // The Loop server takes at most this many at a time: a longer selection goes in chunks, results merged.
     const results: LoopManyItem[] = [];
     let result: LoopManyResult = { kind: "done", results };
     for (let i = 0; i < identifiers.length; i += MANY_CHUNK) {
@@ -162,15 +162,26 @@ export class LoopSlice {
         results.push({ identifier, outcome: "failed", reason: answer.reason });
       break;
     }
+    // One event for the press, however many requests it took: how many were asked for and how they came out.
+    if (result.kind === "done") {
+      const count = (outcome: LoopManyItem["outcome"]) =>
+        result.results.filter((r) => r.outcome === outcome).length;
+      this.#kit.track("loop_tickets_acted", {
+        action,
+        total: identifiers.length,
+        ok: count("ok"),
+        skipped: count("skipped"),
+        failed: count("failed"),
+      });
+    }
     if (result.kind === "done" && result.results.some((r) => r.outcome !== "failed"))
       await Promise.all([this.loadBoard(projectKey), this.loadNotices(projectKey)]);
     return result;
   };
 
   /** Talk about a ticket with an agent: on success the new session is opened in place of the page. */
-  chat = async (projectKey: string, identifier: string): Promise<LoopChatResult> => {
-    return this.#kit.bridge
+  chat = async (projectKey: string, identifier: string): Promise<LoopChatResult> =>
+    this.#kit.bridge
       .loopChat(projectKey, identifier)
       .catch((): LoopChatResult => ({ kind: "failed", reason: "offline" }));
-  };
 }
