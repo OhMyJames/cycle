@@ -392,10 +392,14 @@ export function Board({
   const columns =
     answer !== undefined && answer !== "loading" && answer.kind === "ok" ? answer.columns : [];
   // Done (completed) columns sit last; every other column keeps the server's order.
-  const displayColumns = [
-    ...columns.filter((c) => c.stateType !== "completed"),
-    ...columns.filter((c) => c.stateType === "completed"),
-  ];
+  // Other consumers (pending counts, ticket lookup) deliberately use server order.
+  const displayColumns = useMemo(
+    () => [
+      ...columns.filter((c) => c.stateType !== "completed"),
+      ...columns.filter((c) => c.stateType === "completed"),
+    ],
+    [columns],
+  );
 
   const allPending = useMemo(() => {
     const list: LoopTicket[] = [];

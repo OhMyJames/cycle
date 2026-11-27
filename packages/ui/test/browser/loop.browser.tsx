@@ -487,6 +487,21 @@ const checkNarrow = async () => {
   expect(document.querySelector("[data-folded]")).toBeNull();
 };
 
+test("a column header lays its dot, title and count on one row", async () => {
+  await mount({ loopProjects: { kind: "ok", projects: [cycle] }, loopBoards: { CYC: board } });
+  const todo = await screen.findByRole("region", { name: "Todo" });
+  const head = todo.querySelector<HTMLElement>('[data-slot="loop-column-head"]') as HTMLElement;
+  expect(getComputedStyle(head).flexDirection).toBe("row");
+  const tops = ["dot", "title", "count"].map((n) =>
+    Math.round(
+      (head.querySelector(`[data-slot="loop-column-${n}"]`) as HTMLElement).getBoundingClientRect()
+        .top,
+    ),
+  );
+  expect(Math.abs((tops[0] ?? 0) - (tops[1] ?? 99))).toBeLessThan(8);
+  expect(Math.abs((tops[2] ?? 0) - (tops[1] ?? 99))).toBeLessThan(8);
+});
+
 test("a column's cards sit symmetrically whether or not the column scrolls", async () => {
   const many = Array.from({ length: 30 }, (_, i) => ticket(700 + i, "Backlog"));
   await mount({
