@@ -2,9 +2,12 @@
 // a dev run: the pull request and its guard, CI, the review, a conflict with the base, `node_modules` released while
 // waiting. What every run shares (the lock, the workers, the retries, the loop from phase to phase) is the engine's.
 
+import { CriteriaBook } from "../../criteria.ts";
 import type { Flow, FlowHost, StepResult } from "../../engine/flow.ts";
+import { preflight } from "../../preflight.ts";
 import { DevStateSchema } from "../../store.ts";
-import { blockTicket, ticketStillMine, ticketStillWanted } from "../ticket.ts";
+import type { Issue } from "../../types.ts";
+import { blockTicket, sendBack, ticketStillMine, ticketStillWanted } from "../ticket.ts";
 import { ci } from "./ci.ts";
 import { claim } from "./claim.ts";
 import { rollbackMerge } from "./conflict.ts";
@@ -16,6 +19,10 @@ import { guardPr } from "./guard.ts";
 import { DEV_QA, qa } from "./qa.ts";
 import { review } from "./review.ts";
 import { verify } from "./verify.ts";
+
+/** What says the body is the one the criteria were read from. */
+const bodyHashOf = (issue: Issue): string =>
+  new Bun.CryptoHasher("sha256").update(issue.description).digest("hex").slice(0, 16);
 
 export const devFlow = (host: FlowHost): Flow => {
   const x: Dev = { h: host, kept: new Set(), greenSeen: new Map() };
@@ -65,14 +72,17 @@ export const devFlow = (host: FlowHost): Flow => {
 
     enabled: () => true,
 
-    open(accepted) {
+    open(accepted, issue) {
       if (accepted.kind !== "dev") throw new Error(`a ${accepted.kind} work item is not a dev run`);
       // A dev run's `claimed` event stays as it always was: no `runKind`, which `stats` reads as dev.
       return {
         specs: accepted.specs,
         state: {
           kind: "dev",
-          dev: DevStateSchema.parse({ fullFlowDocs: accepted.docs ?? [] }),
+          dev: DevStateSchema.parse({
+            fullFlowDocs: accepted.docs ?? [],
+            bodyHash: bodyHashOf(issue),
+          }),
         },
         claimed: {
           criteria: accepted.specs.length,
@@ -121,6 +131,28 @@ export const devFlow = (host: FlowHost): Flow => {
       return {
         ...current,
         dev: { ...current.dev, ciRound: 0, conflictRound: 0, conflict: null, resolvedFiles: [] },
+      };
+    },
+
+    // CYC-467: a person edited the body while the run was blocked. A 大档 run is judged by its documents, which
+    // `checkDocs` already watches; a run begun before the hash was kept adopts the hash and goes on as before.
+    async reread(run, issue) {
+      const current = asDev(run);
+      if (current.dev.fullFlowDocs.length > 0) return undefined;
+      const hash = bodyHashOf(issue);
+      if (current.dev.bodyHash === hash) return undefined;
+      if (current.dev.bodyHash == null)
+        return { run: { ...current, dev: { ...current.dev, bodyHash: hash } } };
+      const pre = preflight(issue, host.d.config);
+      if (!pre.ok || pre.kind !== "dev") {
+        const reasons = pre.ok ? ["工单不再是开发工单"] : pre.reasons;
+        await sendBack(host, issue, reasons);
+        return { rejected: reasons };
+      }
+      await host.d.store.event(run.key, "body_changed", { criteria: pre.specs.length });
+      return {
+        run: { ...current, dev: { ...current.dev, bodyHash: hash, bodyChanged: true } },
+        book: CriteriaBook.fromSpecs(pre.specs),
       };
     },
 

@@ -53,7 +53,12 @@ export const todoIntake = (host: FlowHost): Intake => ({
     return { take: issue, accepted: pre };
   },
 
-  async reject(issue, reasons) {
+  reject: (issue, reasons) => sendBack(host, issue, reasons),
+});
+
+/** Sends a work item back to Blocked with the reasons the preflight gave: one comment for one reason. */
+export const sendBack = async (host: FlowHost, issue: Issue, reasons: string[]): Promise<void> => {
+  {
     const { store } = host.d;
     const body = sendBackComment(reasons);
     const why = new Bun.CryptoHasher("sha256").update(body).digest("hex").slice(0, 12);
@@ -82,8 +87,8 @@ export const todoIntake = (host: FlowHost): Intake => ({
       tx.event(issue.key, "preflight_rejected", { reasons: reasons.length });
     });
     await host.reconcile.flush(issue.id, { capMs: host.d.mirrorCapMs ?? 10_000 });
-  },
-});
+  }
+};
 
 /** Unfinished goes on; blocked only once a person has put the work item back in `Todo` with the `auto` label. */
 export const ticketStillWanted = async (

@@ -2423,3 +2423,56 @@ test("a move to In Review that fails after the review: one ticket comment, one P
   expect(prComments()).toBe(1);
   expect(s.tracker.comments.filter((c) => c.includes("escalate"))).toHaveLength(1);
 });
+
+// CYC-467: a person edits the body of a blocked work item and puts it back
+const blockedInVerify = async () => {
+  const s = setup([ready()], { dev: Array.from({ length: 8 }, () => done()), qa: [] }, {}, [
+    "bun run check",
+  ]);
+  expect((await s.pipeline.step()).status).toBe("blocked");
+  expect((await s.store.load("CYC-1"))?.resumeFrom).toBe("verify");
+  return s;
+};
+
+test("a blocked run put back with an edited body: the criteria are read again and Dev is told", async () => {
+  const s = await blockedInVerify();
+  const before = s.sessions.prompts.filter((p) => p.role === "dev").length;
+  const found = s.tracker.issues[0] as Issue;
+  found.description = readyDescription.replace("开关可用", "开关在设置页可用");
+  found.columnId = 22;
+  await s.pipeline.step();
+  const after = s.sessions.prompts.filter((p) => p.role === "dev").slice(before);
+  expect(after.length).toBeGreaterThan(0);
+  expect(after[0]?.prompt).toContain("A person edited CYC-1");
+  expect(after[0]?.prompt).toContain("开关在设置页可用");
+  expect(after[0]?.prompt).toContain("fix round");
+  // said once, in the same session
+  expect(after.slice(1).some((p) => p.prompt.includes("A person edited"))).toBe(false);
+  expect(s.sessions.created.filter((id) => id.startsWith("dev"))).toEqual(["dev-1"]);
+  const book = await s.store.loadCriteria("CYC-1");
+  expect(book.items[0]?.text).toContain("开关在设置页可用");
+  expect((await s.store.events()).some((e) => e.kind === "body_changed")).toBe(true);
+});
+
+test("a blocked run put back with an unchanged body goes on as before", async () => {
+  const s = await blockedInVerify();
+  const before = s.sessions.prompts.filter((p) => p.role === "dev").length;
+  (s.tracker.issues[0] as Issue).columnId = 22;
+  await s.pipeline.step();
+  const after = s.sessions.prompts.filter((p) => p.role === "dev").slice(before);
+  expect(after.length).toBeGreaterThan(0);
+  expect(after.some((p) => p.prompt.includes("A person edited"))).toBe(false);
+  expect(s.sessions.created.filter((id) => id.startsWith("dev"))).toEqual(["dev-1"]);
+  expect((await s.store.events()).some((e) => e.kind === "body_changed")).toBe(false);
+});
+
+test("a blocked run put back with an edited body that fails the preflight is sent back", async () => {
+  const s = await blockedInVerify();
+  const found = s.tracker.issues[0] as Issue;
+  found.description = "no criteria any more";
+  found.columnId = 22;
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("rejected");
+  expect((await s.store.load("CYC-1"))?.phase).toBe("blocked");
+  expect(s.tracker.moves.at(-1)).toBe("CYC-1:blocked");
+});

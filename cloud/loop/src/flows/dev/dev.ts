@@ -1,6 +1,7 @@
 import type { CriteriaBook } from "../../criteria.ts";
 import { Blocked, branchOf } from "../../engine/flow.ts";
 import {
+  bodyChangedNotice,
   conflictBrief,
   continueBrief,
   devBrief,
@@ -49,13 +50,16 @@ export async function dev(
         (run.dev.nodeModulesReleased
           ? "\n\nDependencies are not installed in this worktree (node_modules was removed while waiting for CI). Resolve package.json and bun.lock first if they are conflicted, then run `bun install` before `bun run check`.\n"
           : "");
+  // CYC-467: the body changed while the run was blocked: the turn begins by saying so, whatever phase it resumed in.
+  const notice = run.dev.bodyChanged === true ? bodyChangedNotice(issue, book.items) : "";
   const prompt =
     conflictPrompt ??
-    (run.findings !== null
-      ? fixBrief(run.round, run.findings)
-      : progress !== "" || byPerson
-        ? continueBrief(issue, byPerson)
-        : devBrief(issue, book.items, await docTexts(h, run, issue, ["Design", "Plan"])));
+    notice +
+      (run.findings !== null
+        ? fixBrief(run.round, run.findings)
+        : progress !== "" || byPerson
+          ? continueBrief(issue, byPerson)
+          : devBrief(issue, book.items, await docTexts(h, run, issue, ["Design", "Plan"])));
 
   let sessionId = h.need(run.devSessionId ?? undefined);
   let result: TurnResult;
@@ -100,6 +104,7 @@ export async function dev(
       { role: "dev", worktree, timeoutMs: config.turnTimeoutMs },
     );
   }
+  if (run.dev.bodyChanged === true) await save({ dev: { bodyChanged: false } });
   await store.event(run.key, "dev_turn", { round: run.round, stop: result.stopReason });
   h.mustHaveEnded("Dev", result);
 
