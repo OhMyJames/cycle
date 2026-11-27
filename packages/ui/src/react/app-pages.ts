@@ -57,6 +57,7 @@ export function usePages(appRef: RefObject<HTMLElement | null>) {
     store.track("panel_opened", { panel: "connectors", via: "click" });
   };
   const openLoop = () => {
+    if (loop !== undefined) return;
     setSettings(undefined);
     setConnectors(undefined);
     setLoop(enter(lastLoopView.current));

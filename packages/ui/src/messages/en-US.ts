@@ -642,7 +642,6 @@ export const enUS = {
   // Loop: the Projects of the Loop server and their boards (docs/protocol.md §17)
   "loop.open": "Loop",
   "loop.title": "Loop",
-  "loop.sections": "Projects",
   "loop.projects": "Projects",
   "loop.overview": "Overview",
   "loop.crumbs": "Where you are",

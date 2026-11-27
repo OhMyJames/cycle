@@ -254,6 +254,7 @@ export function LoopMain({
   onClose,
   banner,
   sidebarToggle,
+  active = true,
 }: {
   view: LoopView;
   onView: (view: LoopView) => void;
@@ -264,6 +265,8 @@ export function LoopMain({
   banner?: ReactNode;
   /** The button that shows the sidebar again, in the title bar, while it is put away. */
   sidebarToggle?: ReactNode;
+  /** False while Settings or Connectors is over the window: Escape is theirs then. */
+  active?: boolean;
 }) {
   const { t } = useI18n();
   const store = useAppStore();
@@ -340,17 +343,20 @@ export function LoopMain({
   const goBack = useRef(onBack);
   goBack.current = onBack;
   useEffect(() => {
+    if (!active) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented || isComposing(event)) return;
       const target = event.target as Node | null;
-      const inMain = target instanceof Element && target.closest('[data-slot="main"]') !== null;
+      const inMain =
+        target instanceof Element &&
+        target.closest('[data-slot="main"], [data-slot="sidebar"]') !== null;
       if (target !== null && target !== document.body && !inMain) return;
       event.preventDefault();
       goBack.current();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [active]);
 
   const away = connected === false;
   const heading =

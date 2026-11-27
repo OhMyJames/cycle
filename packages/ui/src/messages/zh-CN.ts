@@ -580,7 +580,6 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   // Loop: the Projects of the Loop server and their boards (docs/protocol.md §17)
   "loop.open": "Loop",
   "loop.title": "Loop",
-  "loop.sections": "项目",
   "loop.projects": "项目",
   "loop.overview": "概览",
   "loop.crumbs": "面包屑",

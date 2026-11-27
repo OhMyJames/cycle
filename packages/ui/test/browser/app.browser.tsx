@@ -231,6 +231,35 @@ test("while a permission waits, ⌘Enter is the card's Allow once, not the queue
   expect(boxText(box)).toBe("wait");
 });
 
+test("in the Loop mode ⌘Enter does not answer the permission of the hidden session", async () => {
+  const { user, emit, named } = await mount({
+    capabilities: { queue: true, steer: true, files: true, folders: true },
+  });
+  await openFirstSession(user);
+  const box = await screen.findByRole("textbox", { name: "Message" });
+  await ready(box);
+  emit({
+    type: "update",
+    locationId: "local",
+    sessionId: "s1",
+    update: u({ sessionUpdate: "state_update", state: "requires_action" }),
+    version: 1,
+  });
+  const request: PermissionRequest = {
+    key: "local:s1:p1",
+    locationId: "local",
+    sessionId: "s1",
+    title: "Allow Bash?",
+    subject: { type: "tool_call", toolCall: { name: "Bash", rawInput: { command: "ls" } } },
+    options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+  };
+  emit({ type: "permission", request, version: 2 });
+  await screen.findByLabelText("Allow Bash?");
+  await user.click(screen.getByRole("button", { name: "Loop" }));
+  await user.keyboard(MOD === "⌘" ? "{Meta>}{Enter}{/Meta}" : "{Control>}{Enter}{/Control}");
+  expect(named("answerPermission")).toHaveLength(0);
+});
+
 test("an agent that cannot be steered keeps Enter as queue while it works", async () => {
   const { user, emit, named } = await mount({
     capabilities: { queue: true, steer: true, files: true, folders: true },
