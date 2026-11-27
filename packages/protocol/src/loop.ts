@@ -104,6 +104,7 @@ export const LOOP_TICKET_GET = "loop/ticket/get";
 export const LOOP_TICKETS_ACT = "loop/tickets/act";
 export const LOOP_INTENTS_RETRY = "loop/intents/retry";
 export const LOOP_STATUS = "loop/status";
+export const LOOP_GRAPH_ACT = "loop/graph/act";
 
 /** The most bytes of one request line; a connection that sends more without a newline is closed. */
 export const LOOP_MAX_LINE_BYTES = 1_048_576;
@@ -129,6 +130,106 @@ export type LoopSessionRef = z.infer<typeof LoopSessionRefSchema>;
 export const LoopProjectParamsSchema = z.object({ project: z.string().min(1) });
 export type LoopProjectParams = z.infer<typeof LoopProjectParamsSchema>;
 
+/** Who asked for a write. Self-declared: this names the caller in the record, it does not authenticate it. */
+export const LoopActorKindSchema = z.enum(["desktop", "operator"]);
+export type LoopActorKind = z.infer<typeof LoopActorKindSchema>;
+
+/** Level-2 Task Graph (CYC-512, docs/protocol.md §17): where a work item's execution graph stands, for the board. */
+export const LoopGraphSourceSchema = z.enum([
+  "single",
+  "plan_doc",
+  "auto_plan",
+  "auto_planner",
+  "edited",
+]);
+export const LoopGraphNodeStatusSchema = z.enum([
+  "pending",
+  "running",
+  "passed",
+  "failed",
+  "blocked",
+  "skipped",
+]);
+export type LoopGraphNodeStatus = z.infer<typeof LoopGraphNodeStatusSchema>;
+
+export const LoopGraphSummarySchema = z.object({
+  source: LoopGraphSourceSchema,
+  total: z.number().int().min(0),
+  passed: z.number().int().min(0),
+  failed: z.number().int().min(0),
+  blocked: z.number().int().min(0),
+  running: z.number().int().min(0),
+  currentNodeId: z.string().nullable(),
+  currentNodeTitle: z.string().nullable(),
+});
+export type LoopGraphSummary = z.infer<typeof LoopGraphSummarySchema>;
+
+export const LoopGraphNodeSchema = z.object({
+  id: z.string().min(1),
+  /** Topological order, from 0. */
+  position: z.number().int().min(0),
+  origin: z.enum(["planned", "fix"]),
+  title: z.string().min(1),
+  goal: z.string().min(1),
+  dependsOn: z.array(z.string().min(1)),
+  filesHint: z.array(z.string()),
+  verify: z.array(z.string().min(1)).min(1),
+  status: LoopGraphNodeStatusSchema,
+  sessionId: z.string().nullable(),
+  commitSha: z.string().nullable(),
+  rounds: z.number().int().min(0),
+  lastError: z.string().nullable(),
+  summary: z.string().nullable(),
+  startedAt: z.string().nullable(),
+  finishedAt: z.string().nullable(),
+});
+export type LoopGraphNode = z.infer<typeof LoopGraphNodeSchema>;
+
+export const LoopGraphSchema = z.object({
+  runKey: z.string().min(1),
+  source: LoopGraphSourceSchema,
+  revision: z.number().int().min(1),
+  currentNodeId: z.string().nullable(),
+  /** In `position` order. */
+  nodes: z.array(LoopGraphNodeSchema).min(1),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+});
+export type LoopGraph = z.infer<typeof LoopGraphSchema>;
+
+export const LoopGraphActionSchema = z.enum(["retry_node", "skip_node", "edit_node"]);
+export type LoopGraphAction = z.infer<typeof LoopGraphActionSchema>;
+
+export const LoopGraphActParamsSchema = z
+  .object({
+    project: z.string().min(1),
+    /** The work item key whose graph it is, such as `CYC-390`. */
+    key: z.string().min(1),
+    nodeId: z.string().min(1),
+    action: LoopGraphActionSchema,
+    /** `edit_node` only; at least one of the three. */
+    title: z.string().trim().min(1).max(200).optional(),
+    goal: z.string().trim().min(1).max(4000).optional(),
+    verify: z.array(z.string().trim().min(1).max(500)).min(1).max(20).optional(),
+    actor: z.string().min(1).max(100),
+    actorKind: LoopActorKindSchema,
+  })
+  .refine((p) => {
+    const edits = p.title !== undefined || p.goal !== undefined || p.verify !== undefined;
+    return p.action === "edit_node" ? edits : !edits;
+  });
+export type LoopGraphActParams = z.infer<typeof LoopGraphActParamsSchema>;
+
+export const LoopGraphActResultSchema = z.object({
+  key: z.string().min(1),
+  nodeId: z.string().min(1),
+  action: LoopGraphActionSchema,
+  /** The run's phase after the action: `graph_plan` when a blocked run was put back. */
+  phase: z.string().min(1),
+  graph: LoopGraphSchema,
+});
+export type LoopGraphActResult = z.infer<typeof LoopGraphActResultSchema>;
+
 export const LoopCardSchema = z.object({
   key: z.string().min(1),
   title: z.string(),
@@ -146,6 +247,8 @@ export const LoopCardSchema = z.object({
     .optional(),
   /** The Loop phase of a card the Loop is working on (from the run record), and when that phase began. */
   phase: z.object({ name: z.string().min(1), since: z.string().min(1) }).nullable(),
+  /** The run's Task Graph in short; left out when the run has none. */
+  graph: LoopGraphSummarySchema.optional(),
 });
 export type LoopCard = z.infer<typeof LoopCardSchema>;
 
@@ -206,6 +309,8 @@ export const LoopRunDetailSchema = LoopRunSummarySchema.extend({
   events: z.array(z.object({ ts: z.string().min(1), kind: z.string().min(1) })).max(50),
   /** The last time the loop reported it was working on the run, or null when it never has. */
   heartbeat: z.object({ at: z.string().min(1), detail: z.string().nullable() }).nullable(),
+  /** The run's Task Graph; left out when it has none. */
+  graph: LoopGraphSchema.optional(),
 });
 export type LoopRunDetail = z.infer<typeof LoopRunDetailSchema>;
 
@@ -235,10 +340,6 @@ export type LoopNotice = z.infer<typeof LoopNoticeSchema>;
 export const LoopNoticesListParamsSchema = z.object({ project: z.string().min(1).optional() });
 export const LoopNoticesListResultSchema = z.object({ notices: z.array(LoopNoticeSchema) });
 export type LoopNoticesListResult = z.infer<typeof LoopNoticesListResultSchema>;
-
-/** Who asked for a write. Self-declared: this names the caller in the record, it does not authenticate it. */
-export const LoopActorKindSchema = z.enum(["desktop", "operator"]);
-export type LoopActorKind = z.infer<typeof LoopActorKindSchema>;
 
 export const LoopTicketsActParamsSchema = z.object({
   project: z.string().min(1),
@@ -332,6 +433,8 @@ export const LoopTicketDetailSchema = z.object({
   acceptance: z.array(z.string()),
   /** Pull or merge request addresses (https only). */
   links: z.array(z.string()),
+  /** The Task Graph of the ticket's run; left out when it has none. */
+  graph: LoopGraphSchema.optional(),
 });
 export type LoopTicketDetail = z.infer<typeof LoopTicketDetailSchema>;
 

@@ -5,6 +5,7 @@
 import {
   LOOP_API_RUNS_LIST,
   LOOP_BOARD_GET,
+  LOOP_GRAPH_ACT,
   LOOP_INTENTS_RETRY,
   LOOP_NOTICES_LIST,
   LOOP_RUN_GET,
@@ -15,6 +16,10 @@ import {
   type LoopBoard,
   type LoopCard,
   type LoopColumn,
+  type LoopGraph,
+  LoopGraphActParamsSchema,
+  type LoopGraphActResult,
+  type LoopGraphSummary,
   LoopIntentsRetryParamsSchema,
   type LoopNotice,
   type LoopNoticeKind,
@@ -34,7 +39,9 @@ import {
   type LoopTicketResult,
   LoopTicketsActParamsSchema,
 } from "@cycle/protocol";
+import { parseVerify } from "./criteria.ts";
 import { SqliteStore } from "./db/store.ts";
+import type { TaskGraph } from "./graph.ts";
 import { toIssue } from "./plan-mcp.ts";
 import type { LoopStore, RunRecord } from "./store.ts";
 import type { Issue, IssueComment } from "./types.ts";
@@ -149,6 +156,28 @@ const summaryOf = (run: RunRecord): LoopRunSummary => ({
   round: run.round,
   startedAt: run.startedAt,
   updatedAt: run.updatedAt,
+});
+
+/** A graph in short: counts by status and the node the loop is at. */
+export const graphSummaryOf = (graph: TaskGraph): LoopGraphSummary => {
+  const count = (status: string) => graph.nodes.filter((n) => n.status === status).length;
+  const current = graph.nodes.find((n) => n.id === graph.currentNodeId);
+  return {
+    source: graph.source,
+    total: graph.nodes.length,
+    passed: count("passed"),
+    failed: count("failed"),
+    blocked: count("blocked"),
+    running: count("running"),
+    currentNodeId: graph.currentNodeId,
+    currentNodeTitle: current?.title ?? null,
+  };
+};
+
+/** The full graph as the API sends it: nodes in `position` order. */
+const graphOf = (graph: TaskGraph): LoopGraph => ({
+  ...graph,
+  nodes: [...graph.nodes].sort((a, b) => a.position - b.position),
 });
 
 /** The sessions a run holds, with the role each plays. */
@@ -301,6 +330,7 @@ export class LoopApiHandler {
       LOOP_TICKET_GET,
       LOOP_TICKETS_ACT,
       LOOP_INTENTS_RETRY,
+      LOOP_GRAPH_ACT,
       LOOP_STATUS,
     ].includes(method);
   }
@@ -352,6 +382,8 @@ export class LoopApiHandler {
         return this.#act(params);
       case LOOP_INTENTS_RETRY:
         return this.#retry(params);
+      case LOOP_GRAPH_ACT:
+        return this.#graphAct(params);
       case LOOP_STATUS:
         return this.#status();
       default:
@@ -410,6 +442,7 @@ export class LoopApiHandler {
           lookups--;
           pendingReason = await reasonOf(project.tracker, issue);
         }
+        const graph = run === undefined ? undefined : await project.store.loadGraph(run.key);
         cards.push({
           key: issue.key,
           title: issue.title,
@@ -422,6 +455,7 @@ export class LoopApiHandler {
             run !== undefined && !finished(run) && column.stateType === "started"
               ? { name: run.phase, since: run.updatedAt }
               : null,
+          ...(graph === undefined ? {} : { graph: graphSummaryOf(graph) }),
         });
       }
       columns.push({ id: column.id, name: column.name, stateType: column.stateType, cards });
@@ -460,6 +494,7 @@ export class LoopApiHandler {
       role === "blocked" || role === "review"
         ? await this.#attention(project, issue.key, role).catch(() => undefined)
         : undefined;
+    const graph = await project.store.loadGraph(issue.key).catch(() => undefined);
     return {
       identifier: issue.key,
       title: issue.title,
@@ -471,6 +506,7 @@ export class LoopApiHandler {
       ...(attention === undefined ? {} : { attention }),
       acceptance: acceptanceOf(issue.description),
       links: linksOf(issue.development, issue.description),
+      ...(graph === undefined ? {} : { graph: graphOf(graph) }),
     };
   }
 
@@ -513,6 +549,7 @@ export class LoopApiHandler {
           .slice(-50)
           .map((e) => ({ ts: e.ts, kind: e.kind }));
     const beat = db?.heartbeats().find((h) => h.runKey === key);
+    const graph = await project.store.loadGraph(key);
     return {
       ...summaryOf(run),
       blockedReason: run.blockedReason,
@@ -520,6 +557,7 @@ export class LoopApiHandler {
       prUrl: run.kind === "dev" ? run.dev.prUrl : null,
       events,
       heartbeat: beat === undefined ? null : { at: beat.at, detail: beat.detail },
+      ...(graph === undefined ? {} : { graph: graphOf(graph) }),
     };
   }
 
@@ -631,6 +669,76 @@ export class LoopApiHandler {
       return done.length;
     });
     return { retried };
+  }
+
+  // ---- graph/act ----
+
+  /** `retry_node`, `skip_node`, `edit_node`: checked and written in one transaction, with its audit row. */
+  #graphAct(raw: unknown): LoopGraphActResult {
+    const p = LoopGraphActParamsSchema.safeParse(raw);
+    if (!p.success) {
+      const given = rec(raw);
+      const missing =
+        typeof given.actor !== "string" ||
+        given.actor === "" ||
+        (given.actorKind !== "desktop" && given.actorKind !== "operator");
+      throw invalid(missing ? "actor_required" : "invalid_params");
+    }
+    const { key, nodeId, action, actor, actorKind } = p.data;
+    const project = this.#project(p.data.project);
+    const db = sqlite(project.store);
+    if (db === null) throw invalid("invalid_params");
+    if (p.data.verify?.some((c) => parseVerify(c) === undefined)) throw invalid("invalid_verify");
+    const result = db.transaction((tx) => {
+      const run = tx.load(key);
+      if (run === undefined) throw invalid("unknown_run");
+      const graph = tx.loadGraph(key);
+      if (graph === undefined) throw invalid("no_graph");
+      const node = graph.nodes.find((n) => n.id === nodeId);
+      if (node === undefined) throw invalid("node_not_found");
+      const allowed =
+        action === "edit_node" ? ["pending", "blocked", "failed"] : ["blocked", "failed"];
+      if (!allowed.includes(node.status)) throw invalid("node_not_allowed");
+      const fields: string[] = [];
+      let next = node;
+      if (action === "retry_node")
+        next = { ...node, status: "pending", rounds: 0, lastError: null, sessionId: null };
+      else if (action === "skip_node") next = { ...node, status: "skipped" };
+      else {
+        next = { ...node };
+        if (p.data.title !== undefined) {
+          next.title = p.data.title;
+          fields.push("title");
+        }
+        if (p.data.goal !== undefined) {
+          next.goal = p.data.goal;
+          fields.push("goal");
+        }
+        if (p.data.verify !== undefined) {
+          next.verify = p.data.verify;
+          fields.push("verify");
+        }
+      }
+      const saved = tx.saveGraph({
+        ...graph,
+        revision: graph.revision + 1,
+        nodes: graph.nodes.map((n) => (n.id === nodeId ? next : n)),
+      });
+      let phase: string = run.phase;
+      if (run.phase === "blocked") {
+        phase = "graph_plan";
+        tx.save({ ...run, phase: "graph_plan", blockedReason: null, resumeFrom: null });
+      }
+      tx.action(key, `graph_${action}`, {
+        nodeId,
+        actor,
+        actorKind,
+        ...(fields.length > 0 ? { fields } : {}),
+      });
+      return { key, nodeId, action, phase, graph: graphOf(saved) };
+    });
+    this.#boards.delete(project.projectKey);
+    return result;
   }
 
   // ---- tickets/act ----
@@ -890,7 +998,7 @@ const counts = (method: string, result: unknown): string => {
   }
   if (method === LOOP_INTENTS_RETRY) return `retried=${r.retried}`;
   if (method === LOOP_NOTICES_LIST) return `notices=${list(r.notices).length}`;
-  if (method === LOOP_TICKET_GET) return "ok";
+  if (method === LOOP_TICKET_GET || method === LOOP_GRAPH_ACT) return "ok";
   if (method === LOOP_API_RUNS_LIST) return `runs=${list(r.runs).length}`;
   if (method === LOOP_BOARD_GET)
     return `cards=${list(r.columns).reduce((n, c) => n + list(c.cards).length, 0)} stale=${r.stale === true}`;

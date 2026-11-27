@@ -1291,17 +1291,18 @@ Loop 页顶部的 Notice 区由桌面主进程从两处派生,不依赖 Loop 服
 
 桌面端和运营 agent 之后只调这组方法,itsaplan 只在 Loop 内部对接一处,不再解析评论、不再写死标签名。决定见 [2026-11-26-loop-api-is-the-only-way-in](../.agents/notes/2026-11-26-loop-api-is-the-only-way-in.md)。**本节取代上文"服务不访问 itsaplan""工单状态按钮(桌面端写 itsaplan)""Notice(桌面端派生)"三处**:桌面端改用这组方法由下一张单做,在那之前它们仍是桌面端现在的行为。`projects/list`、`runs/list`、`events/list` 保持原名;新方法在 `loop/` 下,`loop/projects/list` 与 `projects/list` 同。schema 在 `loop.ts`,每个返回都按它校验。
 
-| 方法                 | 参数                                                            | 返回                                                   |
-| -------------------- | --------------------------------------------------------------- | ------------------------------------------------------ |
-| `loop/projects/list` | 无                                                              | `{projects}`                                           |
-| `loop/board/get`     | `{project}`                                                     | `{project, columns, stale, readAt}`                    |
-| `loop/runs/list`     | `{project, filter?: {state?}}`                                  | `{project, runs}`                                      |
-| `loop/run/get`       | `{project, key}`                                                | 阶段、轮次、会话 `{kind,id}`、PR、最近 50 条事件、心跳 |
-| `loop/notices/list`  | `{project?}`                                                    | `{notices}`                                            |
-| `loop/ticket/get`    | `{project, key}`                                                | 单张工单的详情(见下)                                   |
-| `loop/tickets/act`   | `{project, verb, keys[], reason?, confirmed, actor, actorKind}` | `{results}`                                            |
-| `loop/intents/retry` | `{project, id?, key?, actor, actorKind}`                        | `{retried}`(重新排队的 intent 数)                      |
-| `loop/status`        | 无                                                              | `{version, restartedAt, projects}`                     |
+| 方法                 | 参数                                                                       | 返回                                                   |
+| -------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `loop/projects/list` | 无                                                                         | `{projects}`                                           |
+| `loop/board/get`     | `{project}`                                                                | `{project, columns, stale, readAt}`                    |
+| `loop/runs/list`     | `{project, filter?: {state?}}`                                             | `{project, runs}`                                      |
+| `loop/run/get`       | `{project, key}`                                                           | 阶段、轮次、会话 `{kind,id}`、PR、最近 50 条事件、心跳 |
+| `loop/notices/list`  | `{project?}`                                                               | `{notices}`                                            |
+| `loop/ticket/get`    | `{project, key}`                                                           | 单张工单的详情(见下)                                   |
+| `loop/tickets/act`   | `{project, verb, keys[], reason?, confirmed, actor, actorKind}`            | `{results}`                                            |
+| `loop/intents/retry` | `{project, id?, key?, actor, actorKind}`                                   | `{retried}`(重新排队的 intent 数)                      |
+| `loop/graph/act`     | `{project, key, nodeId, action, title?, goal?, verify?, actor, actorKind}` | `{key, nodeId, action, phase, graph}`                  |
+| `loop/status`        | 无                                                                         | `{version, restartedAt, projects}`                     |
 
 - **看板**:server 用 `planKey` 读 itsaplan,列按 stateType(backlog、unstarted、started、completed、canceled)再按看板顺序;完成和取消的列只取最近 30 张。卡片有编号、标题、类型名、优先级、标签名、`parent`(父工单 `{key, title}`,取自 `list_issues` 的 `parent`,无父工单为 `null`,旧 server 可不带该字段)、`pendingReason`(带 `待批准` 的卡,取最新评论首行,最多 20 张、140 字,读不到为 `null`)、`phase`(只对 started 列里有未完成 run 的卡,`{name, since}` 取自 run 的 `phase` 和 `updatedAt`,不读 tracker 自定义字段;心跳在 `run/get` 和 `stuck` Notice 里用)。缓存 15 秒;读失败时返回上一次的结果并标 `stale: true`(`readAt` 仍是上次成功的时间);第一次就失败返回 `-32603`,`data.reason` 为 `tracker_unreachable`。
 - **run**:`state` 为 `active`/`blocked`/`done`;`filter.state` 过滤。`run/get` 的会话是 `{kind, id}`(kind:`dev`、`qa`、`review`、`research`、`research_qa`、`triage`、`shape`、`shape_qa`),run 不存在返回 `-32602`,`data.reason` 为 `unknown_run`。
@@ -1314,6 +1315,14 @@ Loop 页顶部的 Notice 区由桌面主进程从两处派生,不依赖 Loop 服
   - `acceptance`:正文里 `## 验收标准`(或 `## Acceptance criteria`)一节的各条;`links`:正文和 development 链接里的 PR/MR 地址,只要 https。
   - `attention` 只取 Loop 自己的记录,不解析评论:Blocked 列且 Loop 有该工单 `blocked` 的 run 时为 `{kind: "blocked", text: <原因>, session: {kind,id}|null}`;In Review 列且 `notices` 表里有 `review` 类 Notice(同上文的寿命规则)时为 `{kind: "review", text, prUrl: string|null}`。Loop 没有记录的(例如人手动移到 Blocked 的)不给 `attention`。
   - 标签和列按名字、stateType 每次从 `get_project` 解析。工单不存在返回 `-32602`,`data.reason` 为 `not_found`;读不到 itsaplan 返回 `-32603`,`data.reason` 为 `tracker_unreachable`。
+- **二级 Task Graph(CYC-512)**:一级工单(run)内部的执行图,依据 CYC-507 与 [边界笔记](../.agents/notes/2026-11-26-loop-work-item-and-task-graph-boundary.md),数据来自 `run_graphs` / `graph_nodes`。卡片可带 `graph` 摘要 `{source, total, passed, failed, blocked, running, currentNodeId, currentNodeTitle}`;`loop/ticket/get` 与 `loop/run/get` 可带完整 `graph`:`{runKey, source, revision, currentNodeId, nodes, createdAt, updatedAt}`,节点按 `position`(拓扑序)排列,字段 `id、position、origin、title、goal、dependsOn、filesHint、verify、status、sessionId、commitSha、rounds、lastError、summary、startedAt、finishedAt`。run 没有执行图时三处都**省略** `graph`。
+  - **`loop/graph/act`**:`action` 为 `retry_node`、`skip_node`、`edit_node`,其余值 `-32602`(`invalid_params`)。`key` 是一级工单号,`nodeId` 是节点 id。需要 `actor`、`actorKind`(缺则 `actor_required`)。
+    - `retry_node`:只允许 `blocked`、`failed` 节点;节点重置为 `pending`,`rounds = 0`、`lastError = null`、`sessionId = null`。
+    - `skip_node`:只允许 `blocked`、`failed` 节点;节点标为 `skipped`。
+    - `edit_node`:只允许 `pending`、`blocked`、`failed` 节点(`running`、`passed`、`skipped` 不可改);可改 `title`、`goal`、`verify`,至少给一个;`verify` 的每条必须通过 `parseVerify` 白名单。
+    - 三个动作成功后,若 run 处于 `blocked`,则恢复到 `graph_plan`(清 `blockedReason`、`resumeFrom`);图的 `revision` 加 1。
+    - 错误一律 `-32602`,`data.reason` 为 `unknown_run`、`no_graph`、`node_not_found`、`node_not_allowed`(状态不符)、`invalid_verify`、`invalid_params`、`actor_required`、`unknown_project`,**什么都不改**。
+    - 每次成功写一条 `actions`(`graph_retry_node`/`graph_skip_node`/`graph_edit_node`,带 `nodeId`、`actor`、`actorKind`、改了哪些字段名);失败不写。图、run 和 `actions` 在同一个事务里。返回 `{key, nodeId, action, phase, graph}`。
 - **`to_backlog`、`to_todo`(CYC-493)**:`loop/tickets/act` 的两个新 `verb`,都不要求确认。每张**重读**,按上面的 `actions` 判断仍可用才写,否则该张 `skipped`(`reason: not_allowed`,工单不存在为 `not_found`)。`to_backlog` 移到 `backlog` 类里看板顺序最前的列,同时摘掉 `auto`;`to_todo` 移到 `unstarted` 类里看板顺序最前的列(Paused 也是 unstarted,但不是 Todo),不动标签。先写标签、再移列,移列失败尽量还原标签。有 `reason` 时发评论,末尾是「由 <actor> 在桌面端退回 Backlog/放回 Todo」(`operator` 写「经运营 agent」)。每张写一条 `actions`(`ticket_to_backlog`/`ticket_to_todo`)。直接写,不走对账。`approve`、`return` 的 `skipped` 原因仍是上面几个;`not_allowed` 只出现在这两个新 verb。
 - **对账的重试与 `loop/intents/retry`(CYC-497)**:Loop 写给 tracker 的评论、移列、标签和阶段字段是 intent,由对账按工单依次执行。失败按种类处理:网络错误、超时、5xx **不计入** `attempts`,intent 留在 `pending`,按它自己的 `next_at` 退避重试(30 秒、1、2、4 分钟,上限 10 分钟),所以 tracker 断网多久都不会让它 `stuck`;其他错误照旧计数,超过 10 次标 `stuck`;`tracker.get` 明确返回找不到(工单被删),直接标 `stuck`,原因 `not_found`,不重试。**同一张工单**里,前面有 `stuck` 的评论或移列时,后面的评论和移列不执行、保持 `pending`(先评论再移列);标签照旧,阶段字段是另一条 lane,不受影响。卡住时只有一条 Notice(`intent_stuck`,来自 `intents` 里卡住的那条);重新排队后它随之消失。
   - `loop/intents/retry`:把 `stuck` 的 intent 改回 `pending`、`attempts` 和退避清零、`next_at` 清空,下一次对账就执行。`id` 指一条,`key` 指这张工单(如 `CYC-390`)的全部卡住的 intent;两者必须给且只给一个,否则 `-32602`(`invalid_params`)。`id` 不存在返回 `-32602`(`not_found`);不是 `stuck` 的什么都不改。需要 `actor` 和 `actorKind`(缺则 `actor_required`,什么都不写)。每条重新排队的 intent 写一条 `actions`(`intent_retry`,带 `intentId`、`actor`、`actorKind`)。返回 `{retried}`。

@@ -6,6 +6,11 @@ import {
   checkPrompt,
   describePromptProblem,
   LoopCardSchema,
+  LoopGraphActionSchema,
+  LoopGraphActParamsSchema,
+  LoopGraphActResultSchema,
+  LoopRunDetailSchema,
+  LoopTicketDetailSchema,
   META,
   NOTIFICATIONS,
   normalizePrompt,
@@ -264,4 +269,127 @@ test("LoopCardSchema takes a parent object, null, or none", () => {
   expect(LoopCardSchema.safeParse({ ...card, parent: { key: "", title: "x" } }).success).toBe(
     false,
   );
+});
+
+const graphNode = {
+  id: "n1",
+  position: 0,
+  origin: "planned",
+  title: "Add tables",
+  goal: "Create them",
+  dependsOn: [],
+  filesHint: [],
+  verify: ["bun run check"],
+  status: "failed",
+  sessionId: null,
+  commitSha: null,
+  rounds: 1,
+  lastError: "boom",
+  summary: null,
+  startedAt: null,
+  finishedAt: null,
+};
+const graph = {
+  runKey: "CYC-2",
+  source: "auto_plan",
+  revision: 1,
+  currentNodeId: "n1",
+  nodes: [graphNode],
+  createdAt: "2026-11-26T08:00:00.000Z",
+  updatedAt: "2026-11-26T08:00:00.000Z",
+};
+
+test("a card takes an optional graph summary; detail types take a full graph", () => {
+  const card = {
+    key: "CYC-2",
+    title: "t",
+    type: null,
+    priority: null,
+    labels: [],
+    pendingReason: null,
+    phase: null,
+  };
+  const summary = {
+    source: "auto_plan",
+    total: 3,
+    passed: 1,
+    failed: 1,
+    blocked: 0,
+    running: 0,
+    currentNodeId: "n2",
+    currentNodeTitle: "Wire UI",
+  };
+  expect(LoopCardSchema.safeParse(card).success).toBe(true);
+  expect(LoopCardSchema.safeParse({ ...card, graph: summary }).success).toBe(true);
+  expect(LoopCardSchema.safeParse({ ...card, graph: { ...summary, total: "3" } }).success).toBe(
+    false,
+  );
+  const ticket = {
+    identifier: "CYC-2",
+    title: "t",
+    priority: null,
+    column: "Doing",
+    actions: [],
+    chat: "none",
+    body: "",
+    acceptance: [],
+    links: [],
+  };
+  expect(LoopTicketDetailSchema.safeParse(ticket).success).toBe(true);
+  expect(LoopTicketDetailSchema.safeParse({ ...ticket, graph }).success).toBe(true);
+  const run = {
+    key: "CYC-2",
+    title: "t",
+    kind: "dev",
+    phase: "dev",
+    state: "active",
+    round: 0,
+    startedAt: "a",
+    updatedAt: "b",
+    blockedReason: null,
+    sessions: [],
+    prUrl: null,
+    events: [],
+    heartbeat: null,
+  };
+  expect(LoopRunDetailSchema.safeParse({ ...run, graph }).success).toBe(true);
+  expect(LoopRunDetailSchema.safeParse({ ...run, graph: { ...graph, nodes: [] } }).success).toBe(
+    false,
+  );
+});
+
+test("loop/graph/act takes the three actions and refuses an unknown one", () => {
+  const base = { project: "CYC", key: "CYC-2", nodeId: "n1", actor: "me", actorKind: "desktop" };
+  for (const action of ["retry_node", "skip_node"])
+    expect(LoopGraphActParamsSchema.safeParse({ ...base, action }).success).toBe(true);
+  expect(
+    LoopGraphActParamsSchema.safeParse({ ...base, action: "edit_node", goal: "new" }).success,
+  ).toBe(true);
+  expect(
+    LoopGraphActParamsSchema.safeParse({
+      ...base,
+      action: "edit_node",
+      title: "t",
+      goal: "g",
+      verify: ["bun run check"],
+    }).success,
+  ).toBe(true);
+  // An edit with nothing to change, and edit fields on another action, are refused.
+  expect(LoopGraphActParamsSchema.safeParse({ ...base, action: "edit_node" }).success).toBe(false);
+  expect(
+    LoopGraphActParamsSchema.safeParse({ ...base, action: "retry_node", title: "t" }).success,
+  ).toBe(false);
+  expect(LoopGraphActParamsSchema.safeParse({ ...base, action: "delete_node" }).success).toBe(
+    false,
+  );
+  expect(LoopGraphActionSchema.options).toEqual(["retry_node", "skip_node", "edit_node"]);
+  expect(
+    LoopGraphActResultSchema.safeParse({
+      key: "CYC-2",
+      nodeId: "n1",
+      action: "retry_node",
+      phase: "graph_plan",
+      graph,
+    }).success,
+  ).toBe(true);
 });
