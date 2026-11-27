@@ -146,16 +146,127 @@ test("an intent that fails more than ten times is stuck, with an event and a Not
   expect(s.store.transaction((tx) => tx.notices())).toEqual([]);
   await r.flush();
   expect(pending(s.store)).toEqual([]);
-  const notices = s.store.transaction((tx) => tx.notices());
-  expect(notices).toHaveLength(1);
-  expect(notices[0]?.kind).toBe("intent_stuck");
+  // The Notice is the stuck intent itself (loop/notices/list); the notices table gets none.
+  expect(s.store.transaction((tx) => tx.notices())).toEqual([]);
   expect((await s.store.events()).some((e) => e.kind === "intent_stuck")).toBe(true);
   const row = s.store.transaction((tx) =>
     tx.db.query("SELECT status, last_error FROM intents").get(),
   );
   expect(row).toEqual({ status: "stuck", last_error: "error" });
+});
+
+const writeTo = (
+  s: ReturnType<typeof setup>,
+  kind: "comment" | "move" | "phase",
+  dedupe: string,
+  payload: Record<string, unknown>,
+) =>
+  s.store.transaction((tx) => {
+    writeIntent(tx, {
+      run: "CYC-1",
+      issue: s.tracker.issues[0] as ReturnType<typeof issue>,
+      kind,
+      dedupe,
+      payload,
+    });
+  });
+
+/** A reconciler on a clock the test moves. */
+const timed = (s: ReturnType<typeof setup>, at: { t: number }) =>
+  new Reconciler(() => ({
+    tracker: s.tracker,
+    store: s.store,
+    config: s.cfg,
+    clock: { now: () => new Date(at.t) },
+    log: () => {},
+  }));
+
+test("a network failure waits 30s, 1, 2, 4 minutes (at most 10) and never counts or sticks", async () => {
+  const s = setup(undefined, { dev: [], qa: [] });
+  let calls = 0;
+  s.tracker.comment = async () => {
+    calls++;
+    throw new Error("tracker add_comment: error connecting to the tracker: ECONNREFUSED");
+  };
+  writeTo(s, "comment", "net", { body: "x" });
+  const at = { t: NOW.getTime() };
+  const r = timed(s, at);
+  const waits: number[] = [];
+  for (let i = 0; i < 30; i++) {
+    const before = calls;
+    await r.flush();
+    expect(calls).toBe(before + 1);
+    // Not yet: flushing again before next_at does nothing.
+    await r.flush();
+    expect(calls).toBe(before + 1);
+    const row = s.store.transaction((tx) =>
+      tx.db.query("SELECT status, attempts, next_at FROM intents").get(),
+    ) as { status: string; attempts: number; next_at: string };
+    expect(row.status).toBe("pending");
+    expect(row.attempts).toBe(0);
+    const wait = Date.parse(row.next_at) - at.t;
+    waits.push(wait / 1000);
+    at.t += wait;
+  }
+  expect(waits.slice(0, 7)).toEqual([30, 60, 120, 240, 480, 600, 600]);
+  expect(new Set(waits.slice(5))).toEqual(new Set([600]));
+});
+
+test("a timeout waits too, and a later success is done", async () => {
+  const s = setup(undefined, { dev: [], qa: [] });
+  let fail = true;
+  const real = s.tracker.comment.bind(s.tracker);
+  s.tracker.comment = async (...a: Parameters<typeof real>) => {
+    if (fail) {
+      const e = new Error("slow");
+      e.name = "TimeoutError";
+      throw e;
+    }
+    return real(...a);
+  };
+  writeTo(s, "comment", "to", { body: "x" });
+  const at = { t: NOW.getTime() };
+  const r = timed(s, at);
   await r.flush();
-  expect(s.store.transaction((tx) => tx.notices())).toHaveLength(1);
+  expect(pending(s.store)).toHaveLength(1);
+  fail = false;
+  at.t += 30_000;
+  await r.flush();
+  expect(pending(s.store)).toEqual([]);
+});
+
+test("a work item the tracker says is not found makes the intent stuck at once, as not_found", async () => {
+  const s = setup(undefined, { dev: [], qa: [] });
+  writeTo(s, "comment", "gone", { body: "x" });
+  s.tracker.issues.length = 0;
+  const r = reconciler(s);
+  await r.flush();
+  const row = s.store.transaction((tx) =>
+    tx.db.query("SELECT status, last_error FROM intents").get(),
+  );
+  expect(row).toEqual({ status: "stuck", last_error: "not_found" });
+});
+
+test("a stuck comment holds the later move of the work item; the phase field still goes", async () => {
+  const s = setup(undefined, { dev: [], qa: [] });
+  writeTo(s, "comment", "c-stuck", { body: "why" });
+  writeTo(s, "move", "m-after", { to: "blocked", from: "todo" });
+  writeTo(s, "phase", "p-after", { phase: "dev", at: NOW.toISOString() });
+  s.store.transaction((tx) => tx.markIntent(1, "stuck", "error"));
+  let phases = 0;
+  s.tracker.setLoopPhase = async () => {
+    phases++;
+  };
+  await reconciler(s).flush();
+  expect(s.tracker.moves).toEqual([]);
+  expect(phases).toBe(1);
+  expect(pending(s.store).map((i) => i.dedupe)).toEqual(["m-after"]);
+});
+
+test("a new intent has no wait and no network waits", () => {
+  const s = setup(undefined, { dev: [], qa: [] });
+  writeTo(s, "comment", "fresh", { body: "x" });
+  expect(pending(s.store)[0]).toMatchObject({ nextAt: null, waits: 0 });
 });
 
 test("the same preflight reason is commented once, however many rounds see it", async () => {

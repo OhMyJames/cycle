@@ -5,6 +5,7 @@
 import {
   LOOP_API_RUNS_LIST,
   LOOP_BOARD_GET,
+  LOOP_INTENTS_RETRY,
   LOOP_NOTICES_LIST,
   LOOP_RUN_GET,
   LOOP_STATUS,
@@ -14,6 +15,7 @@ import {
   type LoopBoard,
   type LoopCard,
   type LoopColumn,
+  LoopIntentsRetryParamsSchema,
   type LoopNotice,
   type LoopNoticeKind,
   LoopNoticesListParamsSchema,
@@ -298,6 +300,7 @@ export class LoopApiHandler {
       LOOP_NOTICES_LIST,
       LOOP_TICKET_GET,
       LOOP_TICKETS_ACT,
+      LOOP_INTENTS_RETRY,
       LOOP_STATUS,
     ].includes(method);
   }
@@ -347,6 +350,8 @@ export class LoopApiHandler {
       }
       case LOOP_TICKETS_ACT:
         return this.#act(params);
+      case LOOP_INTENTS_RETRY:
+        return this.#retry(params);
       case LOOP_STATUS:
         return this.#status();
       default:
@@ -551,7 +556,8 @@ export class LoopApiHandler {
         if (now - Date.parse(n.createdAt) > PERMISSION_TTL_MS) continue;
       }
       const kind = kindOf(n.kind);
-      if (kind === null || kind === "blocked") continue;
+      // A stuck intent is told below, from `intents`; a row written by an older version would be a second one.
+      if (kind === null || kind === "blocked" || kind === "intent_stuck") continue;
       const session = sessionKindOf(n.sessionKind);
       out.push({
         id: `${id}:notice:${n.id}`,
@@ -571,7 +577,7 @@ export class LoopApiHandler {
         kind: "intent_stuck",
         key: intent.runKey,
         session: null,
-        text: intent.lastError ?? `${intent.kind} gave up`,
+        text: `写给 tracker 的${intent.kind}已停止重试（${intent.lastError ?? "error"}）`,
         at: intent.updatedAt,
       });
     }
@@ -590,6 +596,40 @@ export class LoopApiHandler {
       });
     }
     return out;
+  }
+
+  // ---- intents/retry ----
+
+  #retry(raw: unknown): { retried: number } {
+    const p = LoopIntentsRetryParamsSchema.safeParse(raw);
+    if (!p.success) {
+      const given = rec(raw);
+      const missing =
+        typeof given.actor !== "string" ||
+        given.actor === "" ||
+        (given.actorKind !== "desktop" && given.actorKind !== "operator");
+      throw invalid(missing ? "actor_required" : "invalid_params");
+    }
+    const { id, key, actor, actorKind } = p.data;
+    const project = this.#project(p.data.project);
+    const db = sqlite(project.store);
+    if (db === null) throw invalid("invalid_params");
+    const retried = db.transaction((tx) => {
+      const stuck = tx.stuckIntents();
+      if (id !== undefined && !tx.intentExists(id)) throw invalid("not_found");
+      const mine = stuck.filter((i) =>
+        id !== undefined
+          ? i.id === id
+          : i.runKey === key ||
+            `${prefixOf(project.projectKey)}-${rec(i.payload).issueNumber}`.toLowerCase() ===
+              key?.toLowerCase(),
+      );
+      const done = tx.requeueIntents(mine.map((i) => i.id));
+      for (const intent of mine.filter((i) => done.includes(i.id)))
+        tx.action(intent.runKey, "intent_retry", { intentId: intent.id, actor, actorKind });
+      return done.length;
+    });
+    return { retried };
   }
 
   // ---- tickets/act ----
@@ -847,6 +887,7 @@ const counts = (method: string, result: unknown): string => {
     const n = (s: string) => results.filter((x) => x.status === s).length;
     return `ok=${n("ok")} skipped=${n("skipped")} failed=${n("failed")}`;
   }
+  if (method === LOOP_INTENTS_RETRY) return `retried=${r.retried}`;
   if (method === LOOP_NOTICES_LIST) return `notices=${list(r.notices).length}`;
   if (method === LOOP_TICKET_GET) return "ok";
   if (method === LOOP_API_RUNS_LIST) return `runs=${list(r.runs).length}`;

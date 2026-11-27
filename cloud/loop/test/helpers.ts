@@ -114,7 +114,7 @@ export class FakeTracker implements Tracker {
   async get(number: number) {
     await this.gates.get;
     const found = this.issues.find((i) => i.number === number);
-    if (!found) throw new Error("no issue");
+    if (!found) throw new Error("issue not found");
     return found;
   }
   async move(i: Issue, stage: Stage) {
