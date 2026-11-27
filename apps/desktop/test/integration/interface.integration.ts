@@ -8,7 +8,7 @@ import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeUiBundle } from "../../scripts/ui-package.ts";
-import { shellHash } from "../../src/main/ui-crypto.ts";
+import { shellOfBuild } from "../../src/main/ui-crypto.ts";
 import { evaluate } from "./cdp.ts";
 import { signedIn } from "./signed-in.ts";
 
@@ -134,10 +134,7 @@ test.skipIf(!ready)(
   async () => {
     const build = Bun.spawnSync([process.execPath, "scripts/build.ts"], { cwd: DESKTOP });
     if (!build.success) throw new Error(build.stderr.toString());
-    shell = shellHash(
-      await readFile(join(DESKTOP, "dist/main.mjs")),
-      await readFile(join(DESKTOP, "dist/preload.cjs")),
-    );
+    shell = shellOfBuild(join(DESKTOP, "dist"));
     await publish(100_000, { draws: true });
 
     // 1. Taken in the background; the page showing does not change; Reload shows it, and what the person had stays.

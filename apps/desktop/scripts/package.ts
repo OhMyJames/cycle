@@ -29,7 +29,7 @@ import {
   MAC_BUNDLE,
   MAIN,
 } from "../src/main/layout.ts";
-import { shellHash } from "../src/main/ui-crypto.ts";
+import { shellOfBuild } from "../src/main/ui-crypto.ts";
 import { POSTHOG_HOST, POSTHOG_KEY } from "../src/shared/posthog.ts";
 import { plistVersions } from "../src/shared/release.ts";
 import { removePlistDict, setPlistString } from "./plist.ts";
@@ -111,10 +111,7 @@ export const packageApp = (outDir = BUILD_DIR): Packaged => {
   rmSync(staging, { recursive: true, force: true });
   mkdirSync(join(staging, dirname(DAEMON_BIN)), { recursive: true });
   cpSync(join(DESKTOP, "dist"), join(staging, DIST_DIR), { recursive: true });
-  const shell = shellHash(
-    readFileSync(join(DESKTOP, "dist/main.mjs")),
-    readFileSync(join(DESKTOP, "dist/preload.cjs")),
-  );
+  const shell = shellOfBuild(join(DESKTOP, "dist"));
   cpSync(join(daemonDir, "cycle"), join(staging, DAEMON_BIN));
   chmodSync(join(staging, DAEMON_BIN), 0o755);
   for (const bin of AGENT_BINS) {

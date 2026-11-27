@@ -17,7 +17,7 @@ const MAX_BYTES = 200 * 1024 * 1024;
 
 export type UiManifest = {
   readonly v: 1;
-  /** The shell this bundle works with: a hash of main.mjs and preload.cjs (`shellHash`). */
+  /** The shell this bundle works with: a hash of the preload and the app's API (`shellHash`). */
   readonly shell: string;
   /** Rises with every commit on main, so a bundle is newer than another by comparing numbers. */
   readonly uiVersion: number;
@@ -88,15 +88,52 @@ export const parseManifest = (bytes: Uint8Array | string): UiManifest | undefine
 };
 
 /**
- * The bytes the shell's hash is taken over: each file's length (8 bytes, big-endian) and then its content, so that moving
- * the boundary between the two files changes the hash.
+ * What a page may rely on the app to provide, as text: the source of the app's API (packages/ui/src/api.ts) without
+ * comments or layout, and the version of the protocol SDK whose types it carries. Something that changes how the page and
+ * the main process talk changes this; something inside the main process does not.
  */
-export const shellInput = (main: Uint8Array, preload: Uint8Array): Uint8Array => {
-  const out = new Uint8Array(16 + main.length + preload.length);
-  const view = new DataView(out.buffer);
-  view.setBigUint64(0, BigInt(main.length));
-  out.set(main, 8);
-  view.setBigUint64(8 + main.length, BigInt(preload.length));
-  out.set(preload, 16 + main.length);
-  return out;
+export const contractText = (apiSource: string, sdkVersion: string): string => {
+  let out = "";
+  let i = 0;
+  const n = apiSource.length;
+  while (i < n) {
+    const c = apiSource[i] as string;
+    const next = apiSource[i + 1];
+    if (c === "/" && next === "/") {
+      while (i < n && apiSource[i] !== "\n") i++;
+    } else if (c === "/" && next === "*") {
+      const end = apiSource.indexOf("*/", i + 2);
+      i = end === -1 ? n : end + 2;
+      out += " ";
+    } else if (c === '"' || c === "'" || c === "`") {
+      // A string is copied as it is, with its escapes.
+      let j = i + 1;
+      while (j < n && apiSource[j] !== c) j += apiSource[j] === "\\" ? 2 : 1;
+      out += apiSource.slice(i, j + 1);
+      i = j + 1;
+    } else {
+      out += c;
+      i++;
+    }
+  }
+  return `sdk ${sdkVersion}\n${out.replace(/\s+/g, " ").trim()}`;
+};
+
+const field = (bytes: Uint8Array, out: number[]) => {
+  const length = new Uint8Array(8);
+  new DataView(length.buffer).setBigUint64(0, BigInt(bytes.length));
+  out.push(...length, ...bytes);
+};
+
+/**
+ * The bytes the shell's hash is taken over: the preload (what the page can call), the contract (`contractText`) and the
+ * revision (CONTRACT_REV), each with its length (8 bytes, big-endian) in front, so that moving the boundary between
+ * them changes the hash. The main process is not in it.
+ */
+export const shellInput = (preload: Uint8Array, contract: string, rev: number): Uint8Array => {
+  const out: number[] = [];
+  field(preload, out);
+  field(new TextEncoder().encode(contract), out);
+  field(new TextEncoder().encode(String(rev)), out);
+  return Uint8Array.from(out);
 };

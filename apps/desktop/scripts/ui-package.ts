@@ -8,10 +8,10 @@
 // UI_SIGNING_KEY is an Ed25519 private key, PKCS#8, as PEM or as base64 of its DER. UI_SIGNING_KEY_ID names its public
 // key in the app (default k1).
 import { createPrivateKey, type KeyObject, sign } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { sha256Hex, shellHash, type UiKeys, verifySignature } from "../src/main/ui-crypto.ts";
+import { sha256Hex, shellOfBuild, type UiKeys, verifySignature } from "../src/main/ui-crypto.ts";
 import { UI_KEYS } from "../src/main/ui-keys.ts";
 import {
   parseManifest,
@@ -146,10 +146,7 @@ if (import.meta.main) {
   const dist = join(DESKTOP, "dist");
   if (!existsSync(join(dist, "renderer/index.html")))
     throw new Error("The app is not built. Run `bun run build` in apps/desktop.");
-  const shell = shellHash(
-    readFileSync(join(dist, "main.mjs")),
-    readFileSync(join(dist, "preload.cjs")),
-  );
+  const shell = shellOfBuild(dist);
   const key = process.env.UI_SIGNING_KEY;
   const made = await makeUiBundle({
     rendererDir: join(dist, "renderer"),

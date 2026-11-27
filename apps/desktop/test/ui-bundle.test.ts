@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { generateKeyPairSync, sign } from "node:crypto";
 import { sha256Hex, shellHash, verifySignature } from "../src/main/ui-crypto.ts";
-import { parseManifest } from "../src/shared/ui-bundle.ts";
+import { contractText, parseManifest } from "../src/shared/ui-bundle.ts";
 
 const bytes = (text: string) => new TextEncoder().encode(text);
 const H = "a".repeat(64);
@@ -18,16 +18,29 @@ const good = {
 const parse = (patch: Record<string, unknown>) =>
   parseManifest(JSON.stringify({ ...good, ...patch }));
 
-test("the shell's hash is 32 hex digits, stable, and changes with either file", () => {
-  const h = shellHash(bytes("main"), bytes("preload"));
+test("the shell's hash is 32 hex digits, stable, and changes with the preload, the contract or the revision", () => {
+  const h = shellHash(bytes("preload"), "contract", 1);
   expect(h).toMatch(/^[0-9a-f]{32}$/);
-  expect(shellHash(bytes("main"), bytes("preload"))).toBe(h);
-  expect(shellHash(bytes("maim"), bytes("preload"))).not.toBe(h);
-  expect(shellHash(bytes("main"), bytes("preloae"))).not.toBe(h);
+  expect(shellHash(bytes("preload"), "contract", 1)).toBe(h);
+  expect(shellHash(bytes("preloae"), "contract", 1)).not.toBe(h);
+  expect(shellHash(bytes("preload"), "contracu", 1)).not.toBe(h);
+  expect(shellHash(bytes("preload"), "contract", 2)).not.toBe(h);
 });
 
-test("moving the boundary between the two files changes the hash", () => {
-  expect(shellHash(bytes("ab"), bytes("c"))).not.toBe(shellHash(bytes("a"), bytes("bc")));
+test("moving the boundary between the parts changes the hash", () => {
+  expect(shellHash(bytes("ab"), "c", 1)).not.toBe(shellHash(bytes("a"), "bc", 1));
+  expect(shellHash(bytes("a"), "b1", 1)).not.toBe(shellHash(bytes("a"), "b", 11));
+});
+
+test("the contract does not change with comments or layout, and does with a type, a method or the SDK", () => {
+  const api = `export type A = { id: string }; // the id\nexport type M = "a" | "b";\n`;
+  const t = contractText(api, "2.7.0");
+  expect(contractText(`/* header */\n${api.replace("; //", ";\n\n  //")}`, "2.7.0")).toBe(t);
+  expect(contractText(api.replace("id: string", "id: number"), "2.7.0")).not.toBe(t);
+  expect(contractText(api.replace('"b"', '"b" | "c"'), "2.7.0")).not.toBe(t);
+  expect(contractText(api, "2.8.0")).not.toBe(t);
+  // What is inside a string is part of the contract, comment marks or not.
+  expect(contractText('const u = "http://x"; // c', "1")).toContain('"http://x"');
 });
 
 test("a good manifest is taken as it is", () => {

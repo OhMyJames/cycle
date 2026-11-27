@@ -16,7 +16,7 @@ A page is loaded only if its manifest carries an Ed25519 signature made by a key
 
 - Trust whatever the repository's release holds (HTTPS and a SHA-256 in the manifest): anyone with write access to the release, or a stolen token, would then run code with `window.cycle` on every installed app. The manifest's hash only proves the file matches the manifest, not who made it.
 - One GitHub release per commit: about 190 page-only commits a week would push real `v` releases out of the 20 the updater reads, and cost API limit to find them.
-- A separate API or protocol version to say which pages fit which shell: it has to be kept in step by hand. The hash of `main.mjs` and `preload.cjs` changes whenever either changes, so nothing is kept.
+- A separate API or protocol version to say which pages fit which shell: it has to be kept in step by hand. The hash of the preload and of the API's source changes whenever either changes, so nothing is kept by hand except `CONTRACT_REV`, which covers only behaviour the types cannot show. (The first version hashed `main.mjs` as well; after 0.3.34 eleven commits changed it, three of them in the main process only, so no app could take a bundle for long. The main process was taken out, see Design supplement in itsaplan document 61.)
 - Hashing the native module as part of the shell: signing changes its bytes, so the hash would differ between the build and the signed app.
 - Loading the page from a custom scheme or an `asar`: a new origin would lose `localStorage` (drafts, pins); an `asar` needs the integrity machinery this project removed from packaging.
 - Putting the signature inside the manifest JSON: needs canonical JSON to verify; a separate signature file signs the exact bytes.

@@ -22,7 +22,7 @@ import { localHome } from "./home.ts";
 import { BUILD_FILE, daemonCommand, loginShellPath } from "./layout.ts";
 import { filePreferencesStore } from "./preferences.ts";
 import { stopRefusal } from "./stop-refused.ts";
-import { shellHash, verifySignature } from "./ui-crypto.ts";
+import { shellOfBuild, verifySignature } from "./ui-crypto.ts";
 import { UI_KEYS } from "./ui-keys.ts";
 import { createUiStore } from "./ui-store.ts";
 import { SWAP_SCRIPT, verifyBySource } from "./updater.ts";
@@ -171,10 +171,7 @@ const interfaceOptions = (userData: string, info: ReturnType<typeof buildInfo>) 
       ? undefined
       : (() => {
           try {
-            return shellHash(
-              readFileSync(join(here, "main.mjs")),
-              readFileSync(join(here, "preload.cjs")),
-            );
+            return shellOfBuild(here);
           } catch {
             return undefined;
           }
