@@ -188,27 +188,6 @@ function BranchMenu({
   );
 }
 
-/**
- * Above an open session's box: that it works in a worktree and on which branch, the worktree's folder as the tip. One
- * line of its own, as wide as the box; nothing for a session outside a worktree.
- */
-export function WorktreeStrip({ worktree }: { worktree: WorktreeSummary | undefined }) {
-  const { t } = useI18n();
-  if (worktree === undefined) return null;
-  return (
-    <div data-slot="worktree-strip">
-      <Tip label={worktree.path}>
-        <span data-slot="worktree-strip-name">{t("session.worktree.name")}</span>
-      </Tip>
-      {worktree.branch !== undefined ? (
-        <span data-slot="worktree-strip-branch" title={worktree.branch}>
-          {worktree.branch}
-        </span>
-      ) : null}
-    </div>
-  );
-}
-
 /** What the setup script said when it failed: the session works, and the person is told, in text. */
 export function WorktreeSetupNotice({ worktree }: { worktree: WorktreeSummary | undefined }) {
   const { t } = useI18n();

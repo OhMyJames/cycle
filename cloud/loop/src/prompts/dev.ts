@@ -2,7 +2,11 @@
 
 import type { Criterion } from "../criteria.ts";
 import type { Issue } from "../types.ts";
-import { criteriaTable, docBlock, PROGRESS_RULE } from "./common.ts";
+import { criteriaTable, docBlock, PROGRESS_RULE as PROGRESS } from "./common.ts";
+
+/** Dev's way to ask a person (CYC-494): the loop does not check, count a round or let it go on until they answer. */
+const QUESTION_RULE = `If, and only if, the work item does not say enough, or doing it as written would delete or change existing features or go beyond its scope, so that a person must decide: put one <question>...</question> block in your reply with the question and the options you see. Then stop; do not decide it yourself or do that thing. Do not ask about anything else.`;
+const PROGRESS_RULE = `${QUESTION_RULE}\n\n${PROGRESS}`;
 
 /** 大档 (CYC-453): the full text of the documents a session works from; absent for a small work item. */
 export type DevDocs = { design: string; plan: string };
@@ -79,7 +83,7 @@ export const continueBrief = (issue: Issue, resumedByPerson: boolean): string =>
     ? `A person looked at ${issue.key} and put it back: what they said is in this conversation. The work item may have changed; here it is now:\n---\n${issue.description}\n---\n`
     : `The loop was restarted. Carry on with ${issue.key}.\n`
 }
-Look at \`git log\` and \`git status\` to see where the work is, finish what is left, run \`bun run check\`, commit, and report.
+${resumedByPerson ? "First read the latest comments and the body of the work item: the answer to your question is there.\n" : ""}Look at \`git log\` and \`git status\` to see where the work is, finish what is left, run \`bun run check\`, commit, and report.
 
 ${PROGRESS_RULE}`;
 

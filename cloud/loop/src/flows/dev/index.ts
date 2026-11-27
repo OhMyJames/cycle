@@ -4,7 +4,7 @@
 
 import type { Flow, FlowHost, StepResult } from "../../engine/flow.ts";
 import { DevStateSchema } from "../../store.ts";
-import { blockTicket, ticketStillWanted } from "../ticket.ts";
+import { blockTicket, ticketStillMine, ticketStillWanted } from "../ticket.ts";
 import { ci } from "./ci.ts";
 import { claim } from "./claim.ts";
 import { rollbackMerge } from "./conflict.ts";
@@ -18,7 +18,7 @@ import { review } from "./review.ts";
 import { verify } from "./verify.ts";
 
 export const devFlow = (host: FlowHost): Flow => {
-  const x: Dev = { h: host, kept: new Set() };
+  const x: Dev = { h: host, kept: new Set(), greenSeen: new Map() };
   return {
     kind: "dev",
     phases: {
@@ -48,7 +48,7 @@ export const devFlow = (host: FlowHost): Flow => {
       review: {
         field: "review",
         step: async ({ run, issue, book, save }): Promise<StepResult | undefined> => {
-          const done = await review(host, asDev(run), issue, book, save);
+          const done = await review(x, asDev(run), issue, book, save);
           if (done === undefined) return undefined;
           await host.clear(run, issue);
           return {
@@ -88,6 +88,8 @@ export const devFlow = (host: FlowHost): Flow => {
 
     stillWanted: (run) => ticketStillWanted(host, run),
 
+    stillMine: (run) => ticketStillMine(host, run),
+
     // What the checks said is kept in `ci_state`, but a run going on from QA or the delivery runs them again. A human
     // resume from `ci` or `review` also re-runs verify/QA/push in case they committed a fix locally; a crash recovery
     // in `ci` or `review` continues directly from there.
@@ -125,6 +127,7 @@ export const devFlow = (host: FlowHost): Flow => {
     afterRemoved: () => ({ dev: { reviewSessionId: null, prUrl: null } }),
 
     forget(key) {
+      x.greenSeen.delete(key);
       for (const id of x.kept) if (id.startsWith(`${key}:`)) x.kept.delete(id);
     },
 

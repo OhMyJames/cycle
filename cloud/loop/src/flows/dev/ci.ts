@@ -104,6 +104,7 @@ export async function ci(x: Dev, run: DevRun, save: Save): Promise<void> {
     return;
   }
 
+  x.greenSeen.set(run.key, headSha);
   await h.d.store.saveCi(run.key, { greenSha: headSha });
   await store.event(run.key, "ci_passed", { ciRound: run.dev.ciRound });
   await save({ phase: "review", dev: { prUrl } });

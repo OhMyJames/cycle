@@ -497,21 +497,38 @@ test("a restart between making the report and attaching it attaches it once and 
   expect(s.tracker.docLinks).toEqual(["CYC-1:1000"]);
 });
 
-test("a restart after the closing comment, before Done, does not comment again", async () => {
+test("a move to Done that fails is made up later: the run is done, one closing comment", async () => {
   const s = setup({ research: [done(reply())], research_qa: [done(PASS)] });
   const move = s.tracker.move.bind(s.tracker);
+  let failing = true;
   s.tracker.move = async (i, stage) => {
-    if (stage === "done") throw new Error("killed");
+    if (failing && stage === "done") throw new Error("tracker down");
     return move(i, stage);
   };
-  await expect(s.pipeline.step()).rejects.toThrow("killed");
+  expect((await s.pipeline.step()).status).toBe("researched");
   expect(s.tracker.comments).toHaveLength(1);
-  s.tracker.move = move;
-  expect((await s.restart().step()).status).toBe("researched");
+  expect((await s.store.load("CYC-1"))?.phase).toBe("done");
+  failing = false;
+  await s.restart().step();
+  expect(s.tracker.moves.at(-1)).toBe("CYC-1:done");
+  expect(s.tracker.comments).toHaveLength(1);
+  expect(s.tracker.issues).toHaveLength(3);
+});
+
+test("a closing comment that fails is made up later: one comment, then Done", async () => {
+  const s = setup({ research: [done(reply())], research_qa: [done(PASS)] });
+  const comment = s.tracker.comment.bind(s.tracker);
+  let failing = true;
+  s.tracker.comment = async (i, text) => {
+    if (failing) throw new Error("tracker down");
+    return comment(i, text);
+  };
+  expect((await s.pipeline.step()).status).toBe("researched");
+  expect(s.tracker.comments).toHaveLength(0);
+  failing = false;
+  await s.restart().step();
   expect(s.tracker.comments).toHaveLength(1);
   expect(s.tracker.moves.at(-1)).toBe("CYC-1:done");
-  expect(s.tracker.issues).toHaveLength(3);
-  expect((await s.store.load("CYC-1"))?.phase).toBe("done");
 });
 
 test("a block whose reason quotes a credential from QA names its kind only", async () => {

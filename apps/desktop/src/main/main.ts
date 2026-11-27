@@ -21,7 +21,8 @@ import { startApp, stayInBackground } from "./app.ts";
 import { localHome } from "./home.ts";
 import { BUILD_FILE, daemonCommand, loginShellPath } from "./layout.ts";
 import { filePreferencesStore } from "./preferences.ts";
-import { shellHash, verifySignature } from "./ui-crypto.ts";
+import { stopRefusal } from "./stop-refused.ts";
+import { shellOfBuild, verifySignature } from "./ui-crypto.ts";
 import { UI_KEYS } from "./ui-keys.ts";
 import { createUiStore } from "./ui-store.ts";
 import { SWAP_SCRIPT, verifyBySource } from "./updater.ts";
@@ -155,10 +156,7 @@ const interfaceOptions = (userData: string, info: ReturnType<typeof buildInfo>) 
       ? undefined
       : (() => {
           try {
-            return shellHash(
-              readFileSync(join(here, "main.mjs")),
-              readFileSync(join(here, "preload.cjs")),
-            );
+            return shellOfBuild(here);
           } catch {
             return undefined;
           }
@@ -286,7 +284,12 @@ const updateDeps = (daemon: string[], localEnv: Record<string, string>) => {
     log: (message: string) => console.warn(`[update] ${message}`),
     // The daemon the old app started runs from inside it and would outlive the swap, with its Claude gone.
     handOff: async (swap: { appPath: string; newApp: string; oldApp: string; staging: string }) => {
-      await run(daemon[0] ?? "", [...daemon.slice(1), "stop"], 20_000, localEnv);
+      try {
+        await run(daemon[0] ?? "", [...daemon.slice(1), "stop"], 20_000, localEnv);
+      } catch (error) {
+        const refused = stopRefusal(error);
+        throw refused === undefined ? error : new Error(refused);
+      }
       const helper = spawn(
         "/bin/sh",
         [

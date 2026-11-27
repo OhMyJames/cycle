@@ -1,9 +1,6 @@
-// What every run shares, whatever it does: the lock and the runs under way, the workers, the sessions, the events, the
-// phase field, the network retries, and the loop that drives a run from phase to phase (CYC-318, CYC-479).
-//
-// A run is driven by its flow (flows/): the phases it goes through, how it starts again, how it stops. This file knows
-// nothing of pull requests, CI or git: that is the dev flow's. Each step ends by writing where the run is, so a loop
-// that is killed, or a work item a person put back, goes on from the same place.
+// What every run shares, whatever it does: the lock and the runs under way, the workers, the sessions, the events,
+// the phase field, the network retries, and the loop that drives a run from phase to phase (CYC-318, CYC-479). It
+// knows nothing of pull requests, CI or git: that is the flow's (flows/). Each step ends by writing where the run is.
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { type Tuning, tuningToConfig } from "../config-file.ts";
@@ -11,7 +8,7 @@ import { CriteriaBook } from "../criteria.ts";
 import type { PlanFlow } from "../flows/plan.ts";
 import { isNetworkError } from "../network.ts";
 import type { At } from "../ports/forge.ts";
-import { applyPatch, type RunPatch, type RunRecord } from "../store.ts";
+import { applyPatch, type RunRecord } from "../store.ts";
 import type { Config, ExecResult, Issue, LoopPhase, SessionRole, TurnResult } from "../types.ts";
 import {
   Blocked,
@@ -20,12 +17,16 @@ import {
   type Flow,
   type FlowHost,
   type Intake,
+  mustHaveEnded,
   NetworkWait,
   type Opening,
   type OwnRun,
   type RunKind,
+  type Save,
   type StepResult,
+  saveWith,
 } from "./flow.ts";
+import { stopIfMoved, waitingForBlockers } from "./person.ts";
 import { Reconciler, writeIntent } from "./reconcile.ts";
 
 /** What the engine runs with beyond `Deps`: the flows and intakes, made with the host they may use. */
@@ -77,7 +78,7 @@ export class Engine {
       net: (key, command, fn, failure) => this.#net(key, command, fn, failure),
       netExec: (key, command, fn) => this.#netExec(key, command, fn),
       turn: (key, sessionId, prompt, context) => this.#turn(key, sessionId, prompt, context),
-      mustHaveEnded: (who, result) => this.#mustHaveEnded(who, result),
+      mustHaveEnded,
       snapshot: (worktree) => this.#snapshot(worktree),
       reconcile: this.#reconcile,
       clear: (run, issue) => this.#clear(run, issue),
@@ -201,6 +202,7 @@ export class Engine {
       if (!flow.enabled(config)) continue;
       const wanted = await flow.stillWanted(run);
       if (wanted === undefined) continue;
+      if (wanted.byPerson && (await waitingForBlockers(this.#d, run, wanted.issue))) continue;
       this.#active.add(run.key);
       return { key: run.key, resume: { run, issue: wanted.issue, byPerson: wanted.byPerson } };
     }
@@ -270,7 +272,7 @@ export class Engine {
           issue,
           kind: "move",
           dedupe: `move:${issue.key}:claimed:${tx.countEvents(issue.key, "claimed") + 1}`,
-          payload: { to: "inProgress" },
+          payload: { to: "inProgress", from: "todo" },
         });
         tx.event(issue.key, "claimed", opening.claimed);
       });
@@ -418,7 +420,7 @@ export class Engine {
           issue,
           kind: "move",
           dedupe: `move:${run.key}:resumed:${tx.countEvents(run.key, "resumed") + 1}`,
-          payload: { to: "inProgress" },
+          payload: { to: "inProgress", from: "todo" },
         });
         tx.event(run.key, "resumed", { phase: saved.phase });
         return saved;
@@ -471,8 +473,9 @@ export class Engine {
     byPerson: boolean,
   ): Promise<StepResult> {
     let run = start;
-    const save = async (patch: RunPatch) => {
-      run = await this.#d.store.save(applyPatch(run, patch));
+    const save: Save = async (patch, also) => {
+      run = await saveWith(this.#d.store, applyPatch(run, patch), also);
+      if (also) await this.#reconcile.flush(issue.id, { capMs: this.#d.mirrorCapMs ?? 10_000 });
     };
     const flow = this.#flowOf(start);
     try {
@@ -480,6 +483,10 @@ export class Engine {
       // A person put the run back: the flow's checks start from what they left, once.
       let rebase = byPerson;
       for (;;) {
+        if (await stopIfMoved(this.#d, flow, run, save)) {
+          await this.#clear(run, issue);
+          return { status: "idle" };
+        }
         if (flow.beforePhase !== undefined && run.phase !== "blocked" && run.phase !== "done") {
           const settled = await flow.beforePhase({ run, issue, book, announce, save, rebase });
           rebase = false;
@@ -495,6 +502,8 @@ export class Engine {
         const result = await phase.step({ run, issue, book, announce, save });
         if (result) return result;
         if (phase.announces === true) announce = false;
+        // Asked to stop: this phase is over, the next is not begun.
+        if (this.#d.stopped?.() === true) return { status: "idle" };
       }
     } catch (error) {
       if (error instanceof NetworkWait) {
@@ -506,7 +515,8 @@ export class Engine {
       }
       if (!(error instanceof Blocked)) throw error;
       await this.#clear(run, issue);
-      return flow.block({ run, issue, said: error.message, save, resumeFrom: error.resumeFrom });
+      const { resumeFrom, asked } = error;
+      return flow.block({ run, issue, said: error.message, save, resumeFrom, asked });
     }
   }
 
@@ -530,12 +540,6 @@ export class Engine {
         );
       await store.event(key, "turn_resent", { role: context.role, resend: resend + 1 });
     }
-  }
-
-  #mustHaveEnded(who: string, result: TurnResult): void {
-    if (result.timedOut) throw new Blocked(`${who} 会话单回合超时被取消。`);
-    if (result.stopReason !== "end_turn")
-      throw new Blocked(`${who} 会话回合异常结束（${result.stopReason}）。`);
   }
 
   /** The commit and the changed files: two snapshots equal means nothing was written in between. */

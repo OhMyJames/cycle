@@ -1,3 +1,4 @@
+import type { StoreOps } from "../db/store.ts";
 // What a kind of run does, as against what every run shares (CYC-322).
 //
 // `Engine` holds what is the same for every run: the lock and the runs under way, the workers, the sessions, the
@@ -89,19 +90,34 @@ export class NetworkWait extends Error {
   }
 }
 
+/** A turn that did not end by itself blocks the run: it timed out or stopped for another reason. */
+export const mustHaveEnded = (who: string, result: TurnResult): void => {
+  if (result.timedOut) throw new Blocked(`${who} 会话单回合超时被取消。`);
+  if (result.stopReason !== "end_turn")
+    throw new Blocked(`${who} 会话回合异常结束（${result.stopReason}）。`);
+};
+
 export type RunKind = RunRecord["kind"];
 export type Phase = RunRecord["phase"];
-export type Save = (patch: RunPatch) => Promise<void>;
+/**
+ * Saves a patch of the run. With `also`, what it writes (intents, events) goes in the same transaction as the patch,
+ * and the reconciler is flushed after it: a move that fails leaves the intent pending, not a step half done.
+ */
+export type Save = (patch: RunPatch, also?: (tx: StoreOps) => void) => Promise<void>;
 export type EventData = Record<string, string | number | boolean>;
 
 /**
  * A run cannot go on without a person. The message is what the person is told. `resumeFrom` is where to go on once
  * they put it back, when that is not the phase it stopped in.
  */
+export type Asked = { comment: string; notice: string; session: { kind: string; id: string } };
+
 export class Blocked extends Error {
   constructor(
     message: string,
     readonly resumeFrom?: Phase,
+    /** A session asked a person to decide (CYC-494): the comment says so in its own words, and a Notice is written. */
+    readonly asked?: Asked,
   ) {
     super(message);
   }
@@ -196,6 +212,7 @@ export type BlockArgs = {
   said: string;
   save: Save;
   resumeFrom: Phase | undefined;
+  asked?: Asked | undefined;
 };
 
 export interface Flow {
@@ -224,6 +241,11 @@ export interface Flow {
    * leaves it where it is.
    */
   stillWanted(run: RunRecord): Promise<{ issue: Issue; byPerson: boolean } | undefined>;
+  /**
+   * Before each phase: is the work item still where a person left it for the loop (Todo or In Progress, with `auto`)?
+   * True, or the state type of the column it was moved to. A tracker out of reach throws `NetworkWait`.
+   */
+  stillMine(run: RunRecord): Promise<true | { stateType: string }>;
   /** On resume, a phase to go back to before going on (checks to run again), or undefined to go on where it is. */
   recheck(run: RunRecord, byPerson: boolean): Phase | undefined;
   /**
@@ -281,3 +303,17 @@ export interface Intake {
   /** What is done with a work item the intake would not take. */
   reject(issue: Issue, reasons: string[]): Promise<void>;
 }
+
+/** The run, and with it whatever `also` writes (intents, events) in one transaction. */
+export const saveWith = async (
+  store: LoopStore,
+  run: RunRecord,
+  also?: (tx: StoreOps) => void,
+): Promise<RunRecord> => {
+  if (also === undefined) return store.save(run);
+  return store.transaction((tx) => {
+    const saved = tx.save(run);
+    also(tx);
+    return saved;
+  });
+};

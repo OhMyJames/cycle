@@ -1258,7 +1258,7 @@ Loop 页顶部的 Notice 区由桌面主进程从两处派生,不依赖 Loop 服
 
 ### `loop/` 方法:看板、run、Notice、批量批准(CYC-482)
 
-桌面端和运营 agent 之后只调这组方法,itsaplan 只在 Loop 内部对接一处,不再解析评论、不再写死标签名。决定见 [2026-11-26-loop-api-is-the-only-way-in](../.agents/notes/2026-11-26-loop-api-is-the-only-way-in.md)。**本节取代上文"服务不访问 itsaplan""工单状态按钮(桌面端写 itsaplan)""Notice(桌面端派生)"三处**:桌面端(CYC-483)只通过这组方法读看板、工单、Notice,并做单张按钮(批准/退回 Backlog/回 Todo,用单个 key 的 `loop/tickets/act`)和批量批准/退回,工单页读 `loop/ticket/get`,工单对话在 `chat` 为 `new` 时才开始。桌面端不再保存 itsaplan key(启动时删掉旧的 `itsaplan-key` 文件并提示一次)。设置里「你在 itsaplan 的名字」作为 `actor`,空时用 `desktop`。批量操作由页面分每 50 张一批发出,页面只发一次 `loop_tickets_acted`(`total`、`ok`、`skipped`、`failed`)。看板卡片没有按钮和「待批准」标记,只有 `pendingReason`:读不到原因的待批准卡不会进批量组;单张按钮在工单页。`projects/list`、`runs/list`、`events/list` 保持原名;新方法在 `loop/` 下,`loop/projects/list` 与 `projects/list` 同。schema 在 `loop.ts`,每个返回都按它校验。
+桌面端和运营 agent 之后只调这组方法,itsaplan 只在 Loop 内部对接一处,不再解析评论、不再写死标签名。决定见 [2026-11-26-loop-api-is-the-only-way-in](../.agents/notes/2026-11-26-loop-api-is-the-only-way-in.md)。**本节取代上文"服务不访问 itsaplan""工单状态按钮(桌面端写 itsaplan)""Notice(桌面端派生)"三处**:桌面端改用这组方法由下一张单做,在那之前它们仍是桌面端现在的行为。`projects/list`、`runs/list`、`events/list` 保持原名;新方法在 `loop/` 下,`loop/projects/list` 与 `projects/list` 同。schema 在 `loop.ts`,每个返回都按它校验。
 
 | 方法                 | 参数                                                            | 返回                                                   |
 | -------------------- | --------------------------------------------------------------- | ------------------------------------------------------ |
@@ -1269,6 +1269,7 @@ Loop 页顶部的 Notice 区由桌面主进程从两处派生,不依赖 Loop 服
 | `loop/notices/list`  | `{project?}`                                                    | `{notices}`                                            |
 | `loop/ticket/get`    | `{project, key}`                                                | 单张工单的详情(见下)                                   |
 | `loop/tickets/act`   | `{project, verb, keys[], reason?, confirmed, actor, actorKind}` | `{results}`                                            |
+| `loop/intents/retry` | `{project, id?, key?, actor, actorKind}`                        | `{retried}`(重新排队的 intent 数)                      |
 | `loop/status`        | 无                                                              | `{version, restartedAt, projects}`                     |
 
 - **看板**:server 用 `planKey` 读 itsaplan,列按 stateType(backlog、unstarted、started、completed、canceled)再按看板顺序;完成和取消的列只取最近 30 张。卡片有编号、标题、类型名、优先级、标签名、`pendingReason`(带 `待批准` 的卡,取最新评论首行,最多 20 张、140 字,读不到为 `null`)、`phase`(只对 started 列里有未完成 run 的卡,`{name, since}` 取自 run 的 `phase` 和 `updatedAt`,不读 tracker 自定义字段;心跳在 `run/get` 和 `stuck` Notice 里用)。缓存 15 秒;读失败时返回上一次的结果并标 `stale: true`(`readAt` 仍是上次成功的时间);第一次就失败返回 `-32603`,`data.reason` 为 `tracker_unreachable`。
@@ -1283,6 +1284,8 @@ Loop 页顶部的 Notice 区由桌面主进程从两处派生,不依赖 Loop 服
   - `attention` 只取 Loop 自己的记录,不解析评论:Blocked 列且 Loop 有该工单 `blocked` 的 run 时为 `{kind: "blocked", text: <原因>, session: {kind,id}|null}`;In Review 列且 `notices` 表里有 `review` 类 Notice(同上文的寿命规则)时为 `{kind: "review", text, prUrl: string|null}`。Loop 没有记录的(例如人手动移到 Blocked 的)不给 `attention`。
   - 标签和列按名字、stateType 每次从 `get_project` 解析。工单不存在返回 `-32602`,`data.reason` 为 `not_found`;读不到 itsaplan 返回 `-32603`,`data.reason` 为 `tracker_unreachable`。
 - **`to_backlog`、`to_todo`(CYC-493)**:`loop/tickets/act` 的两个新 `verb`,都不要求确认。每张**重读**,按上面的 `actions` 判断仍可用才写,否则该张 `skipped`(`reason: not_allowed`,工单不存在为 `not_found`)。`to_backlog` 移到 `backlog` 类里看板顺序最前的列,同时摘掉 `auto`;`to_todo` 移到 `unstarted` 类里看板顺序最前的列(Paused 也是 unstarted,但不是 Todo),不动标签。先写标签、再移列,移列失败尽量还原标签。有 `reason` 时发评论,末尾是「由 <actor> 在桌面端退回 Backlog/放回 Todo」(`operator` 写「经运营 agent」)。每张写一条 `actions`(`ticket_to_backlog`/`ticket_to_todo`)。直接写,不走对账。`approve`、`return` 的 `skipped` 原因仍是上面几个;`not_allowed` 只出现在这两个新 verb。
+- **对账的重试与 `loop/intents/retry`(CYC-497)**:Loop 写给 tracker 的评论、移列、标签和阶段字段是 intent,由对账按工单依次执行。失败按种类处理:网络错误、超时、5xx **不计入** `attempts`,intent 留在 `pending`,按它自己的 `next_at` 退避重试(30 秒、1、2、4 分钟,上限 10 分钟),所以 tracker 断网多久都不会让它 `stuck`;其他错误照旧计数,超过 10 次标 `stuck`;`tracker.get` 明确返回找不到(工单被删),直接标 `stuck`,原因 `not_found`,不重试。**同一张工单**里,前面有 `stuck` 的评论或移列时,后面的评论和移列不执行、保持 `pending`(先评论再移列);标签照旧,阶段字段是另一条 lane,不受影响。卡住时只有一条 Notice(`intent_stuck`,来自 `intents` 里卡住的那条);重新排队后它随之消失。
+  - `loop/intents/retry`:把 `stuck` 的 intent 改回 `pending`、`attempts` 和退避清零、`next_at` 清空,下一次对账就执行。`id` 指一条,`key` 指这张工单(如 `CYC-390`)的全部卡住的 intent;两者必须给且只给一个,否则 `-32602`(`invalid_params`)。`id` 不存在返回 `-32602`(`not_found`);不是 `stuck` 的什么都不改。需要 `actor` 和 `actorKind`(缺则 `actor_required`,什么都不写)。每条重新排队的 intent 写一条 `actions`(`intent_retry`,带 `intentId`、`actor`、`actorKind`)。返回 `{retried}`。
 - **`actor` 和 `actorKind`**:写方法必须带,`actorKind` 只认 `desktop`、`operator`;缺或不合法返回 `-32602`,`data.reason` 为 `actor_required`,什么都不写。**这不是认证**:能连上 `loop.sock` 的就是本机同一用户,`actor` 是自报的;写入用 Loop 自己的 itsaplan key,所以 itsaplan 的审计里是 Loop,评论和 `actions` 才是谁做的记录。剩余风险见决定笔记。
 - **`loop/status`**:`version`(Loop 所在发行版本)、`restartedAt`(本进程启动时间)、每个 Project 的 `workers` 数和未结束且不在 Blocked 的 run(`key`、`kind`、`phase`)。
 - **socket**:仍是 `<dataDir>/loop.sock`,`0600`;一行最多 1 MB(1,048,576 字节),超过不等换行就断开连接。

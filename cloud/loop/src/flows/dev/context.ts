@@ -44,4 +44,9 @@ export type Dev = {
   readonly h: FlowHost;
   /** `node_modules_kept` events already written, by run, CI round and reason; a run's entries go when it ends. */
   readonly kept: Set<string>;
+  /**
+   * The commit each run's CI was seen green on by this process. `ci_state.greenSha` is not read for this: after a
+   * restart the PR may have new commits or `ciChecks` may have changed, so the first review asks GitHub again.
+   */
+  readonly greenSeen: Map<string, string>;
 };

@@ -1,5 +1,5 @@
 import type { CriteriaBook } from "../../criteria.ts";
-import { branchOf } from "../../engine/flow.ts";
+import { Blocked, branchOf } from "../../engine/flow.ts";
 import {
   conflictBrief,
   continueBrief,
@@ -7,6 +7,7 @@ import {
   fixBrief,
   handoffBrief,
   parseProgress,
+  parseQuestion,
 } from "../../prompts/index.ts";
 import { type Issue, SessionLost, type TurnResult } from "../../types.ts";
 import { conflictScene, judgeConflict, theirCommits } from "./conflict.ts";
@@ -107,6 +108,28 @@ export async function dev(
     run.round,
     parseProgress(result.text) ?? "(the turn ended with no progress block)",
   );
+  // A question for a person: not checked, not a round. What is on disk is kept (not in a conflict: the checkpoint
+  // would commit its markers, and putting the run back backs the merge out).
+  const question = parseQuestion(result.text);
+  if (question !== undefined) {
+    if (conflict === undefined)
+      await h.d.workspace.checkpoint(where(h, worktree), `${run.key}: checkpoint (auto-loop)`);
+    await store.event(run.key, "dev_asked", { chars: question.length });
+    // Asked in a fix round: the answer is for the work, not for the findings, which the session still has.
+    await save({ findings: null });
+    const events = await store.events();
+    let asks = 0;
+    for (const e of events) {
+      if (e.run !== run.key) continue;
+      if (e.kind === "dev_asked") asks++;
+      else if (e.kind === "verify" && e.passed === e.criteria) asks = 0;
+    }
+    throw new Blocked("等人决定", undefined, {
+      comment: `Loop 的 Dev 会话需要你决定：\n\n${question}\n\n${asks >= 3 ? "已多次提问，建议重写工单。\n\n" : ""}回答写在评论里，然后把工单放回 Todo`,
+      notice: `Dev 会话需要人决定：${question}`,
+      session: { kind: "dev", id: sessionId },
+    });
+  }
   // Decide first: the checkpoint below would commit conflict markers along with everything else.
   if (conflict !== undefined) await judgeConflict(h, run, conflict, worktree, save);
   // What is on disk is the checkpoint. Work Dev left uncommitted is committed here, so it is not lost.

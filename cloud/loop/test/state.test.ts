@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, readdir, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb } from "../src/db/db.ts";
@@ -125,6 +125,76 @@ for (const kind of KINDS) {
     const loaded = await store.load("CYC-1");
     expect(loaded && devOf(loaded).conflictRound).toBe(0);
     expect(loaded && devOf(loaded).conflict).toBeNull();
+  });
+
+  test(`${kind} store: a flat run record from before \`dev\` was nested, in a conflict and in CI, moves its fields into dev`, async () => {
+    const dir = await mkdtemp(join(tmpdir(), "al-"));
+    const store = make(kind, dir);
+    await store.save({
+      key: "CYC-1",
+      issueId: 1,
+      issueNumber: 1,
+      title: "t",
+      phase: "ci",
+      round: 0,
+      worktree: "/wt",
+      localBranch: "b",
+      remoteBranch: "auto/cyc-1",
+      devSessionId: "d",
+      qaSessionId: null,
+      replacedSessions: [],
+      blockedReason: null,
+      resumeFrom: null,
+      findings: null,
+      cleanedAt: null,
+      cleanupNote: null,
+      kind: "dev",
+      startedAt: "2026-11-25T00:00:00.000Z",
+      updatedAt: "2026-11-25T00:00:00.000Z",
+      dev: {
+        ciRound: 0,
+        ciFailedSha: null,
+        nodeModulesReleased: false,
+        fullFlowDocs: [],
+        conflictRound: 0,
+        conflict: null,
+        resolvedFiles: [],
+        reviewSessionId: null,
+        prUrl: null,
+      },
+    });
+    const flat = {
+      ciRound: 2,
+      ciFailedSha: "deadbeef",
+      nodeModulesReleased: true,
+      conflictRound: 1,
+      conflict: { state: "dev", preMergeSha: "abc123", files: ["a.ts"] },
+      resolvedFiles: ["b.ts"],
+      reviewSessionId: "rev-1",
+      prUrl: "https://github.com/o/r/pull/9",
+      fullFlowDocs: [],
+    };
+    if (kind === "files") {
+      const record = JSON.parse(await readFile(join(dir, "runs", "CYC-1", "run.json"), "utf8"));
+      const { dev: _dev, ...common } = record;
+      await writeFile(
+        join(dir, "runs", "CYC-1", "run.json"),
+        JSON.stringify({ ...common, ...flat }),
+      );
+    } else {
+      const db = openDb(dir);
+      const row = db.query("SELECT state FROM runs WHERE key = 'CYC-1'").get() as { state: string };
+      const { dev: _dev, ...rest } = JSON.parse(row.state);
+      // The pull request address is a column of its own there, as it was before the nesting.
+      const { prUrl, ...inState } = flat;
+      db.run("UPDATE runs SET state = ?, pr_url = ? WHERE key = 'CYC-1'", [
+        JSON.stringify({ ...rest, ...inState }),
+        prUrl,
+      ]);
+      db.close();
+    }
+    const loaded = await store.load("CYC-1");
+    expect(loaded && devOf(loaded)).toEqual(expect.objectContaining(flat));
   });
 
   // The planning node's rounds (CYC-322) live in `plans/`, apart from the work item runs.

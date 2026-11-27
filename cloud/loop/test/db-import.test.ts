@@ -156,7 +156,7 @@ test("importing a state directory with a run in progress keeps stats, renames th
 
   const names = (await readdir(dir)).sort();
   expect(names).toContain("loop.db");
-  expect(names).not.toContain("loop.db.importing");
+  expect(names.filter((n) => n.startsWith("loop.db.importing"))).toEqual([]);
   expect(names).toEqual(
     expect.arrayContaining([
       "runs.imported-2026-11-26",
