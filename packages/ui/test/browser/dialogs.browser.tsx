@@ -1,17 +1,34 @@
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
 import type { AgentInfo } from "../../src/api.ts";
 import { ConfirmDialog } from "../../src/react/dialogs.tsx";
-import { AgentDefaultsForm, LocationDialog } from "../../src/react/index.ts";
+import { HarnessDefaultsFields } from "../../src/react/harness-settings.tsx";
+import { LocationDialog } from "../../src/react/index.ts";
 import { findAlert } from "./alert.ts";
 
 afterEach(cleanup);
 
-const agents: AgentInfo[] = [
-  { id: "a", name: "Alpha", available: true, configSchema: {} },
-  { id: "b", name: "Beta", available: true, configSchema: {} },
-];
+const agent: AgentInfo = { id: "a", name: "Alpha", available: true, configSchema: {} };
+
+/** As the Harness page mounts it: asking again starts it over, reading again. */
+function Defaults(props: {
+  read: (agent: string) => Promise<Record<string, string> | undefined>;
+  onSave: (agent: string, config: Record<string, string>) => Promise<boolean | undefined>;
+}) {
+  const [attempt, setAttempt] = useState(0);
+  return (
+    <HarnessDefaultsFields
+      key={attempt}
+      agent={agent}
+      read={props.read}
+      onSave={props.onSave}
+      revision={0}
+      onRetry={() => setAttempt((n) => n + 1)}
+    />
+  );
+}
 
 test("a location dialog that is opened again is empty: what was added is not added twice", async () => {
   const user = userEvent.setup();
@@ -51,7 +68,7 @@ test("a location is not added twice by a double click", async () => {
   await act(async () => finish());
 });
 
-test("agent defaults are saved only once they are the ones of the agent shown", async () => {
+test("agent defaults can be saved only once they are read, and a save that failed is not said to be saved", async () => {
   const user = userEvent.setup();
   let release: (value: Record<string, string>) => void = () => {};
   const read = () =>
@@ -60,9 +77,7 @@ test("agent defaults are saved only once they are the ones of the agent shown", 
     });
   const saved: string[] = [];
   render(
-    <AgentDefaultsForm
-      locationName="Local"
-      agents={agents}
+    <Defaults
       read={read}
       onSave={async (agent) => {
         saved.push(agent);
@@ -86,9 +101,7 @@ test("agent defaults are saved only once they are the ones of the agent shown", 
 test("agent defaults that cannot be read are not replaced by an empty form: they cannot be saved over", async () => {
   let reads = 0;
   render(
-    <AgentDefaultsForm
-      locationName="Local"
-      agents={agents}
+    <Defaults
       read={() => (reads++ === 0 ? Promise.reject(new Error("no")) : Promise.resolve({}))}
       onSave={async () => true}
     />,

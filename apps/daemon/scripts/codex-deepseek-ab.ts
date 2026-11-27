@@ -1,6 +1,6 @@
 // A real-model comparison of Codex's direct tools and mixed code mode through Cycle's gateway.
 //
-//   CYCLE_REAL_MODEL_TOKEN=... bun run --cwd apps/daemon experiment:deepseek-ab
+//   CYCLE_REAL_MODEL_TOKEN=... bun apps/daemon/scripts/codex-deepseek-ab.ts
 //
 // The key goes only to the local model gateway. Each arm gets a fresh project and CODEX_HOME,
 // which are removed afterwards. This script needs outbound network access; it is outside

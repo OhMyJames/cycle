@@ -1,47 +1,24 @@
 /* The design tokens, the theme, and the base of every control: what the rest is written in. */
 
-/* Streamdown and Rare UI / shadcn-compatible components expect Tailwind semantic tokens
-   (bg-card, text-muted-foreground, bg-primary, font-runde, ...). Mapping them here ensures
-   all third-party and future Rare UI components automatically follow Cycle's light/dark theme. */
+/* The Tailwind semantic tokens that something here draws with: our own markup, and Streamdown's
+   (bg-primary, bg-sidebar, text-muted-foreground, ...), mapped so they follow Cycle's light/dark theme.
+   Add a token when a utility needs it; Tailwind would otherwise fall back to its own colors. */
 @theme inline {
   --color-background: var(--ui-background);
   --color-foreground: var(--ui-foreground);
-  --color-card: var(--cycle-surface-raised);
-  --color-card-foreground: var(--cycle-ink);
-  --color-popover: var(--cycle-surface-raised);
-  --color-popover-foreground: var(--cycle-ink);
   --color-primary: var(--cycle-accent);
   --color-primary-foreground: var(--cycle-accent-foreground);
-  --color-secondary: var(--cycle-surface-message);
-  --color-secondary-foreground: var(--cycle-ink);
   --color-muted: var(--cycle-surface-message);
   --color-muted-foreground: var(--cycle-ink-muted);
-  --color-accent: var(--cycle-surface-hover);
-  --color-accent-foreground: var(--cycle-ink);
-  --color-destructive: var(--ui-destructive);
-  --color-destructive-foreground: light-dark(#ffffff, #0a0a0a);
   --color-border: var(--cycle-border-default);
-  --color-input: var(--cycle-input-border);
-  --color-ring: var(--cycle-focus-ring);
   --color-sidebar: var(--cycle-surface-sidebar);
-  --color-sidebar-foreground: var(--cycle-ink);
-  --color-sidebar-primary: var(--cycle-accent);
-  --color-sidebar-primary-foreground: var(--cycle-accent-foreground);
-  --color-sidebar-accent: var(--cycle-surface-selected);
-  --color-sidebar-accent-foreground: var(--cycle-ink);
-  --color-sidebar-border: var(--cycle-border-subtle);
-  --color-sidebar-ring: var(--cycle-focus-ring);
 
-  --font-sans: var(--ui-font-sans);
-  --font-runde: var(--cycle-font-display);
   --font-display: var(--cycle-font-display);
   --font-mono: var(--ui-font-mono);
 
-  --radius-sm: var(--cycle-radius-sm);
   --radius-md: var(--ui-radius);
   --radius-lg: var(--cycle-radius-card);
   --radius-xl: var(--cycle-radius-card);
-  --radius-2xl: var(--cycle-radius-composer);
 }
 
 /* Self-hosted Rare UI open-source font trio (SIL OFL-1.1), staged locally beside the stylesheet
@@ -383,13 +360,6 @@ pre,
 [data-slot="tool-summary"],
 [data-slot="tool-diff"] {
   font-feature-settings: normal;
-}
-
-/* Rare UI-compatible utility class for hardware specular rim (layered so Tailwind shadow-* can compose). */
-@layer utilities {
-  .border-apple {
-    box-shadow: var(--cycle-edge-hardware);
-  }
 }
 
 ::selection {

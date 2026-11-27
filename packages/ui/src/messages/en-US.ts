@@ -1192,7 +1192,6 @@ export const enUS = {
   "session.deleteConfirm": "Delete session",
   "session.awayCannotOpen": "{location} is not connected, so this session cannot be opened.",
   "trust.changeFailed": "The folder's trust could not be changed: {reason}",
-  "defaults.agent": "Agent",
   "defaults.save": "Save",
   "rename.label": "Session name",
   "rename.failed": "The session could not be renamed: {reason}",

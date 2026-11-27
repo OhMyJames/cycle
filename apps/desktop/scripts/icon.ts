@@ -35,7 +35,3 @@ const header = Buffer.alloc(8);
 header.write("icns", 0, "ascii");
 header.writeUInt32BE(body.length + 8, 4);
 writeFileSync(join(assets, "icon.icns"), Buffer.concat([header, body]));
-writeFileSync(
-  join(assets, "icon.png"),
-  new Resvg(svg, { fitTo: { mode: "width", value: 512 } }).render().asPng(),
-);

@@ -25,4 +25,4 @@ iconmcp 已装为 MCP(`claude mcp add --transport http iconmcp https://iconmcp.c
 ## 应用图标
 
 `apps/desktop/assets/icon.svg` 是源文件(iconmcp 的 `agent-loop`,放在靛蓝渐变的圆角方块上),
-`bun run scripts/icon.ts`(在 `apps/desktop` 下)生成 `icon.icns` 和 `icon.png`。改了 SVG 就重新生成并一起提交。
+`bun run scripts/icon.ts`(在 `apps/desktop` 下)生成 `icon.icns`。改了 SVG 就重新生成并一起提交。
