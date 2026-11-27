@@ -53,3 +53,5 @@ Overview（CYCL-58）是右侧面板的第一个标签，汇总会话的环境�
 - [一小时内有定时调用要触发时不回收进程](2026-11-23-keep-the-process-for-crons-due-within-the-hour.md):CYCL-119 查明 Stop hook 的 `session_crons` 能准确给出会话挂着的定时调用,上表"cron、ScheduleWakeup"一行的"没有生命周期事件"不再成立:进程回收按它改了(CYCL-145),Overview 也有了"定时"区块,来源是新的 `_cycle/schedule_update`(CYCL-146,docs/protocol.md §9),原来"暂不跟踪"那一行去掉。
 
 - [Claude 暂不支持 goal](2026-11-22-claude-goal-not-supported.md):CYCL-120 用真实模型验证后,goal 这部分的来源不成立(本地进程收不到 `active_goal`);协议和适配器的转换保留,其余决定不变。
+
+- [后台任务算进 `cycle/background`](2026-11-24-background-alive.md):部分取代本条。后台任务不再只是通告，而是算进 `cycle/background` 计数，轮与轮之间在对话末尾写一条后台行;来源表的其余部分不变。

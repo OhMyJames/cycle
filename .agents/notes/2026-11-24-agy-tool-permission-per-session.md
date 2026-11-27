@@ -1,8 +1,9 @@
 # Agent Note: agy's tool permission is a session option, written to settings.json, not a process flag
 
-Status: accepted (supersedes [2026-11-24-agy-skip-permissions.md](2026-11-24-agy-skip-permissions.md))
+Status: accepted
 Date: 2026-11-24
 Basis: CYC-285、CYC-286。实测 132 次权限确认全部被手动点了允许；2026-11-24 在 agy 1.5.16、真实账号、临时 HOME 下的实测(记录在 `docs/adapters/agy.md`)。
+Supersedes: [Offer agy's --dangerously-skip-permissions as a runtime setting](2026-11-24-agy-skip-permissions.md)
 
 ## Problem
 

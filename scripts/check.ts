@@ -158,6 +158,8 @@ const steps: [string, string[]][] = [
   ["css", ["bun", "run", "--cwd", "packages/ui", "build:css"]],
   ["typecheck", ["bun", "run", "typecheck"]],
   ["lint", ["bun", "run", "lint"]],
+  // Files nothing reaches and dependencies nothing uses (knip.jsonc says what is checked). About 2 seconds.
+  ["unused", ["bun", "run", "unused"]],
   // The interface's tests run in a real browser and are not here: `bun run test:browser`, and CI's browser job.
   ["test", ["bun", "test", "--parallel=2"]],
 ];

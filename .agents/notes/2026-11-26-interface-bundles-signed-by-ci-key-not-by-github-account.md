@@ -3,6 +3,7 @@
 Status: accepted
 Date: 2026-11-26
 Basis: CYC-461 (Design) and CYC-469 (Intent, Spec, Design, Plan), with the user's decisions of 2026-11-26: trust by CI private-key signature, `localStorage` must survive a change of page, and the old alpha path is to be retired afterwards (CYC-468).
+Supersedes: [A local alpha update is checked by certificate name](2026-11-25-local-alpha-update-trust-boundary.md)
 
 ## Problem
 

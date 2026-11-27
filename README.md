@@ -22,11 +22,7 @@ Bun、TypeScript、Electron,均使用最新版本。
 Desktop(Electron) ──L1: Cycle 协议──▶ Daemon ──L2: ACP──▶ Agent 适配进程(Claude、Codex、agy)
 ```
 
-- **L1** 客户端到 daemon:以 ACP v2 为蓝本加 `_cycle/*` 扩展,类型自己定义并固定,要稳定。
-- **L2** daemon 到 agent:以 ACP v2(Agent Client Protocol)为标准。L1 的消息模型也以它为蓝本,类型由我们固定版本。
-- **L3** agent 适配:每个 agent 一个适配,在 `apps/daemon/src/harnesses.ts` 的 `HARNESSES` 清单里注册;Claude 的适配自己写,基于 Claude Agent SDK。
-
-详见 [docs/architecture.md](docs/architecture.md)。
+三层:L1 客户端到 daemon 是 Cycle 自己的稳定协议(以 ACP v2 为蓝本加 `_cycle/*`),L2 daemon 到 agent 用 ACP v2,L3 是每个 agent 的适配。分层的理由和约束见 [docs/architecture.md](docs/architecture.md)。
 
 ## 开发
 
@@ -53,7 +49,7 @@ bun run check    # 边界、类型、lint、测试
 - [docs/daemon.md](docs/daemon.md):daemon:做了什么、没做什么、验证结果
 - [docs/testing.md](docs/testing.md):门禁、集成测试、真实模型的运行
 - [docs/conversation-content.md](docs/conversation-content.md):对话内容怎么展示
-- [docs/harness-settings.md](docs/harness-settings.md):agent 设置页
+- [docs/harness-settings.md](docs/harness-settings.md):agent 设置页的设计与实测记录(CYCL-226,历史文档;现状见 desktop.md 的设置页)
 - [docs/adapters/](docs/adapters/):各 agent 适配([Claude](docs/adapters/claude.md)、[Codex](docs/adapters/codex.md)、[agy](docs/adapters/agy.md)、[pi](docs/adapters/pi.md) 调研)
 - [docs/decisions/](docs/decisions/):设计决策记录
 

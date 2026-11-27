@@ -2,9 +2,9 @@
 
 Adapted on 2026-11-05 from the user-authorized local reference repository `shrimpdot-durable`:
 
-- `/Users/james/code/clawdot/shrimpdot-durable/.agents/skills/agent-notes/SKILL.md`
-- `/Users/james/code/clawdot/shrimpdot-durable/.agents/skills/agent-notes/references/supersession-scan.md`
-- `/Users/james/code/clawdot/shrimpdot-durable/.agents/notes/README.md`
+- `shrimpdot-durable/.agents/skills/agent-notes/SKILL.md`
+- `shrimpdot-durable/.agents/skills/agent-notes/references/supersession-scan.md`
+- `shrimpdot-durable/.agents/notes/README.md`
 
 The first two were the complete set of files found in the reference skill directory and were read in full, along with the referenced notes README. This is a selective Cycle adaptation, not a verbatim copy or a claim of an upstream release/version. The requested `~/.agents/skills` source did not provide an agent-notes skill according to the coordinating session's inspection; this adaptation does not claim to come from there.
 

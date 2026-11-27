@@ -22,3 +22,7 @@ The Loop page shows the real itsaplan board. The desktop acts as the person, so 
 
 - A user must create the file by hand; with no file the page says the board is not connected.
 - A same-user process can read the file. Not verified: that an agent session cannot read the app data dir.
+
+## Related
+
+- [`loop/` API 是读写工单的唯一入口](2026-11-26-loop-api-is-the-only-way-in.md):部分取代本条。桌面端迁过去之后，不再自己读写 itsaplan;本条关于密钥存放的部分在那之前仍然适用。
