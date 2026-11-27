@@ -5,9 +5,7 @@ import {
   type AnsiColor,
   type AnsiRun,
   type AnsiStyle,
-  ansiLines,
   ansiTail,
-  parseAnsi,
   plainText,
 } from "../ansi.ts";
 import { insideFolder, shownPath } from "../files-view.ts";
@@ -66,6 +64,38 @@ export const clip = (text: string): string =>
   text.length > MAX_SHOWN
     ? `${text.slice(0, MAX_SHOWN)}\n… (${text.length - MAX_SHOWN} more characters not shown)`
     : text;
+
+/** A text drawn up to the limit, with a button that draws the next page of it, until all of it is. */
+function PagedText({
+  text,
+  render = (shown) => shown,
+}: {
+  text: string;
+  render?: (shown: string) => ReactNode;
+}) {
+  const { t } = useI18n();
+  const store = useAppStore();
+  const [pages, setPages] = useState(1);
+  const end = MAX_SHOWN * pages;
+  const left = text.length - end;
+  return (
+    <>
+      {render(left > 0 ? text.slice(0, end) : text)}
+      {left > 0 ? (
+        <button
+          type="button"
+          data-slot="tool-more"
+          onClick={() => {
+            setPages(pages + 1);
+            store.track("tool_output_expanded", {});
+          }}
+        >
+          {t("tool.moreCharacters", { count: left })}
+        </button>
+      ) : null}
+    </>
+  );
+}
 
 /** A call's locations as one short summary (`a.ts`, or `a.ts +2` when it touched several). */
 const locationsSummary = (tool: ToolItem): string | undefined => {
@@ -448,7 +478,12 @@ function CallCard({ tool }: { tool: ToolItem }) {
               ))}
           </ol>
         ) : null}
-        {input !== undefined ? <pre data-slot="tool-input">{clip(stringify(input))}</pre> : null}
+        {input !== undefined ? (
+          <PagedText
+            text={stringify(input)}
+            render={(shown) => <pre data-slot="tool-input">{shown}</pre>}
+          />
+        ) : null}
         {facts.edit !== undefined && editPath !== undefined && status === "completed" ? (
           <DiffHead
             path={shownPath(editPath, cwd)}
@@ -666,8 +701,10 @@ function DiffHead({
 /** One call's change, line by line: removed and added lines marked, and numbered as in the file. */
 export function DiffView({ lines }: { lines: DiffLine[] }) {
   const { t } = useI18n();
+  const store = useAppStore();
+  const [limit, setLimit] = useState(MAX_DIFF_LINES);
   // The first hunk's marker says only that the change starts somewhere: its numbers say where. Between hunks it marks the gap.
-  const shown = (lines[0]?.kind === "hunk" ? lines.slice(1) : lines).slice(0, MAX_DIFF_LINES);
+  const shown = (lines[0]?.kind === "hunk" ? lines.slice(1) : lines).slice(0, limit);
   const rest =
     lines.filter((line) => line.kind !== "hunk").length -
     shown.filter((line) => line.kind !== "hunk").length;
@@ -687,7 +724,18 @@ export function DiffView({ lines }: { lines: DiffLine[] }) {
           <span data-slot="diff-text">{line.kind === "hunk" ? "" : line.text}</span>
         </div>
       ))}
-      {rest > 0 ? <p data-slot="tool-note">{t("tool.diff.more", { count: rest })}</p> : null}
+      {rest > 0 ? (
+        <button
+          type="button"
+          data-slot="tool-more"
+          onClick={() => {
+            setLimit(limit + MAX_DIFF_LINES);
+            store.track("tool_output_expanded", {});
+          }}
+        >
+          {t("tool.diff.more", { count: rest })}
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -730,6 +778,8 @@ export const endOf = (status: string, facts: ToolFacts): CommandEnd | undefined 
 
 /** How many lines of a long output are shown before it is opened whole: its end, where a command says how it went. */
 const TAIL_LINES = 40;
+/** Earlier lines drawn per click. */
+const PAGE_LINES = 200;
 
 /**
  * An output too long to draw keeps its end, where a command says how it went: the lines from the last one back, for as
@@ -822,21 +872,17 @@ export function Copyable({
 }) {
   const { t } = useI18n();
   const store = useAppStore();
-  const [whole, setWhole] = useState(false);
+  // How many pages of earlier lines are drawn: each click adds one, so a huge log is never drawn at once.
+  const [pages, setPages] = useState(0);
   // What the button says after a press: copied, or why not.
   const [copied, setCopied] = useState<"done" | "failed" | undefined>(undefined);
   // Until it is opened whole, only the lines shown are read into runs: a long log that grows is not parsed whole each time.
   const read = useMemo(() => {
     if (kind === "command") return { lines: [], total: 0 };
-    if (!whole) return ansiTail(text, TAIL_LINES);
-    const lines = ansiLines(parseAnsi(text));
-    return { lines, total: lines.length };
-  }, [kind, text, whole]);
+    return ansiTail(text, TAIL_LINES + pages * PAGE_LINES);
+  }, [kind, text, pages]);
   const hidden = read.total - read.lines.length;
-  const shown = useMemo(
-    () => (whole ? { lines: read.lines, dropped: 0 } : clipLines(read.lines, MAX_SHOWN)),
-    [read, whole],
-  );
+  const shown = useMemo(() => clipLines(read.lines, MAX_SHOWN * (pages + 1)), [read, pages]);
   const label = t(`tool.copy.${kind}`);
   return (
     <div data-slot="tool-block" data-kind={kind} data-failed={failed || undefined}>
@@ -872,21 +918,23 @@ export function Copyable({
               : t("tool.copy")}
         </button>
       </div>
-      {hidden > 0 ? (
+      {hidden > 0 || shown.dropped > 0 ? (
         <button
           type="button"
           data-slot="tool-more"
           onClick={() => {
-            setWhole(true);
+            setPages(pages + 1);
             store.track("tool_output_expanded", {});
           }}
         >
-          {t("tool.more", { count: hidden })}
+          {hidden > 0
+            ? t("tool.more", { count: Math.min(hidden, PAGE_LINES) })
+            : t("tool.moreCharacters", { count: shown.dropped })}
         </button>
       ) : null}
       {kind === "command" ? (
         <pre data-slot="tool-command">
-          <CommandText text={clip(text)} />
+          <PagedText text={text} render={(shown) => <CommandText text={shown} />} />
         </pre>
       ) : (
         <pre data-slot="tool-output">
