@@ -1426,7 +1426,6 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "blank.branch.current": "当前",
   "blank.branch.empty": "没有匹配的分支",
   "blank.branch.turnsOn": "选择其他分支会新建 worktree。",
-  "session.worktree.name": "Worktree",
   "blank.worktree": "Worktree",
   "blank.environment.refused.not_a_repository":
     "session 没有开始：这个文件夹不在 git 仓库里，无法新建 worktree。请关掉 worktree，或换一个文件夹。",

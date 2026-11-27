@@ -1574,7 +1574,6 @@ export const enUS = {
   "blank.branch.current": "Current",
   "blank.branch.empty": "No matching branches",
   "blank.branch.turnsOn": "Picking another branch starts a worktree.",
-  "session.worktree.name": "Worktree",
   "blank.worktree": "Worktree",
   "blank.environment.refused.not_a_repository":
     "The session was not started: the folder is not in a git repository, so there is no worktree to make. Turn the worktree off, or choose another folder.",

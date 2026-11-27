@@ -100,7 +100,7 @@ test("outside a repository there is neither a branch nor a worktree", async () =
   expect(screen.queryByRole("button", { name: /^Branch:/ })).toBeNull();
 });
 
-test("a session in a worktree says so above its box, with the branch; one outside has no line", async () => {
+test("a session in a worktree has no line of its own above its box", async () => {
   const inside = fakeBridge({ connected: true, capabilities: CAPABILITIES });
   inside.bridge.sessions = async (locationId: string) => [
     {
@@ -113,13 +113,11 @@ test("a session in a worktree says so above its box, with the branch; one outsid
         managed: true,
       },
     },
-    { ...summary("p1", locationId), title: "Plain" },
   ];
   await renderApp(inside.bridge);
   const user = userEvent.setup();
   await user.click(await screen.findByRole("option", { name: /In a worktree/ }));
-  expect(await screen.findByText("worktree-one")).toBeTruthy();
-  expect(document.querySelector('[data-slot="worktree-strip"]')?.textContent).toContain("Worktree");
-  await user.click(await screen.findByRole("option", { name: /Plain/ }));
-  await waitFor(() => expect(document.querySelector('[data-slot="worktree-strip"]')).toBeNull());
+  expect(await screen.findByRole("textbox")).toBeTruthy();
+  expect(document.querySelector('[data-slot="worktree-strip"]')).toBeNull();
+  expect(screen.queryByText("worktree-one")).toBeNull();
 });
