@@ -6,6 +6,7 @@ import type { PermissionRequest, SessionSnapshot } from "../../src/api.ts";
 import { displayMode } from "../../src/display-mode.ts";
 import { applyUpdate, emptyConversation } from "../../src/model/index.ts";
 import { App, StoreProvider } from "../../src/react/index.ts";
+import { reveal } from "../../src/reveal.ts";
 import { startedAt } from "../../src/started.ts";
 import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge } from "../fake-bridge.ts";
@@ -448,23 +449,110 @@ const turnsOf = (n: number, from = 0) =>
 
 const drawn = (log: HTMLElement) => log.querySelectorAll('[data-slot="block"]').length;
 
-test("a long conversation draws its end, and the button brings the earlier blocks a page at a time", async () => {
-  const { user, log } = await open(...turnsOf(70));
-  await waitFor(() => expect(log.textContent).toContain("answer 69"));
-  // 140 blocks; the last 60 are drawn: question 40 is the first, question 39 is not.
-  expect(drawn(log)).toBe(60);
-  expect(log.textContent).toContain("question 40");
-  expect(log.textContent).not.toContain("question 39");
-  await user.click(screen.getByRole("button", { name: "Show earlier" }));
-  await waitFor(() => expect(log.textContent).toContain("question 10"));
-  expect(drawn(log)).toBe(120);
-  expect(log.textContent).not.toContain("question 9");
-  await user.click(screen.getByRole("button", { name: "Show earlier" }));
+/** The window's height, as #root has it in the app: the conversation scrolls inside it. */
+const constrain = (log: HTMLElement) => {
+  const root = log.closest('[data-slot="app"]')?.parentElement;
+  if (root instanceof HTMLElement) root.style.height = "100%";
+};
+const settle = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+/** The text of the blocks drawn, in order. */
+const drawnText = (log: HTMLElement) =>
+  Array.from(log.querySelectorAll('[data-slot="block"]'), (b) => b.textContent ?? "");
+
+test("a long conversation opens at its end and draws only the blocks near the view", async () => {
+  const { log } = await open(...turnsOf(400));
+  constrain(log);
+  await waitFor(() => expect(log.textContent).toContain("answer 399"));
+  await waitFor(() => expect(drawn(log)).toBeLessThan(80));
+  expect(log.textContent).not.toContain("question 0");
+  expect(log.textContent).not.toContain("question 300");
+  // The room of the blocks not drawn is there, and the view is at the end.
+  expect(log.scrollHeight).toBeGreaterThan(log.clientHeight * 10);
+  await waitFor(() => expect(log.scrollHeight - log.scrollTop - log.clientHeight).toBeLessThan(2));
+  expect(log.querySelector('[data-slot="earlier"]')).toBeNull();
+});
+
+test("scrolling up brings the blocks above into view and lets the ones left behind go, in order and in place", async () => {
+  const { log } = await open(...turnsOf(400));
+  constrain(log);
+  await waitFor(() => expect(drawn(log)).toBeLessThan(80));
+  await settle();
+  // Up a long way, in steps, as a reader does: what is drawn follows, and the reader keeps their place.
+  for (let step = 0; step < 40; step++) {
+    log.scrollTop -= log.clientHeight;
+    await settle();
+  }
+  expect(log.textContent).not.toContain("answer 399");
+  expect(drawn(log)).toBeLessThan(80);
+  // The blocks drawn are consecutive: each question is followed by its answer.
+  const texts = drawnText(log);
+  expect(texts.length).toBeGreaterThan(2);
+  const firstQuestion = texts.findIndex((t) => t.startsWith("question"));
+  const n = Number(/^question (\d+)/.exec(texts[firstQuestion] ?? "")?.[1]);
+  expect(texts[firstQuestion + 1]).toContain(`answer ${n}`);
+  // All the way up: the first message is there, below the top of the view, and the view does not slip away from the top.
+  for (let i = 0; i < 100 && log.scrollTop > 0; i++) {
+    log.scrollTop = 0;
+    await settle();
+  }
   await waitFor(() => expect(log.textContent).toContain("question 0"));
-  expect(drawn(log)).toBe(140);
-  // Everything is drawn: there is nothing earlier, and the focus did not fall out of the page.
-  expect(screen.queryByRole("button", { name: "Show earlier" })).toBeNull();
-  expect(document.activeElement).toBe(log);
+  await settle();
+  expect(log.scrollTop).toBe(0);
+  const first = log.querySelector('[data-slot="block"]')?.getBoundingClientRect();
+  expect((first?.top ?? 0) - log.getBoundingClientRect().top).toBeGreaterThanOrEqual(16);
+  expect(drawn(log)).toBeLessThan(80);
+  // And back down to the end: the last answer is drawn again.
+  log.scrollTop = log.scrollHeight;
+  await waitFor(() => expect(log.textContent).toContain("answer 399"));
+  await waitFor(() => expect(log.scrollHeight - log.scrollTop - log.clientHeight).toBeLessThan(2));
+});
+
+test("what arrives follows the end, and does not move a reader who is above it", async () => {
+  const { log, emit } = await open(...turnsOf(100));
+  constrain(log);
+  await waitFor(() => expect(drawn(log)).toBeLessThan(60));
+  await settle();
+  const fromEnd = () => log.scrollHeight - log.scrollTop - log.clientHeight;
+  await waitFor(() => expect(fromEnd()).toBeLessThan(2));
+  for (const update of turnsOf(3, 100)) await emit(update);
+  await waitFor(() => expect(log.textContent).toContain("answer 102"));
+  await waitFor(() => expect(fromEnd()).toBeLessThan(2));
+  // Reading above the end: the place holds as more arrives.
+  for (let step = 0; step < 10; step++) {
+    log.scrollTop -= log.clientHeight;
+    await settle();
+  }
+  expect(fromEnd()).toBeGreaterThan(1000);
+  const reading = log.querySelector('[data-slot="block"]')?.textContent;
+  const top = log.scrollTop;
+  for (const update of turnsOf(3, 103)) await emit(update);
+  await settle();
+  expect(log.scrollTop).toBe(top);
+  expect(log.querySelector('[data-slot="block"]')?.textContent).toBe(reading);
+  expect(log.textContent).not.toContain("answer 105");
+});
+
+test("an item far above the view is brought into view and marked, in a long conversation", async () => {
+  const { log } = await open(
+    you("first"),
+    ...tool("far", "Bash", "completed", { command: "make far-away" }),
+    ...tool("far2", "Read", "completed", { file_path: "far.ts" }),
+    state({ state: "idle", stopReason: "end_turn" }),
+    ...turnsOf(300, 1),
+  );
+  constrain(log);
+  await waitFor(() => expect(log.textContent).toContain("answer 300"));
+  await waitFor(() => expect(drawn(log)).toBeLessThan(80));
+  expect(log.querySelector('[data-item-id="far"]')).toBeNull();
+  act(() => {
+    reveal.request(SESSION, "far");
+  });
+  await waitFor(() =>
+    expect(log.querySelector('[data-item-id="far"][data-revealed]')).not.toBeNull(),
+  );
+  expect(log.textContent).toContain("make far-away");
+  expect(drawn(log)).toBeLessThan(80);
 });
 
 test("scrolled up, a button takes the reader back to the end, says when something new came, and moves nothing", async () => {
@@ -587,16 +675,13 @@ test("the conversation fades at its top and bottom edges, and at the end the las
   expect(composer?.top).toBeCloseTo(view.bottom, 0);
   expect((last?.bottom ?? 0) + 64).toBeCloseTo(view.bottom, 0);
   // At the top, the first message starts below the top fade.
-  // Reaching the top draws the blocks above and keeps the reader's place, so the first block drawn is far above until
-  // the whole conversation is: scroll up until it is, then measure.
+  // Reaching the top draws the blocks above and keeps the reader's place: scroll up until the first is drawn, then measure.
   await waitFor(() => {
     log.scrollTop = 0;
     expect(log.textContent).toContain("question 0");
     expect(log.scrollTop).toBe(0);
   });
-  const first = log
-    .querySelector('[data-slot="block"], [data-slot="earlier"]')
-    ?.getBoundingClientRect();
+  const first = log.querySelector('[data-slot="block"]')?.getBoundingClientRect();
   expect((first?.top ?? 0) - log.getBoundingClientRect().top).toBeGreaterThanOrEqual(16);
 });
 
@@ -611,13 +696,13 @@ test("an empty session's message stays in the middle of the view, whatever room 
   expect(box.top - view.top).toBeGreaterThan(32);
 });
 
-test("a conversation that grows from a few blocks to many draws about a page, not all of it", async () => {
+test("a conversation that grows from a few blocks to many draws the ones near its end, not all of it", async () => {
   const { log, emit } = await open(...turnsOf(1));
   expect(drawn(log)).toBe(2);
-  for (const update of turnsOf(70, 1)) await emit(update);
-  await waitFor(() => expect(log.textContent).toContain("answer 70"));
-  // The reader is at the end: the window is the last page, however the conversation got there.
-  expect(drawn(log)).toBe(60);
+  constrain(log);
+  for (const update of turnsOf(300, 1)) await emit(update);
+  await waitFor(() => expect(log.textContent).toContain("answer 300"));
+  await waitFor(() => expect(drawn(log)).toBeLessThan(80));
   expect(log.textContent).not.toContain("question 20");
 });
 

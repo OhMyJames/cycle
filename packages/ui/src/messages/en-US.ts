@@ -367,7 +367,6 @@ export const enUS = {
   "conversation.label": "Conversation",
   "conversation.loading": "Loading the conversation…",
   "conversation.empty": "Nothing here yet. Say something below.",
-  "conversation.earlier": "Show earlier",
   "conversation.toEnd": "Back to bottom",
   "conversation.toEndFresh": "Back to bottom, where there is something new",
   "time.justNow": "Just now",

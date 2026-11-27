@@ -327,7 +327,6 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "conversation.label": "对话",
   "conversation.loading": "正在加载对话…",
   "conversation.empty": "这里还没有内容。在下面说点什么。",
-  "conversation.earlier": "显示更早的",
   "conversation.toEnd": "回到底部",
   "conversation.toEndFresh": "回到底部，那里有新内容",
   "time.justNow": "刚刚",

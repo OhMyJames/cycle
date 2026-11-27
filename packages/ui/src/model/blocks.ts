@@ -474,34 +474,3 @@ const reviewing = (c: Conversation): boolean => {
   }
   return false;
 };
-
-/** How many blocks a long conversation shows at first, and how many more each time the person nears its top. */
-export const PAGE = 60;
-
-/**
- * Where the shown blocks begin. A long conversation shows only its end, and earlier blocks as the person scrolls toward
- * the top; the first block shown is named by its key (`anchor`), so new blocks at the end do not push the top off. With
- * no anchor, or one that is gone, the last `page` blocks.
- */
-export const windowStart = (
-  blocks: readonly LaidBlock[],
-  anchor: string | undefined,
-  page = PAGE,
-): number => {
-  if (anchor !== undefined) {
-    const at = blocks.findIndex((block) => block.key === anchor);
-    if (at >= 0) return at;
-  }
-  return Math.max(0, blocks.length - page);
-};
-
-/**
- * The key to anchor on once `page` more blocks are shown above `start`. A thought is not chosen (it is laid after the
- * card it sits in, so it is not where its stretch begins): the next block that is not one.
- */
-export const earlierAnchor = (
-  blocks: readonly LaidBlock[],
-  start: number,
-  page = PAGE,
-): string | undefined =>
-  blocks.slice(Math.max(0, start - page)).find((block) => block.kind !== "thought")?.key;

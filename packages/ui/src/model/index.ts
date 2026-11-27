@@ -7,3 +7,4 @@ export * from "./network-error.ts";
 export * from "./proposal.ts";
 export * from "./resend.ts";
 export * from "./review.ts";
+export * from "./virtual.ts";
