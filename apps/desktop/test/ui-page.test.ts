@@ -55,9 +55,11 @@ const setup = (options: { failLoad?: (url: string) => boolean; bundledVersion?: 
   const fire = async () => {
     const live = timers.filter((t) => !t.cleared);
     expect(live).toHaveLength(1);
+    const before = loads.length;
     live[0]?.fn();
-    // The fall back is queued behind what is under way.
-    await Bun.sleep(20);
+    // The fall back is queued behind what is under way: wait until it has loaded the next page and armed its timer.
+    for (let i = 0; i < 400 && loads.length === before; i++) await Bun.sleep(5);
+    await Bun.sleep(5);
   };
   return { store, pages, loads, emitted, timers, take, fire };
 };
