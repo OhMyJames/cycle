@@ -10,7 +10,7 @@ import type { LoopBoardColumn, LoopNotice, LoopProjectInfo, LoopRunsAnswer } fro
 import { useI18n } from "./i18n.tsx";
 import { ChevronRightIcon, RefreshIcon } from "./icons.tsx";
 import { Board } from "./loop-board.tsx";
-import { type LoopView, viewProject } from "./loop-nav.ts";
+import { type LoopView, up, viewProject } from "./loop-nav.ts";
 import { Notices } from "./loop-notices.tsx";
 import { PageGroup, PageRows } from "./page-layout.tsx";
 import { StateBlock } from "./state-block.tsx";
@@ -342,6 +342,8 @@ export function LoopMain({
   // drawn over the page (a dialog, a menu) takes its own Escape first, and the board's batch selection before this.
   const goBack = useRef(onBack);
   goBack.current = onBack;
+  const viewRef = useRef(view);
+  viewRef.current = view;
   useEffect(() => {
     if (!active) return;
     const onKey = (event: KeyboardEvent) => {
@@ -351,6 +353,8 @@ export function LoopMain({
         target instanceof Element &&
         target.closest('[data-slot="main"], [data-slot="sidebar"]') !== null;
       if (target !== null && target !== document.body && !inMain) return;
+      // Only a ticket's drawer is closed by it; elsewhere the key is left alone.
+      if (up(viewRef.current) === undefined) return;
       event.preventDefault();
       goBack.current();
     };

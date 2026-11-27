@@ -997,3 +997,12 @@ test("the sidebar folds in the Loop and the title bar then has the button to sho
   await user.click(within(header as HTMLElement).getByRole("button", { name: "Show sidebar" }));
   expect(screen.getByRole("button", { name: "Overview" })).toBeTruthy();
 });
+
+test("Settings opened from the Loop returns to the Loop", async () => {
+  const { user } = await mount(overviewScript());
+  await screen.findByRole("region", { name: "Projects" });
+  await openSettings(user);
+  await user.keyboard("{Escape}");
+  await screen.findByRole("region", { name: "Projects" });
+  expect(screen.getByRole("button", { name: "Loop" }).getAttribute("aria-pressed")).toBe("true");
+});
