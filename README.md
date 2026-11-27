@@ -6,11 +6,11 @@
 
 ## 目标(v1)
 
-先把协议定下来,并以 Claude agent 作为最小接入单元,跑通三项核心能力:
+先把协议定下来,跑通三项核心能力:
 
 1. 连接远程 daemon(通过 SSH 隧道)
 2. 完整展示 session 的会话,并支持交互
-3. 配置 Claude agent
+3. 配置 agent(Claude、Codex、agy)
 
 ## 技术栈
 
@@ -19,12 +19,12 @@ Bun、TypeScript、Electron,均使用最新版本。
 ## 架构概览
 
 ```
-Desktop(Electron) ──L1: Cycle 协议──▶ Daemon ──L2: ACP──▶ Agent 适配进程(Claude)
+Desktop(Electron) ──L1: Cycle 协议──▶ Daemon ──L2: ACP──▶ Agent 适配进程(Claude、Codex、agy)
 ```
 
 - **L1** 客户端到 daemon:以 ACP v2 为蓝本加 `_cycle/*` 扩展,类型自己定义并固定,要稳定。
 - **L2** daemon 到 agent:以 ACP v2(Agent Client Protocol)为标准。L1 的消息模型也以它为蓝本,类型由我们固定版本。
-- **L3** agent 适配:每个 agent 自带适配进程和 manifest;Claude 的适配自己写,基于 Claude Agent SDK。
+- **L3** agent 适配:每个 agent 一个适配,在 `apps/daemon/src/harnesses.ts` 的 `HARNESSES` 清单里注册;Claude 的适配自己写,基于 Claude Agent SDK。
 
 详见 [docs/architecture.md](docs/architecture.md)。
 
@@ -35,13 +35,13 @@ bun install      # 安装依赖,并启用 pre-commit 钩子
 bun run check    # 边界、类型、lint、测试
 ```
 
-`apps/daemon`(daemon,可编译成单文件)、`apps/desktop`(Electron 应用)、`harness/*`(agent 适配,当前为 Claude)、`packages/*`(协议、客户端与传输、埋点、界面)。门禁约 7 秒;集成测试(`bun run test:integration`)启动真实进程;`bun run build` 构建 daemon 和桌面端（macOS 需安装 Xcode Command Line Tools 来编译输入法粘贴处理模块）,`bun run start` 启动。详见 [docs/testing.md](docs/testing.md)。
+`apps/daemon`(daemon,可编译成单文件)、`apps/desktop`(Electron 应用)、`harness/*`(agent 适配:Claude、Codex、agy)、`packages/*`(协议、客户端与传输、埋点、界面等)、`cloud/loop`(自动化闭环服务)。门禁约 16 秒;集成测试(`bun run test:integration`)启动真实进程;`bun run build` 构建 daemon 和桌面端（macOS 需安装 Xcode Command Line Tools 来编译输入法粘贴处理模块）,`bun run start` 启动。详见 [docs/testing.md](docs/testing.md)。
 
 ## v1 桌面端规划
 
 右侧面板、diff 视图、交互式终端、内置浏览器及 agent 操作浏览器（browser use）、插件（plugins）和设置页（settings）已纳入 v1 规划。已发布功能见[使用指南](docs/getting-started.md)。
 
-独立 Web 端仍在 v1 范围外;git worktree 由 daemon 管(CYC-273)。多个 agent 已在范围内：Claude 之外，Codex、agy、pi 正在接入（调研见 `docs/adapters/`）。
+独立 Web 端仍在 v1 范围外;git worktree 由 daemon 管(CYC-273)。多个 agent 已在范围内：Claude、Codex、agy 已接入,pi 在接入中(CYCL-154,调研见 `docs/adapters/pi.md`)。
 
 ## 文档
 
@@ -51,7 +51,10 @@ bun run check    # 边界、类型、lint、测试
 - [docs/desktop.md](docs/desktop.md):桌面客户端:构建、结构、安全设置、已知缺口
 - [docs/analytics.md](docs/analytics.md):产品埋点:规则、事件字典、怎么给新功能加埋点
 - [docs/daemon.md](docs/daemon.md):daemon:做了什么、没做什么、验证结果
-- [docs/adapters/claude.md](docs/adapters/claude.md):Claude 适配:做了什么、没做什么、验证结果
+- [docs/testing.md](docs/testing.md):门禁、集成测试、真实模型的运行
+- [docs/conversation-content.md](docs/conversation-content.md):对话内容怎么展示
+- [docs/harness-settings.md](docs/harness-settings.md):agent 设置页
+- [docs/adapters/](docs/adapters/):各 agent 适配([Claude](docs/adapters/claude.md)、[Codex](docs/adapters/codex.md)、[agy](docs/adapters/agy.md)、[pi](docs/adapters/pi.md) 调研)
 - [docs/decisions/](docs/decisions/):设计决策记录
 
 ## 致谢

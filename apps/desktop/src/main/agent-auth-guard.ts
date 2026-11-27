@@ -30,15 +30,6 @@ const AGENT_AUTH_REDIRECT_HOSTS: Readonly<Record<string, readonly string[]>> = {
   agy: ["antigravity.google"],
 };
 
-/** The hosts each agent may open, for what the dialog says and for the tests. */
-export const AGENT_AUTH_ALLOWED_HOSTS: Readonly<Record<string, readonly string[]>> =
-  Object.fromEntries(
-    Object.entries(AGENT_AUTH_TARGETS).map(([agent, targets]) => [
-      agent,
-      targets.map((t) => t.host),
-    ]),
-  );
-
 export type ValidatedAuthUrl =
   | { ok: true; url: string; host: string }
   | { ok: false; reason: "untrusted_url" };

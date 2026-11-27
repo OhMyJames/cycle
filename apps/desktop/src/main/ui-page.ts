@@ -139,5 +139,3 @@ export const createPageSwitch = (deps: PageSwitchDeps) => {
     refresh: (): void => deps.emit(info()),
   };
 };
-
-export type PageSwitch = ReturnType<typeof createPageSwitch>;

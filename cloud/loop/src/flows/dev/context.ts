@@ -31,14 +31,6 @@ export const netForge = <T extends { ok: boolean }>(
     r.ok ? undefined : String((r as { error?: unknown }).error ?? ""),
   );
 
-/** `net` for a port result read as a status: a failed read says why. */
-export const netRead = <T extends { ok: boolean }>(
-  h: FlowHost,
-  key: string,
-  command: string,
-  fn: () => Promise<T>,
-): Promise<T> => netForge(h, key, command, fn);
-
 /** What the dev flow holds in memory for the runs it is on. */
 export type Dev = {
   readonly h: FlowHost;

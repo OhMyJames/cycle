@@ -143,11 +143,6 @@ export const META = {
 /** The version of Cycle's protocol, "major.minor". A different major is refused. */
 export const CYCLE_PROTOCOL_VERSION = "0.2";
 
-export const ProtocolVersionSchema = z.string().regex(/^\d+\.\d+$/);
-
-/** `replayFrom` kinds the daemon understands: ACP's `start`, and Cycle's own `_cycle.seq`. */
-export const REPLAY_KINDS = ["start", "_cycle.seq"] as const;
-
 export const CapabilitiesSchema = z.object({
   replay: z.array(z.string()),
   agents: z.array(z.string()),

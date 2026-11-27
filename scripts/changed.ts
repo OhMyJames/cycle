@@ -59,7 +59,7 @@ type Manifest = Partial<
 
 export async function loadPackages(root: string): Promise<Pkg[]> {
   const manifests: [string, Manifest][] = [];
-  const glob = new Glob("{packages,harness,apps,tools,cloud}/*/package.json");
+  const glob = new Glob("{packages,harness,apps,cloud}/*/package.json");
   for (const file of glob.scanSync({ cwd: root })) {
     manifests.push([file.slice(0, -"/package.json".length), await Bun.file(root + file).json()]);
   }

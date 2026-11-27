@@ -529,7 +529,6 @@ export const enUS = {
     other: "asked the advisor {count} times",
   },
   "work.failed": { one: "{count} failed", other: "{count} failed" },
-  "work.running": "running",
   "work.done": "done",
   "work.unfinished": "not finished",
   "turn.worked": "Worked for {duration}",
@@ -963,10 +962,8 @@ export const enUS = {
   "plugins.problem.unsupported": "Cycle on {location} is too old for plugins.",
   "plugins.problem.failed": "It could not be done.",
   "common.cancel": "Cancel",
-  "common.close": "Close",
 
   // The workspace switcher: a workspace is a folder on one location
-  "workspace.label": "Workspace",
   "workspace.switch": "Switch workspace",
   "workspace.none": "No workspace yet",
   "workspace.on": "On {location}",
@@ -1232,7 +1229,6 @@ export const enUS = {
   "settings.section.appearance": "Appearance",
   "settings.section.locations": "Work in",
   "settings.section.shortcuts": "Keyboard shortcuts",
-  "settings.section.harness": "Harness",
   "settings.harness.group": "Harness",
   "settings.providers.group": "Model providers",
   "settings.section.subscriptions": "Subscriptions",
@@ -1429,8 +1425,6 @@ export const enUS = {
   "settings.locations.actions": "Actions for {name}",
   "settings.locations.edit": "Edit",
   "settings.locations.remove": "Remove",
-  "settings.defaults.lead":
-    "New sessions of the agent start with these settings. They are kept on each location.",
   "settings.defaults.location": "Work in",
   "settings.defaults.none": "No location is connected.",
   "settings.defaults.noneBody":

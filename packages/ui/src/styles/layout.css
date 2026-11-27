@@ -1357,10 +1357,6 @@ svg[data-slot="dot"] {
   transition: none;
 }
 
-[data-slot="tooltip-shortcut"] {
-  color: var(--cycle-ink-muted);
-}
-
 :is([data-slot="dialog-content"], [data-slot="alert-dialog-content"]) {
   border: 1px solid var(--ui-border);
   border-radius: var(--cycle-radius-card);

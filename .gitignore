@@ -36,6 +36,4 @@ __screenshots__/
 .claude/worktrees/
 **/src/styles/built.css
 **/src/styles/fonts/
-apps/desktop/dist
-apps/desktop/build
 packages/ui/gallery/shots

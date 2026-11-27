@@ -1,6 +1,6 @@
 import { Button } from "@ui-sdk/react/button";
 import { useState } from "react";
-import type { LocationStatus, SessionSummary, UpdateState } from "../api.ts";
+import type { SessionSummary, UpdateState } from "../api.ts";
 import type { Translator } from "../i18n.ts";
 import { AppNotice } from "./app-notice.tsx";
 import { ConfirmDialog } from "./dialogs.tsx";
@@ -167,11 +167,6 @@ export const workingSessions = (
   (sessions ?? []).filter(
     (s) => s.state === "running" || s.state === "requires_action" || (s.background ?? 0) > 0,
   );
-
-/** Whether a location's daemon has something to say in the notices: this app cannot use it, or it can be updated. */
-export const daemonNoticed = (status: LocationStatus | undefined): boolean =>
-  status?.incompatible !== undefined ||
-  (status?.daemon !== undefined && status.daemon.upgrade !== undefined);
 
 /**
  * A location whose daemon this app cannot use, or that is too old and can be updated over ssh. When that cannot be

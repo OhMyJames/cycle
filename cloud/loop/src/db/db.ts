@@ -7,8 +7,6 @@ import { MIGRATIONS, migrate } from "./schema.ts";
 
 export const DB_FILE = "loop.db";
 
-export const dbPath = (stateDir: string): string => join(stateDir, DB_FILE);
-
 /** Opens (and makes, if it is not there) the database and brings its schema up to date. */
 export const openDb = (
   stateDir: string,
