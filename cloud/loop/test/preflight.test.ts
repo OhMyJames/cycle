@@ -49,6 +49,19 @@ test("too many criteria is sent back to be split", () => {
   if (!result.ok) expect(result.reasons[0]).toContain("split");
 });
 
+test("maxCriteria defaults to 12: 9–12 criteria pass, 13 are sent back (CYC-509)", () => {
+  const dflt = config();
+  expect(dflt.maxCriteria).toBe(12);
+  const body = (n: number) =>
+    `## 验收标准\n${Array.from({ length: n }, (_, i) => `${i + 1}. c${i + 1}。验证：\`bun run check\``).join("\n")}`;
+  for (const n of [9, 12]) {
+    expect(preflight(issue({ description: body(n), typeId: null }), dflt).ok).toBe(true);
+  }
+  const result = preflight(issue({ description: body(13), typeId: null }), dflt);
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.reasons[0]).toContain("at most 12");
+});
+
 test("the comment lists the reasons and says how to come back", () => {
   const text = sendBackComment(["a", "b"]);
   expect(text).toContain("- a");

@@ -291,7 +291,7 @@ export const defaultConfig = (
   remote: "origin",
   baseRef: "origin/main",
   baseBranch: "main",
-  maxCriteria: 8,
+  maxCriteria: 12,
   maxFixRounds: 3,
   ciChecks: ["check", "browser", "integration"],
   releaseNodeModules: false,
@@ -330,7 +330,8 @@ export type SessionRole =
   | "research_qa"
   | "triage"
   | "shape"
-  | "shape_qa";
+  | "shape_qa"
+  | "graph_planner";
 
 export type TurnResult = {
   /** `end_turn` is the only one that is a finished turn; `cancelled`, `error`, `max_tokens`, `refusal` are not. */

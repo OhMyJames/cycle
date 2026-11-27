@@ -494,9 +494,9 @@ test("a description that fails the preflight of its type is a finding, labelled"
     'Part 2 ("B 功能"): Required sections are missing or empty',
   );
   const tooMany = featureBody(
-    Array.from({ length: 9 }, (_, i) => `${i + 1}. x。验证：\`bun run check\``).join("\n"),
+    Array.from({ length: 13 }, (_, i) => `${i + 1}. x。验证：\`bun run check\``).join("\n"),
   );
-  expect(shapeText(rewrite(undefined, tooMany))).toContain("It has 9 criteria");
+  expect(shapeText(rewrite(undefined, tooMany))).toContain("It has 13 criteria");
 });
 
 test("a bun test path must start with ./ and exist, or its directory must (not the root)", () => {

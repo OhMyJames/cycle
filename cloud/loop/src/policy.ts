@@ -18,7 +18,8 @@ export type Role =
   | "research_qa"
   | "triage"
   | "shape"
-  | "shape_qa";
+  | "shape_qa"
+  | "graph_planner";
 export type Decision = { decision: "allow" | "deny" | "ask"; reason: string };
 
 type ToolCall = { kind?: unknown; rawInput?: unknown; locations?: unknown };
@@ -155,6 +156,7 @@ const RESEARCH_RULES: ReadonlySet<Role> = new Set([
   "triage",
   "shape",
   "shape_qa",
+  "graph_planner",
 ]);
 const isResearch = (role: Role): boolean => RESEARCH_RULES.has(role);
 

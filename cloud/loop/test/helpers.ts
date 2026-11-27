@@ -261,6 +261,7 @@ export type Script = {
   triage?: (TurnResult | Error)[];
   shape?: (TurnResult | Error)[];
   shape_qa?: (TurnResult | Error)[];
+  graph_planner?: (TurnResult | Error)[];
   /** Either a persistent error for every create of this role, or a per-attempt queue (null = succeed). */
   createError?: Partial<Record<SessionRole, Error | (Error | null)[]>>;
 };
@@ -287,6 +288,7 @@ export class FakeSessions implements Sessions {
     triage: (TurnResult | Error)[];
     shape: (TurnResult | Error)[];
     shape_qa: (TurnResult | Error)[];
+    graph_planner: (TurnResult | Error)[];
     createError: Partial<Record<SessionRole, Error | (Error | null)[]>>;
   };
   constructor(script: Script) {
@@ -303,6 +305,7 @@ export class FakeSessions implements Sessions {
       triage: [...(script.triage ?? [])],
       shape: [...(script.shape ?? [])],
       shape_qa: [...(script.shape_qa ?? [])],
+      graph_planner: [...(script.graph_planner ?? [])],
       createError,
     };
   }
