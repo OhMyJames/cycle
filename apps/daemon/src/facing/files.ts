@@ -2,7 +2,16 @@
 // has changed. Git runs only for a repository the person trusts (.agents/notes/2026-11-22-files-and-diff-sources.md).
 import { isAbsolute } from "node:path";
 import type { AgentApp } from "@agentclientprotocol/sdk/experimental/v2";
-import { diffFile, diffStatus, filesSearch, foldersList, fsList, fsRead } from "@cycle/protocol";
+import {
+  diffFile,
+  diffStatus,
+  filesSearch,
+  foldersList,
+  fsList,
+  fsRead,
+  SEARCH_LIMITS,
+  search,
+} from "@cycle/protocol";
 import { workspaceFile, workspaceStatus } from "../diff.ts";
 import { INVALID_PARAMS, RpcError } from "../errors.ts";
 import { searchFiles } from "../files.ts";
@@ -27,6 +36,16 @@ export const registerFiles = (app: AgentApp, core: Core): void => {
     const found = await searchFiles(cwd, params.query, params.limit);
     return { root: cwd, ...found };
   });
+  cycle(search, (params) =>
+    core.search.search(
+      core.index
+        .createdOrder()
+        .map(([, id]) => id)
+        .reverse(),
+      params.query,
+      params.limit ?? SEARCH_LIMITS.defaultLimit,
+    ),
+  );
   cycle(foldersList, (params) => listFolders(params.path, params.hidden === true));
   cycle(fsList, (params) =>
     // Git says what it ignores only for a repository the person trusts, since it reads that repository's

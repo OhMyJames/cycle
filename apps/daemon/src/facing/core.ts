@@ -30,6 +30,7 @@ import type { Logger } from "../logger.ts";
 import type { AgentOptionsCache } from "../options-cache.ts";
 import type { PluginService } from "../plugins.ts";
 import type { ModelProviders } from "../providers.ts";
+import type { SearchIndex } from "../search.ts";
 import type { Attachment, ClientConn, Pending, Session } from "../session.ts";
 import type { AgentHome } from "../storage.ts";
 import type { Terminals } from "../terminals.ts";
@@ -44,6 +45,8 @@ export type Core = {
   readonly log: Logger;
   readonly agents: ReadonlyMap<string, AgentDefinition>;
   readonly store: LogStore;
+  /** The full-text index over the sessions' histories (docs/protocol.md §8 "搜索对话内容"). */
+  readonly search: SearchIndex;
   readonly index: SessionIndex;
   /** The loaded sessions, by id. */
   readonly sessions: Map<string, Session>;
