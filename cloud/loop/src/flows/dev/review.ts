@@ -11,24 +11,26 @@ import {
 import type { Issue } from "../../types.ts";
 import { tellTicket } from "../ticket.ts";
 import { handleConflict } from "./conflict.ts";
-import { type DevRun, type FlowHost, type Save, where } from "./context.ts";
+import { type Dev, type DevRun, type Save, where } from "./context.ts";
 import { assertNotClosed, confirmMerged } from "./guard.ts";
 
 export async function review(
-  h: FlowHost,
+  x: Dev,
   run: DevRun,
   issue: Issue,
   book: CriteriaBook,
   save: Save,
 ): Promise<{ prUrl: string; autoMerge: boolean } | undefined> {
+  const { h } = x;
   const { config, store } = h.d;
   const worktree = h.need(run.worktree ?? undefined);
   const prUrl = h.need(run.dev.prUrl ?? undefined);
   const head = await h.d.workspace.head(where(h, worktree));
   const headSha = head.ok ? head.sha : "";
 
-  // Confirm CI is green for this exact HEAD (re-checks via GitHub after a crash recovery).
-  let ciGreen = headSha !== "" && (await h.d.store.loadCi(run.key)).greenSha === headSha;
+  // Confirm CI is green for this exact HEAD. Only what this process saw counts: after a crash recovery the first
+  // review asks GitHub again, whatever `ci_state` says.
+  let ciGreen = headSha !== "" && x.greenSeen.get(run.key) === headSha;
   let ciNotGreenReason: string | null = null;
   if (!ciGreen) {
     if (headSha === "") {
@@ -42,6 +44,7 @@ export async function review(
       );
       if (read.ok && read.status.state === "passed") {
         ciGreen = true;
+        x.greenSeen.set(run.key, headSha);
         await h.d.store.saveCi(run.key, { greenSha: headSha });
       } else {
         ciNotGreenReason = read.ok
@@ -222,6 +225,7 @@ export async function review(
       );
     }
 
+    x.greenSeen.delete(run.key);
     await h.d.store.saveCi(run.key, { greenSha: null });
     await store.event(run.key, "review_done", { decision: "reject", autoMerge: false });
     const findings = `PR review rejected ${prUrl} (decision: reject). Fix the blocker/major issues below, run \`bun run check\`, and commit; the loop will verify, run QA, push to the same branch, wait for CI, and re-review.\n\n${formatted}`;
@@ -255,6 +259,7 @@ export async function review(
         if (outcome === "conflict") {
           // Not delivered: merge the base in (auto-merge is turned off first), then CI and review run again.
           await handleConflict(h, run, prUrl, worktree, save);
+          x.greenSeen.delete(run.key);
           await h.d.store.saveCi(run.key, { greenSha: null });
           return undefined;
         }
