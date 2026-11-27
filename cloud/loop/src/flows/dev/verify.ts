@@ -90,5 +90,6 @@ export async function verify(
     await nextRound(h, run, failures.join("\n\n"), save);
     return;
   }
-  await save({ phase: "qa" });
+  // The person's edit has been judged by the checks: a later fix turn need not be told of it again.
+  await save({ phase: "qa", dev: { bodyChanged: false } });
 }

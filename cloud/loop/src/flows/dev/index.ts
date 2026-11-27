@@ -142,34 +142,29 @@ export const devFlow = (host: FlowHost): Flow => {
       const hash = bodyHashOf(issue);
       if (current.dev.bodyHash === hash) return undefined;
       const pre = preflight(issue, host.d.config);
-      // A run begun before the hash was kept: the criteria it holds say whether the body changed since.
-      if (current.dev.bodyHash == null) {
-        const same =
-          pre.ok &&
-          pre.kind === "dev" &&
-          JSON.stringify(pre.specs) ===
-            JSON.stringify(
-              (await host.d.store.loadCriteria(run.key)).items.map(({ text, verify }) => ({
-                text,
-                verify,
-              })),
-            );
-        if (same || !pre.ok)
-          return { run: { ...current, dev: { ...current.dev, bodyHash: hash } } };
-      }
       if (!pre.ok || pre.kind !== "dev") {
         const reasons = pre.ok ? ["工单不再是开发工单"] : pre.reasons;
         await sendBack(host, issue, reasons);
         return { rejected: reasons };
       }
-      await host.d.store.event(run.key, "body_changed", { criteria: pre.specs.length });
-      // The criteria start again from pending: a run that was past the checks goes back to them.
+      const stored = (await host.d.store.loadCriteria(run.key)).items.map(({ text, verify }) => ({
+        text,
+        verify,
+      }));
+      const sameCriteria = JSON.stringify(pre.specs) === JSON.stringify(stored);
+      // A run begun before the hash was kept cannot say whether the prose changed: it adopts the hash.
+      if (current.dev.bodyHash == null && sameCriteria)
+        return { run: { ...current, dev: { ...current.dev, bodyHash: hash } } };
+      const noted = { ...current.dev, bodyHash: hash, bodyChanged: true };
+      // Same criteria: Dev is told, and nothing else restarts.
+      if (sameCriteria) return { run: { ...current, dev: noted } };
+      // New criteria start from pending: a run that was past the checks goes back to them.
       const from = current.resumeFrom;
       return {
         run: {
           ...current,
           resumeFrom: from === null || from === "claimed" || from === "dev" ? from : "verify",
-          dev: { ...current.dev, bodyHash: hash, bodyChanged: true },
+          dev: noted,
         },
         book: CriteriaBook.fromSpecs(pre.specs),
       };

@@ -92,15 +92,16 @@ export async function dev(
     result = await h.turn(
       run.key,
       sessionId,
-      conflictPrompt ??
-        handoffBrief(
-          issue,
-          book.items,
-          progress,
-          gitLog,
-          run.findings,
-          await docTexts(h, run, issue, ["Design", "Plan"]),
-        ),
+      notice +
+        (conflictPrompt ??
+          handoffBrief(
+            issue,
+            book.items,
+            progress,
+            gitLog,
+            run.findings,
+            await docTexts(h, run, issue, ["Design", "Plan"]),
+          )),
       { role: "dev", worktree, timeoutMs: config.turnTimeoutMs },
     );
   }

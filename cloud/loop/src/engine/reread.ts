@@ -40,7 +40,10 @@ export const putBackRun = async (
       dedupe: `move:${run.key}:resumed:${tx.countEvents(run.key, "resumed") + 1}`,
       payload: { to: "inProgress", from: "todo" },
     });
-    tx.event(run.key, "resumed", { phase: saved.phase });
+    tx.event(run.key, "resumed", {
+      phase: saved.phase,
+      reread: again !== undefined,
+    });
     return saved;
   });
   await flush();

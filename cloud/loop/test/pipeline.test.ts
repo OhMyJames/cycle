@@ -2451,7 +2451,7 @@ test("a blocked run put back with an edited body: the criteria are read again an
   expect(s.sessions.created.filter((id) => id.startsWith("dev"))).toEqual(["dev-1"]);
   const book = await s.store.loadCriteria("CYC-1");
   expect(book.items[0]?.text).toContain("开关在设置页可用");
-  expect((await s.store.events()).some((e) => e.kind === "body_changed")).toBe(true);
+  expect((await s.store.events()).filter((e) => e.kind === "resumed").at(-1)?.reread).toBe(true);
 });
 
 test("a blocked run put back with an unchanged body goes on as before", async () => {
@@ -2463,7 +2463,7 @@ test("a blocked run put back with an unchanged body goes on as before", async ()
   expect(after.length).toBeGreaterThan(0);
   expect(after.some((p) => p.prompt.includes("A person edited"))).toBe(false);
   expect(s.sessions.created.filter((id) => id.startsWith("dev"))).toEqual(["dev-1"]);
-  expect((await s.store.events()).some((e) => e.kind === "body_changed")).toBe(false);
+  expect((await s.store.events()).filter((e) => e.kind === "resumed").at(-1)?.reread).toBe(false);
 });
 
 test("a blocked run put back with an edited body that fails the preflight is sent back", async () => {
@@ -2486,7 +2486,31 @@ test("a blocked run begun before the body hash was kept still notices an edited 
   found.description = readyDescription.replace("开关可用", "开关在设置页可用");
   found.columnId = 22;
   await s.pipeline.step();
-  expect((await s.store.events()).some((e) => e.kind === "body_changed")).toBe(true);
+  expect((await s.store.events()).filter((e) => e.kind === "resumed").at(-1)?.reread).toBe(true);
   // the criteria start pending, so the run goes back to the checks instead of on to QA
   expect((await s.store.events()).filter((e) => e.kind === "resumed").at(-1)?.phase).toBe("verify");
+});
+
+test("a legacy run whose edited body fails the preflight is sent back, not resumed on old criteria", async () => {
+  const s = await blockedInVerify();
+  const run = await s.store.load("CYC-1");
+  if (run === undefined || run.kind !== "dev") throw new Error("no dev run");
+  await s.store.save({ ...run, dev: { ...run.dev, bodyHash: null } });
+  const found = s.tracker.issues[0] as Issue;
+  found.description = "no criteria any more";
+  found.columnId = 22;
+  expect((await s.pipeline.step()).status).toBe("rejected");
+  expect((await s.store.load("CYC-1"))?.phase).toBe("blocked");
+});
+
+test("an edit that leaves the criteria alone still tells Dev, and the checks do not restart", async () => {
+  const s = await blockedInVerify();
+  const before = s.sessions.prompts.filter((p) => p.role === "dev").length;
+  const found = s.tracker.issues[0] as Issue;
+  found.description = `${readyDescription}\n补充说明：已决定。\n`;
+  found.columnId = 22;
+  await s.pipeline.step();
+  const after = s.sessions.prompts.filter((p) => p.role === "dev").slice(before);
+  expect(after[0]?.prompt).toContain("A person edited CYC-1");
+  expect(after[0]?.prompt).toContain("补充说明：已决定");
 });
