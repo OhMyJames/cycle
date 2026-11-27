@@ -58,36 +58,34 @@ export const todoIntake = (host: FlowHost): Intake => ({
 
 /** Sends a work item back to Blocked with the reasons the preflight gave: one comment for one reason. */
 export const sendBack = async (host: FlowHost, issue: Issue, reasons: string[]): Promise<void> => {
-  {
-    const { store } = host.d;
-    const body = sendBackComment(reasons);
-    const why = new Bun.CryptoHasher("sha256").update(body).digest("hex").slice(0, 12);
-    store.transaction((tx) => {
-      const seq = tx.countEvents(issue.key, "preflight_rejected") + 1;
-      // One comment for one reason, however many rounds or re-queues see it (on purpose: a person who puts the
-      // work item back unfixed has already read it); the move is written each time, and does nothing
-      // when the work item is already in Blocked.
+  const { store } = host.d;
+  const body = sendBackComment(reasons);
+  const why = new Bun.CryptoHasher("sha256").update(body).digest("hex").slice(0, 12);
+  store.transaction((tx) => {
+    const seq = tx.countEvents(issue.key, "preflight_rejected") + 1;
+    // One comment for one reason, however many rounds or re-queues see it (on purpose: a person who puts the
+    // work item back unfixed has already read it); the move is written each time, and does nothing
+    // when the work item is already in Blocked.
+    writeIntent(tx, {
+      run: issue.key,
+      issue,
+      kind: "comment",
+      dedupe: `rejected:${issue.key}:${why}`,
+      payload: { body },
+    });
+    // Not while a move to Blocked is still waiting: a tracker that is down must not collect one per round.
+    const waiting = tx.pendingIntents().some((i) => i.kind === "move" && i.runKey === issue.key);
+    if (!waiting)
       writeIntent(tx, {
         run: issue.key,
         issue,
-        kind: "comment",
-        dedupe: `rejected:${issue.key}:${why}`,
-        payload: { body },
+        kind: "move",
+        dedupe: `move:${issue.key}:rejected:${seq}`,
+        payload: { to: "blocked", from: "todo" },
       });
-      // Not while a move to Blocked is still waiting: a tracker that is down must not collect one per round.
-      const waiting = tx.pendingIntents().some((i) => i.kind === "move" && i.runKey === issue.key);
-      if (!waiting)
-        writeIntent(tx, {
-          run: issue.key,
-          issue,
-          kind: "move",
-          dedupe: `move:${issue.key}:rejected:${seq}`,
-          payload: { to: "blocked", from: "todo" },
-        });
-      tx.event(issue.key, "preflight_rejected", { reasons: reasons.length });
-    });
-    await host.reconcile.flush(issue.id, { capMs: host.d.mirrorCapMs ?? 10_000 });
-  }
+    tx.event(issue.key, "preflight_rejected", { reasons: reasons.length });
+  });
+  await host.reconcile.flush(issue.id, { capMs: host.d.mirrorCapMs ?? 10_000 });
 };
 
 /** Unfinished goes on; blocked only once a person has put the work item back in `Todo` with the `auto` label. */

@@ -2476,3 +2476,17 @@ test("a blocked run put back with an edited body that fails the preflight is sen
   expect((await s.store.load("CYC-1"))?.phase).toBe("blocked");
   expect(s.tracker.moves.at(-1)).toBe("CYC-1:blocked");
 });
+
+test("a blocked run begun before the body hash was kept still notices an edited body", async () => {
+  const s = await blockedInVerify();
+  const run = await s.store.load("CYC-1");
+  if (run === undefined || run.kind !== "dev") throw new Error("no dev run");
+  await s.store.save({ ...run, dev: { ...run.dev, bodyHash: null }, resumeFrom: "qa" });
+  const found = s.tracker.issues[0] as Issue;
+  found.description = readyDescription.replace("开关可用", "开关在设置页可用");
+  found.columnId = 22;
+  await s.pipeline.step();
+  expect((await s.store.events()).some((e) => e.kind === "body_changed")).toBe(true);
+  // the criteria start pending, so the run goes back to the checks instead of on to QA
+  expect((await s.store.events()).filter((e) => e.kind === "resumed").at(-1)?.phase).toBe("verify");
+});

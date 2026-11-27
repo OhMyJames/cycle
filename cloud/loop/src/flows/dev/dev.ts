@@ -53,13 +53,13 @@ export async function dev(
   // CYC-467: the body changed while the run was blocked: the turn begins by saying so, whatever phase it resumed in.
   const notice = run.dev.bodyChanged === true ? bodyChangedNotice(issue, book.items) : "";
   const prompt =
-    conflictPrompt ??
     notice +
+    (conflictPrompt ??
       (run.findings !== null
         ? fixBrief(run.round, run.findings)
         : progress !== "" || byPerson
           ? continueBrief(issue, byPerson)
-          : devBrief(issue, book.items, await docTexts(h, run, issue, ["Design", "Plan"])));
+          : devBrief(issue, book.items, await docTexts(h, run, issue, ["Design", "Plan"]))));
 
   let sessionId = h.need(run.devSessionId ?? undefined);
   let result: TurnResult;

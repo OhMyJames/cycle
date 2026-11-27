@@ -141,17 +141,36 @@ export const devFlow = (host: FlowHost): Flow => {
       if (current.dev.fullFlowDocs.length > 0) return undefined;
       const hash = bodyHashOf(issue);
       if (current.dev.bodyHash === hash) return undefined;
-      if (current.dev.bodyHash == null)
-        return { run: { ...current, dev: { ...current.dev, bodyHash: hash } } };
       const pre = preflight(issue, host.d.config);
+      // A run begun before the hash was kept: the criteria it holds say whether the body changed since.
+      if (current.dev.bodyHash == null) {
+        const same =
+          pre.ok &&
+          pre.kind === "dev" &&
+          JSON.stringify(pre.specs) ===
+            JSON.stringify(
+              (await host.d.store.loadCriteria(run.key)).items.map(({ text, verify }) => ({
+                text,
+                verify,
+              })),
+            );
+        if (same || !pre.ok)
+          return { run: { ...current, dev: { ...current.dev, bodyHash: hash } } };
+      }
       if (!pre.ok || pre.kind !== "dev") {
         const reasons = pre.ok ? ["工单不再是开发工单"] : pre.reasons;
         await sendBack(host, issue, reasons);
         return { rejected: reasons };
       }
       await host.d.store.event(run.key, "body_changed", { criteria: pre.specs.length });
+      // The criteria start again from pending: a run that was past the checks goes back to them.
+      const from = current.resumeFrom;
       return {
-        run: { ...current, dev: { ...current.dev, bodyHash: hash, bodyChanged: true } },
+        run: {
+          ...current,
+          resumeFrom: from === null || from === "claimed" || from === "dev" ? from : "verify",
+          dev: { ...current.dev, bodyHash: hash, bodyChanged: true },
+        },
         book: CriteriaBook.fromSpecs(pre.specs),
       };
     },

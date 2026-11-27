@@ -32,7 +32,7 @@ export const putBackRun = async (
   });
   const saved = d.store.transaction((tx) => {
     const saved = tx.save(putBack);
-    tx.saveCriteria(run.key, criteria);
+    if (again?.book !== undefined) tx.saveCriteria(run.key, criteria);
     writeIntent(tx, {
       run: run.key,
       issue,
