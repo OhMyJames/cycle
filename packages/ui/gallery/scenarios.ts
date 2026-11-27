@@ -8,6 +8,10 @@ import type {
   EnvironmentsState,
   LocationConfig,
   LocationStatus,
+  LoopBoardAnswer,
+  LoopNoticesAnswer,
+  LoopProjectsAnswer,
+  LoopTicketAnswer,
   PermissionRequest,
   PlanUsage,
   PluginInfo,
@@ -78,6 +82,13 @@ export type Scenario = {
   draft?: { text: string; attachments?: Attachment[] };
   /** The environments main keeps, and each workspace's default (docs/desktop.md "环境"). */
   environments?: EnvironmentsState;
+  /** Loop server projects, boards, ticket details and notices for Loop gallery scenarios. */
+  loop?: {
+    projects?: LoopProjectsAnswer;
+    boards?: Record<string, LoopBoardAnswer>;
+    tickets?: Record<string, LoopTicketAnswer>;
+    notices?: Record<string, LoopNoticesAnswer>;
+  };
   /** Runs once the page has drawn: open a dialog, press a key, or send an event as the app's main process would. */
   after?: (root: HTMLElement, emit: (event: AppEvent) => void) => Promise<void>;
 };
@@ -3322,6 +3333,460 @@ export const scenarios: Record<string, Scenario> = {
           bytes: 70,
         },
       ],
+    },
+  },
+  "loop-board": {
+    title: "Loop full-width Kanban board with awaiting-approval card badges and live stages",
+    loop: {
+      projects: {
+        kind: "ok",
+        projects: [
+          {
+            name: "Cycle",
+            projectKey: "CYC",
+            repo: { displayName: "OhMyJames/cycle", forge: "github" },
+          },
+        ],
+      },
+      boards: {
+        CYC: {
+          kind: "ok",
+          columns: [
+            {
+              id: 1,
+              name: "Backlog",
+              stateType: "backlog",
+              more: false,
+              tickets: [
+                {
+                  identifier: "CYC-465",
+                  title: "支持工具输出、终端输出和大 diff 折叠与按需展开",
+                  priority: "urgent",
+                  column: "Backlog",
+                  actions: ["approve"],
+                  chat: "new",
+                  pending: { reason: "已补充长输出阈值与折叠交互验收标准。", criteria: 3 },
+                },
+                {
+                  identifier: "CYC-464",
+                  title: "支持长会话消息列表只渲染可视区域附近的消息",
+                  priority: "urgent",
+                  column: "Backlog",
+                  actions: ["approve"],
+                  chat: "new",
+                  pending: { reason: "明确了锚点保持与回到底部边界。", criteria: 4 },
+                },
+                {
+                  identifier: "CYC-358",
+                  title: "输入框里 @ 选中的内容可以整块插入、整块删除",
+                  priority: "high",
+                  column: "Backlog",
+                  actions: ["approve"],
+                  chat: "new",
+                  pending: { reason: "包含中文输入法与撤销栈覆盖。", criteria: 6 },
+                },
+                {
+                  identifier: "CYC-370",
+                  title: "模型选择器对自定义服务商模型的协议边界给出提示",
+                  priority: "medium",
+                  column: "Backlog",
+                  actions: ["approve"],
+                  chat: "new",
+                },
+              ],
+            },
+            {
+              id: 2,
+              name: "Todo",
+              stateType: "unstarted",
+              more: false,
+              tickets: [
+                {
+                  identifier: "CYC-499",
+                  title: "人把工单移出 Todo 或 In Progress 后，Loop 仍继续开发",
+                  priority: "high",
+                  column: "Todo",
+                  actions: ["to_backlog"],
+                  chat: "none",
+                },
+                {
+                  identifier: "CYC-498",
+                  title: "Loop 崩溃恢复后回到评审阶段时，不再向 GitHub 确认 CI",
+                  priority: "low",
+                  column: "Todo",
+                  actions: ["to_backlog"],
+                  chat: "none",
+                },
+                {
+                  identifier: "CYC-497",
+                  title: "Loop 对账在 tracker 断网时退避等待，卡住的写入可以重试",
+                  priority: "medium",
+                  column: "Todo",
+                  actions: ["to_backlog"],
+                  chat: "none",
+                },
+              ],
+            },
+            {
+              id: 3,
+              name: "In Progress",
+              stateType: "started",
+              more: false,
+              tickets: [
+                {
+                  identifier: "CYC-495",
+                  title: "Loop 对账会把人手动移走的工单写回 Blocked 或 In Progress",
+                  priority: "high",
+                  column: "In Progress",
+                  actions: [],
+                  chat: "watch",
+                  loopStage: {
+                    stage: "qa",
+                    since: new Date(Date.now() - 4 * 60_000).toISOString(),
+                  },
+                },
+                {
+                  identifier: "CYC-483",
+                  title: "Loop 页面只通过 Loop API 读写，桌面端不再保存 itsaplan key",
+                  priority: "medium",
+                  column: "In Progress",
+                  actions: [],
+                  chat: "watch",
+                  loopStage: {
+                    stage: "develop",
+                    since: new Date(Date.now() - 12 * 60_000).toISOString(),
+                  },
+                },
+                {
+                  identifier: "CYC-494",
+                  title: "Loop 的 Dev 会话需要人决定时立刻转 Blocked 并写明问题",
+                  priority: "high",
+                  column: "In Progress",
+                  actions: [],
+                  chat: "watch",
+                  loopStage: {
+                    stage: "ci",
+                    since: new Date(Date.now() - 45 * 60_000).toISOString(),
+                  },
+                },
+              ],
+            },
+            {
+              id: 4,
+              name: "In Review",
+              stateType: "started",
+              more: false,
+              tickets: [
+                {
+                  identifier: "CYC-469",
+                  title: "桌面端支持 UI 热更新：只改界面时不发版、不更新应用也能生效",
+                  priority: "high",
+                  column: "In Review",
+                  actions: ["to_backlog", "to_todo"],
+                  chat: "none",
+                },
+              ],
+            },
+            {
+              id: 5,
+              name: "Blocked",
+              stateType: "started",
+              more: false,
+              tickets: [],
+            },
+            {
+              id: 6,
+              name: "Done",
+              stateType: "completed",
+              more: true,
+              tickets: [
+                {
+                  identifier: "CYC-451",
+                  title: "Loop 页面：在 Backlog 里批量批准或退回待批准的工单",
+                  priority: "medium",
+                  column: "Done",
+                  actions: [],
+                  chat: "none",
+                },
+              ],
+            },
+          ],
+        },
+      },
+    },
+    after: async (root) => {
+      const btn = root.querySelector<HTMLButtonElement>('[data-page-open="loop"]');
+      btn?.click();
+      await until(() => root.querySelector('[data-kind="loop-board"]') !== null, "loop board");
+      await frames(4);
+    },
+  },
+  "loop-drawer": {
+    title: "Loop Kanban board with right-side ticket drawer and Markdown description",
+    loop: {
+      projects: {
+        kind: "ok",
+        projects: [
+          {
+            name: "Cycle",
+            projectKey: "CYC",
+            repo: { displayName: "OhMyJames/cycle", forge: "github" },
+          },
+        ],
+      },
+      boards: {
+        CYC: {
+          kind: "ok",
+          columns: [
+            {
+              id: 1,
+              name: "Backlog",
+              stateType: "backlog",
+              more: false,
+              tickets: [
+                {
+                  identifier: "CYC-465",
+                  title: "支持工具输出、终端输出和大 diff 折叠与按需展开",
+                  priority: "urgent",
+                  column: "Backlog",
+                  actions: ["approve"],
+                  chat: "new",
+                  pending: { reason: "已补充长输出阈值与折叠交互验收标准。", criteria: 3 },
+                },
+              ],
+            },
+            {
+              id: 2,
+              name: "Todo",
+              stateType: "unstarted",
+              more: false,
+              tickets: [
+                {
+                  identifier: "CYC-499",
+                  title: "人把工单移出 Todo 或 In Progress 后，Loop 仍继续开发",
+                  priority: "high",
+                  column: "Todo",
+                  actions: ["to_backlog"],
+                  chat: "none",
+                },
+              ],
+            },
+            {
+              id: 3,
+              name: "In Progress",
+              stateType: "started",
+              more: false,
+              tickets: [
+                {
+                  identifier: "CYC-495",
+                  title: "Loop 对账会把人手动移走的工单写回 Blocked 或 In Progress",
+                  priority: "high",
+                  column: "In Progress",
+                  actions: [],
+                  chat: "watch",
+                  loopStage: {
+                    stage: "qa",
+                    since: new Date(Date.now() - 4 * 60_000).toISOString(),
+                  },
+                },
+              ],
+            },
+            { id: 4, name: "Done", stateType: "completed", more: false, tickets: [] },
+          ],
+        },
+      },
+      tickets: {
+        "CYC-465": {
+          kind: "ok",
+          ticket: {
+            identifier: "CYC-465",
+            title: "支持工具输出、终端输出和大 diff 折叠与按需展开",
+            priority: "urgent",
+            column: "Backlog",
+            actions: ["approve"],
+            chat: "new",
+            pending: { reason: "已补充长输出阈值与折叠交互验收标准。", criteria: 3 },
+            body: "## 背景\n\n当工具返回上千行输出或超大 diff 时，直接全部展开会拖慢长会话滚动，并淹没上下文。\n\n## 方案\n\n- 超过 `40` 行的输出默认展示末尾并附按需展开按钮\n- 展开状态在流式更新期间保持，不闪烁回弹\n\n```ts\nconst PREVIEW_LINES = 40;\n```",
+            acceptance: [
+              "长工具输出默认折叠并保留末尾 40 行",
+              "点击展开后可查看完整内容且不触发页面跳动",
+              "浅色与深色模式下对比度满足 4.5:1",
+            ],
+            links: ["https://github.com/OhMyJames/cycle/pull/315"],
+          },
+        },
+      },
+    },
+    after: async (root) => {
+      root.querySelector<HTMLButtonElement>('[data-page-open="loop"]')?.click();
+      await until(
+        () => root.querySelector('[data-slot="loop-ticket-title"]') !== null,
+        "ticket card",
+      );
+      root.querySelector<HTMLButtonElement>('[data-slot="loop-ticket-title"]')?.click();
+      await until(
+        () => root.querySelector('[data-slot="loop-detail-markdown"]') !== null,
+        "drawer",
+      );
+      await frames(4);
+    },
+  },
+  "loop-overview": {
+    title: "Loop Overview with Needs you notices and Project summary cards",
+    loop: {
+      projects: {
+        kind: "ok",
+        projects: [
+          {
+            name: "Cycle",
+            projectKey: "CYC",
+            repo: { displayName: "OhMyJames/cycle", forge: "github" },
+          },
+          {
+            name: "Docs",
+            projectKey: "DOC",
+            repo: { displayName: "clawdot/docs", forge: "github" },
+          },
+        ],
+      },
+      boards: {
+        CYC: {
+          kind: "ok",
+          columns: [
+            {
+              id: 1,
+              name: "Backlog",
+              stateType: "backlog",
+              more: false,
+              tickets: [
+                {
+                  identifier: "CYC-465",
+                  title: "支持工具输出折叠",
+                  priority: "urgent",
+                  column: "Backlog",
+                  actions: ["approve"],
+                  chat: "new",
+                  pending: { reason: "待审", criteria: 3 },
+                },
+                {
+                  identifier: "CYC-464",
+                  title: "长会话虚拟滚动",
+                  priority: "high",
+                  column: "Backlog",
+                  actions: ["approve"],
+                  chat: "new",
+                  pending: { reason: "待审", criteria: 4 },
+                },
+              ],
+            },
+            {
+              id: 2,
+              name: "Todo",
+              stateType: "unstarted",
+              more: false,
+              tickets: [
+                {
+                  identifier: "CYC-499",
+                  title: "对账修复",
+                  priority: "high",
+                  column: "Todo",
+                  actions: ["to_backlog"],
+                  chat: "none",
+                },
+              ],
+            },
+            {
+              id: 3,
+              name: "In Progress",
+              stateType: "started",
+              more: false,
+              tickets: [
+                {
+                  identifier: "CYC-495",
+                  title: "对账状态写回",
+                  priority: "high",
+                  column: "In Progress",
+                  actions: [],
+                  chat: "watch",
+                },
+                {
+                  identifier: "CYC-483",
+                  title: "Loop API",
+                  priority: "medium",
+                  column: "In Progress",
+                  actions: [],
+                  chat: "watch",
+                },
+              ],
+            },
+            {
+              id: 4,
+              name: "Done",
+              stateType: "completed",
+              more: false,
+              tickets: [
+                {
+                  identifier: "CYC-451",
+                  title: "批量批准",
+                  priority: "medium",
+                  column: "Done",
+                  actions: [],
+                  chat: "none",
+                },
+              ],
+            },
+          ],
+        },
+        DOC: {
+          kind: "ok",
+          columns: [
+            {
+              id: 1,
+              name: "Backlog",
+              stateType: "backlog",
+              more: false,
+              tickets: [
+                {
+                  identifier: "DOC-12",
+                  title: "更新 Loop 架构文档",
+                  priority: "low",
+                  column: "Backlog",
+                  actions: ["approve"],
+                  chat: "new",
+                },
+              ],
+            },
+            { id: 2, name: "Done", stateType: "completed", more: false, tickets: [] },
+          ],
+        },
+      },
+      notices: {
+        CYC: {
+          kind: "ok",
+          notices: [
+            {
+              kind: "blocked",
+              identifier: "CYC-494",
+              title: "Loop 的 Dev 会话需要人决定时立刻转 Blocked",
+              reason: "自动化在「开发」卡住了：需要确认是否保留旧协议的兼容字段。",
+            },
+            {
+              kind: "review",
+              identifier: "CYC-469",
+              title: "桌面端支持 UI 热更新",
+              conclusion: "升级给人：PR 修改了主进程加载路径，需负责人确认安全边界。",
+            },
+          ],
+        },
+      },
+    },
+    after: async (root) => {
+      root.querySelector<HTMLButtonElement>('[data-page-open="loop"]')?.click();
+      await until(
+        () => root.querySelector('[data-slot="loop-notice"]') !== null,
+        "overview notices",
+      );
+      await frames(4);
     },
   },
 };
