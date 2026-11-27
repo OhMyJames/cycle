@@ -60,8 +60,87 @@ const columnRoleOf = (
   return nth === 0 ? "progress" : nth === 1 ? "review" : nth === 2 ? "blocked" : undefined;
 };
 
+/** One sub-ticket of a parent card, with the state of the column it sits in. */
+type Child = {
+  identifier: string;
+  title: string;
+  stateType: string;
+  role: ColumnRole | undefined;
+  done: boolean;
+};
+
+/** `parent identifier -> its sub-tickets`, from every column (not only the ones shown), in board order. */
+const childrenByParent = (columns: readonly LoopBoardColumn[]): ReadonlyMap<string, Child[]> => {
+  const map = new Map<string, Child[]>();
+  for (const c of columns) {
+    const role = columnRoleOf(columns, c);
+    for (const tk of c.tickets) {
+      const parent = tk.parent?.identifier;
+      if (parent === undefined) continue;
+      const list = map.get(parent) ?? [];
+      list.push({
+        identifier: tk.identifier,
+        title: tk.title,
+        stateType: c.stateType,
+        role,
+        done: c.stateType === "completed",
+      });
+      map.set(parent, list);
+    }
+  }
+  return map;
+};
+
+/** The foldable sub-ticket list at the bottom of a parent card. Its controls sit above the card-wide title button. */
+function SubtaskList({ items, onOpen }: { items: readonly Child[]; onOpen: (id: string) => void }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const done = items.filter((x) => x.done).length;
+  return (
+    <div data-slot="loop-subtasks" data-open={open || undefined}>
+      <button
+        type="button"
+        data-slot="loop-subtasks-toggle"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {open ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
+        <span>{t("loop.subtasks")}</span>
+        <span data-slot="loop-subtasks-count">
+          {done}/{items.length}
+        </span>
+      </button>
+      {open ? (
+        <ul data-slot="loop-subtask-list">
+          {items.map((c) => (
+            <li key={c.identifier}>
+              <button
+                type="button"
+                data-slot="loop-subtask"
+                data-id={c.identifier}
+                data-state-type={c.stateType}
+                data-role={c.role}
+                data-done={c.done ? "" : undefined}
+                title={c.title}
+                onClick={() => onOpen(c.identifier)}
+              >
+                <span data-slot="loop-subtask-dot" aria-hidden="true">
+                  {c.done ? <CheckIcon size={10} /> : null}
+                </span>
+                <span data-slot="loop-subtask-id">{c.identifier}</span>
+                <span data-slot="loop-subtask-title">{c.title}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 function TicketCard({
   ticket,
+  subtasks,
   act,
   busyAction,
   active,
@@ -70,6 +149,7 @@ function TicketCard({
   onOpen,
 }: {
   ticket: LoopTicket;
+  subtasks?: readonly Child[] | undefined;
   act: Act;
   busyAction?: string | undefined;
   active: boolean;
@@ -102,6 +182,17 @@ function TicketCard({
             />
           ) : null}
           <span data-slot="loop-ticket-id">{ticket.identifier}</span>
+          {ticket.parent ? (
+            <button
+              type="button"
+              data-slot="loop-ticket-parent"
+              title={ticket.parent.title}
+              aria-label={`${t("loop.parent")} ${ticket.parent.identifier}`}
+              onClick={() => onOpen(ticket.parent?.identifier ?? "")}
+            >
+              ↑ {ticket.parent.identifier}
+            </button>
+          ) : null}
         </span>
         <span data-slot="loop-ticket-badges">
           {isPending ? (
@@ -142,6 +233,9 @@ function TicketCard({
           ) : null}
         </div>
       ) : null}
+      {subtasks !== undefined && subtasks.length > 0 ? (
+        <SubtaskList items={subtasks} onOpen={onOpen} />
+      ) : null}
     </li>
   );
 }
@@ -163,6 +257,7 @@ function Column({
   onSelectAllPending,
   allPendingSelected,
   pendingCount,
+  childrenOf,
   act,
   busyAction,
   onOpen,
@@ -183,6 +278,7 @@ function Column({
   onSelectAllPending?: (() => void) | undefined;
   allPendingSelected?: boolean | undefined;
   pendingCount?: number | undefined;
+  childrenOf?: ReadonlyMap<string, Child[]> | undefined;
   act: Act;
   busyAction?: string | undefined;
   onOpen: (identifier: string) => void;
@@ -253,6 +349,7 @@ function Column({
                 <TicketCard
                   key={ticket.identifier}
                   ticket={ticket}
+                  subtasks={childrenOf?.get(ticket.identifier)}
                   act={act}
                   busyAction={busyAction}
                   active={openIdentifier === ticket.identifier}
@@ -418,6 +515,8 @@ export function Board({
 
   const columns =
     answer !== undefined && answer !== "loading" && answer.kind === "ok" ? answer.columns : [];
+
+  const childrenOf = useMemo(() => childrenByParent(columns), [columns]);
 
   const allPending = useMemo(() => {
     const list: LoopTicket[] = [];
@@ -726,6 +825,7 @@ export function Board({
                   }
                 : {})}
               {...(c.stateType === "completed" ? { collapsible: true } : {})}
+              childrenOf={childrenOf}
               act={act}
               busyAction={busyAction}
               onOpen={openTicket}

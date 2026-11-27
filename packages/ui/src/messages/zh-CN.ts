@@ -591,6 +591,8 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "loop.done.show": "显示已完成",
   "loop.done.hide": "隐藏已完成",
   "loop.column.empty": "这里没有工单",
+  "loop.subtasks": "子任务",
+  "loop.parent": "所属父工单",
   "loop.offline.title": "Loop 服务没有运行",
   "loop.offline.body": "在这台电脑上启动它，就能看到它的项目。下面是它上次有的项目。",
   "loop.offline.note": "离线",
