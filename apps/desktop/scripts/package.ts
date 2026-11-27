@@ -86,11 +86,9 @@ export const packageApp = (outDir = BUILD_DIR): Packaged => {
   if (platform !== "darwin" && platform !== "linux")
     throw new Error(`Packaging is for macOS and Linux, not ${platform}.`);
   requirePinnedBun();
-  const baseVersion = String(json(join(DESKTOP, "package.json")).version);
-  // `CYCLE_VERSION` names the version of this build (an alpha) without touching package.json.
-  const version = process.env.CYCLE_VERSION || baseVersion;
+  const version = String(json(join(DESKTOP, "package.json")).version);
   const plistVersion = plistVersions(version);
-  if (!plistVersion) throw new Error(`CYCLE_VERSION ${version} is not a version.`);
+  if (!plistVersion) throw new Error(`${version} is not a version.`);
   const git = (...args: string[]) =>
     Bun.spawnSync(["git", ...args], { cwd: ROOT })
       .stdout.toString()
@@ -131,7 +129,7 @@ export const packageApp = (outDir = BUILD_DIR): Packaged => {
   );
   writeFileSync(
     join(staging, BUILD_FILE),
-    `${JSON.stringify({ name: APP_NAME, identifier: BUNDLE_ID, version, baseVersion, ...(commit ? { commit } : {}), ...(subject ? { subject } : {}), platform, arch, electron: electron.version, shell, uiVersion, ...posthogProject() }, null, 2)}\n`,
+    `${JSON.stringify({ name: APP_NAME, identifier: BUNDLE_ID, version, baseVersion: version, ...(commit ? { commit } : {}), ...(subject ? { subject } : {}), platform, arch, electron: electron.version, shell, uiVersion, ...posthogProject() }, null, 2)}\n`,
   );
 
   const app = join(outDir, platform === "darwin" ? MAC_BUNDLE : "Cycle");

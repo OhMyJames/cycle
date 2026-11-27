@@ -27,8 +27,6 @@
     "test": "bun test",
     "prepare": "git config core.hooksPath .githooks || true",
     "pr-ship": "bun scripts/pr-ship.ts",
-    "alpha": "bun scripts/alpha.ts",
-    "alpha:watch": "bun scripts/alpha.ts --watch",
     "worktree:prune": "bun scripts/worktree-prune.ts",
     "test:integration": "bun scripts/integration.ts",
     "test:browser": "bun run --cwd packages/ui test:browser"

@@ -128,57 +128,11 @@ test("with nothing open, a location this app cannot use is not said to be connec
   expect(screen.queryByRole("button", { name: "Connect again" })).toBeNull();
 });
 
-test("an update from this machine says so, with the version, short commit and first line of the message", async () => {
+test("an available update says which version", async () => {
   const { emit } = await mount();
   await emit({
     type: "app-update",
-    state: {
-      current: "0.1.0",
-      kind: "available",
-      version: "0.1.1-alpha.2+abc1234",
-      source: "local",
-      commit: "abc1234def5678",
-      subject: "fix the thing\nlonger body",
-    },
-  });
-  const text = cards(nav())[0]?.textContent ?? "";
-  expect(text).toContain("Local build 0.1.1-alpha.2+abc1234: abc1234 fix the thing");
-  expect(text).not.toContain("longer body");
-});
-
-test("the same version from this machine is a reinstall", async () => {
-  const { emit } = await mount();
-  await emit({
-    type: "app-update",
-    state: {
-      current: "0.1.1-alpha.2+abc1234",
-      kind: "available",
-      version: "0.1.1-alpha.2+def5678",
-      source: "local",
-      commit: "def5678",
-      subject: "again",
-    },
-  });
-  expect(cards(nav())[0]?.textContent).toContain("Reinstall local build 0.1.1-alpha.2+def5678");
-});
-
-test("from an alpha to a release says which version to which; between releases it is as before", async () => {
-  const { emit } = await mount();
-  await emit({
-    type: "app-update",
-    state: {
-      current: "0.1.1-alpha.2+abc1234",
-      kind: "available",
-      version: "0.2.0",
-      source: "release",
-    },
-  });
-  const text = cards(nav())[0]?.textContent ?? "";
-  expect(text).toContain("0.2.0");
-  expect(text).toContain("0.1.1-alpha.2+abc1234");
-  await emit({
-    type: "app-update",
-    state: { current: "0.1.0", kind: "available", version: "0.3.0", source: "release" },
+    state: { current: "0.1.0", kind: "available", version: "0.3.0" },
   });
   expect(cards(nav())[0]?.textContent).toContain("Version 0.3.0 is available");
 });
