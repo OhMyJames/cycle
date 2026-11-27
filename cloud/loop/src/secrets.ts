@@ -50,3 +50,24 @@ export const findSecrets = (text: string): SecretKind[] => {
   for (const [kind, shape] of SHAPES) if (shape.test(text)) found.add(kind);
   return [...found];
 };
+
+/** Replaces outbound text holding credential shapes with a fixed notice naming only the kinds (CYC-478). */
+export const redactSecrets = (text: string): { text: string; kinds: SecretKind[] } => {
+  const kinds = findSecrets(text);
+  if (kinds.length === 0) return { text, kinds };
+  return { text: `（含凭据形状的内容，已省略：${kinds.join("、")}）`, kinds };
+};
+
+const LOOP_MARKER = /\n*<!--\s*loop:[^\s>]+\s*-->\s*$/;
+
+/** Like `redactSecrets`, keeping any trailing reconcile dedupe marker (`<!-- loop:... -->`) intact (CYC-478). */
+export const redactPreservingMarker = (text: string): { text: string; kinds: SecretKind[] } => {
+  const marker = LOOP_MARKER.exec(text)?.[0] ?? "";
+  const body = marker === "" ? text : text.slice(0, text.length - marker.length);
+  const redacted = redactSecrets(body);
+  if (redacted.kinds.length === 0) return { text, kinds: [] };
+  return {
+    text: marker === "" ? redacted.text : `${redacted.text}\n\n${marker.trim()}`,
+    kinds: redacted.kinds,
+  };
+};

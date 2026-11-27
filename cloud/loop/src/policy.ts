@@ -132,22 +132,116 @@ const READ_ONLY = ["ls", "cat", "head", "tail", "wc", "rg", "grep", "pwd", "echo
 const GIT_READ = ["status", "diff", "log", "show", "rev-parse", "ls-files"];
 /** What a research session may run besides `READ_ONLY` and `GIT_READ`. */
 const RESEARCH_READ = ["du", "find", "stat", "file"];
-const DEV_RUN = [
-  ["bun", "run", "check"],
-  ["bun", "run", "format"],
-  ["bun", "run", "lint"],
-  ["bun", "run", "typecheck"],
-  ["bun", "run", "test:browser"],
-  ["bun", "run", "test:integration"],
-  ["bun", "test"],
-  ["bun", "install"],
-  ["git", "add"],
-  ["git", "commit"],
-  ["git", "branch", "--show-current"],
+
+type CommandShape = {
+  argv: readonly string[];
+  rest: "none" | "paths" | ((args: string[], worktree: string | undefined) => boolean);
+};
+
+const safeWorktreePath = (arg: string, worktree: string | undefined): boolean => {
+  if (arg === "" || arg.startsWith("-") || arg.startsWith("~") || /[{}]/.test(arg)) return false;
+  if (arg.split("/").includes("..")) return false;
+  if (worktree === undefined) return !arg.startsWith("/") && !arg.split("/").includes(".git");
+  const resolved = arg.startsWith("/") ? posix.normalize(arg) : posix.join(worktree, arg);
+  return inside(worktree, resolved) && !touchesGit(worktree, resolved);
+};
+
+const gitAddRest = (args: string[], worktree: string | undefined): boolean => {
+  if (args.length === 0) return false;
+  let afterDash = false;
+  let sawTarget = false;
+  for (const arg of args) {
+    if (!afterDash && arg === "--") {
+      afterDash = true;
+      continue;
+    }
+    if (!afterDash && (arg === "-A" || arg === "--all" || arg === "-u" || arg === "--update")) {
+      sawTarget = true;
+      continue;
+    }
+    if (!safeWorktreePath(arg, worktree)) return false;
+    sawTarget = true;
+  }
+  return sawTarget;
+};
+
+const gitCommitRest = (args: string[], worktree: string | undefined): boolean => {
+  if (args.length === 0) return false;
+  let i = 0;
+  let sawMessage = false;
+  while (i < args.length) {
+    const arg = args[i] as string;
+    if (arg === "-m") {
+      const msg = args[i + 1];
+      if (msg === undefined) return false;
+      sawMessage = true;
+      i += 2;
+      continue;
+    }
+    if (arg === "-F") {
+      const file = args[i + 1];
+      if (file === undefined || !safeWorktreePath(file, worktree)) return false;
+      sawMessage = true;
+      i += 2;
+      continue;
+    }
+    return false;
+  }
+  return sawMessage;
+};
+
+const bunTestRest = (args: string[], worktree: string | undefined): boolean => {
+  let i = 0;
+  while (i < args.length) {
+    const arg = args[i] as string;
+    if (arg === "-t") {
+      const pattern = args[i + 1];
+      if (pattern === undefined || pattern === "") return false;
+      i += 2;
+      continue;
+    }
+    if (!arg.startsWith("./") || !safeWorktreePath(arg, worktree)) return false;
+    i += 1;
+  }
+  return true;
+};
+
+/** Exact shapes dev may run without asking (CYC-472): no arbitrary extra flags or trailing arguments. */
+const DEV_ALLOW: readonly CommandShape[] = [
+  { argv: ["bun", "run", "check"], rest: "none" },
+  { argv: ["bun", "run", "format"], rest: "none" },
+  { argv: ["bun", "run", "lint"], rest: "none" },
+  { argv: ["bun", "run", "typecheck"], rest: "none" },
+  { argv: ["bun", "run", "test:browser"], rest: "none" },
+  {
+    argv: ["bun", "run", "test:integration"],
+    rest: (args) =>
+      args.length === 0 ||
+      (args.length === 1 && /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(args[0] as string)),
+  },
+  { argv: ["bun", "test"], rest: bunTestRest },
+  {
+    argv: ["bun", "install"],
+    rest: (args) => args.length === 0 || (args.length === 1 && args[0] === "--frozen-lockfile"),
+  },
+  { argv: ["git", "add"], rest: gitAddRest },
+  { argv: ["git", "commit"], rest: gitCommitRest },
+  { argv: ["git", "branch", "--show-current"], rest: "none" },
 ];
 
-const startsWith = (words: string[], prefix: string[]): boolean =>
-  prefix.every((word, index) => words[index] === word);
+const matchesShape = (
+  words: string[],
+  shape: CommandShape,
+  worktree: string | undefined,
+): boolean => {
+  if (words.length < shape.argv.length) return false;
+  if (!shape.argv.every((word, index) => words[index] === word)) return false;
+  const rest = words.slice(shape.argv.length);
+  if (shape.rest === "none") return rest.length === 0;
+  if (shape.rest === "paths")
+    return rest.length > 0 && rest.every((arg) => safeWorktreePath(arg, worktree));
+  return shape.rest(rest, worktree);
+};
 
 /** The roles under the research rules: read the worktree and the read roots, nothing else, never ask. */
 const RESEARCH_RULES: ReadonlySet<Role> = new Set([
@@ -160,13 +254,13 @@ const RESEARCH_RULES: ReadonlySet<Role> = new Set([
 ]);
 const isResearch = (role: Role): boolean => RESEARCH_RULES.has(role);
 
-const simpleAllowed = (words: string[], role: Role): boolean => {
+const simpleAllowed = (words: string[], role: Role, worktree?: string): boolean => {
   const [program, sub] = words;
   if (program === undefined) return false;
   if (READ_ONLY.includes(program)) return true;
   if (isResearch(role) && RESEARCH_READ.includes(program)) return true;
   if (program === "git" && sub !== undefined && GIT_READ.includes(sub)) return true;
-  return role === "dev" && DEV_RUN.some((prefix) => startsWith(words, prefix));
+  return role === "dev" && DEV_ALLOW.some((shape) => matchesShape(words, shape, worktree));
 };
 
 /** Options of the read-only programs that run another program or write a file. */
@@ -392,10 +486,10 @@ export const decide = (
       const command = commandOf(call);
       if (command === undefined) return other("a command that could not be read");
       const segments = splitCommand(command);
-      if (segments === undefined || segments.length === 0)
+      if (segments === undefined || segments.length === 0 || globs(command))
         return other("a command with shell syntax the policy does not read");
       for (const words of segments) {
-        if (!simpleAllowed(words, role)) return other("a command outside the allowlist");
+        if (!simpleAllowed(words, role, worktree)) return other("a command outside the allowlist");
         if (words.some((word) => wanders(word, worktree)))
           return other("a command that reaches outside the worktree");
       }

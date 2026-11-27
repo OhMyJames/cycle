@@ -9,7 +9,7 @@ import { parseVerify, readSummary, withStrict } from "../../criteria.ts";
 import type { StoreOps } from "../../db/store.ts";
 import { Blocked, branchOf, NetworkWait, tail } from "../../engine/flow.ts";
 import { writeIntent } from "../../engine/reconcile.ts";
-import { verifyEnv } from "../../env.ts";
+import { ensureVerifyDirs, verifyEnv } from "../../env.ts";
 import { summarizeFailure } from "../../failure.ts";
 import {
   appendFixNode,
@@ -415,7 +415,9 @@ export async function nodeVerify(h: FlowHost, run: DevRun, save: Save): Promise<
     return done;
   };
 
-  const env = verifyEnv(h.d.env);
+  const isolation = { stateDir: config.stateDir, key: run.key };
+  ensureVerifyDirs(isolation);
+  const env = verifyEnv(h.d.env, isolation);
   const failures: string[] = [];
   for (const rawCommand of node.verify) {
     const parsed = parseVerify(rawCommand);

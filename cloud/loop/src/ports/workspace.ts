@@ -55,7 +55,7 @@ export interface Workspace {
   commitMerge(at: At): Promise<Done>;
   /** Best effort: the files a merge of the base into HEAD would conflict on. */
   conflictProbe(at: At, base: string): Promise<string[]>;
-  install(at: At): Promise<Done>;
+  install(at: At, runKey?: string): Promise<Done>;
   /** The git-ignored `node_modules` of a clean worktree. */
   nodeModulesDirs(at: At): Promise<NodeModulesDirs>;
   /** Deletes those directories. */

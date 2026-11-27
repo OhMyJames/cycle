@@ -8,6 +8,7 @@ import {
   LOOP_GRAPH_ACT,
   LOOP_INTENTS_RETRY,
   LOOP_NOTICES_LIST,
+  LOOP_RUN_CANCEL,
   LOOP_RUN_GET,
   LOOP_STATUS,
   LOOP_TICKET_GET,
@@ -25,6 +26,8 @@ import {
   type LoopNoticeKind,
   LoopNoticesListParamsSchema,
   LoopProjectParamsSchema,
+  LoopRunCancelParamsSchema,
+  type LoopRunCancelResult,
   type LoopRunDetail,
   LoopRunGetParamsSchema,
   type LoopRunSummary,
@@ -64,6 +67,8 @@ export type ProjectApi = {
   store: LoopStore;
   labels: { auto: string; pending: string; skip: string };
   workers: number;
+  /** Cancels an active turn for `key` (CYC-484). */
+  cancelRun?: (key: string) => Promise<boolean>;
 };
 
 export type LoopApi = {
@@ -331,6 +336,7 @@ export class LoopApiHandler {
       LOOP_TICKETS_ACT,
       LOOP_INTENTS_RETRY,
       LOOP_GRAPH_ACT,
+      LOOP_RUN_CANCEL,
       LOOP_STATUS,
     ].includes(method);
   }
@@ -384,6 +390,8 @@ export class LoopApiHandler {
         return this.#retry(params);
       case LOOP_GRAPH_ACT:
         return this.#graphAct(params);
+      case LOOP_RUN_CANCEL:
+        return this.#cancelRun(params);
       case LOOP_STATUS:
         return this.#status();
       default:
@@ -927,6 +935,20 @@ export class LoopApiHandler {
       await project.tracker.comment(issue, `${reason}\n\n由 ${who} ${via}${word}`).catch(() => {});
     }
     return { key, status: "ok" };
+  }
+
+  async #cancelRun(params: unknown): Promise<LoopRunCancelResult> {
+    const p = LoopRunCancelParamsSchema.safeParse(params);
+    if (!p.success) throw invalid("invalid_params");
+    const project = this.#project(p.data.project);
+    const cancelled = (await project.cancelRun?.(p.data.key)) ?? false;
+    const db = sqlite(project.store);
+    db?.action(p.data.key, "run_cancel", {
+      actor: p.data.actor,
+      actorKind: p.data.actorKind,
+      cancelled,
+    });
+    return { cancelled };
   }
 
   // ---- status ----

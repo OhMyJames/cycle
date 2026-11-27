@@ -12,7 +12,7 @@
 
 ## 原则
 
-- **不设路径底线，按实质风险判断**：不按文件路径机械分档，改动 `cloud/loop/`、`.github/`、`AGENTS.md`、`REVIEW.md` 等文件的 PR 同样由评审按实质内容判断（见 `.agents/notes/2026-11-25-pr-review-decides-human-involvement-with-no-code-floor.md`）。但若改动实质性削弱了安全边界、CI 门禁、权限策略或评审标准，必须判为 `escalate`（若为明显可修复错误则判 `reject`）。
+- **硬路径底线 + 其余路径按实质风险判断**：改到 `cloud/loop/src/supervisor/`、`cloud/loop/src/guard/`、`REVIEW.md` 或 `.github/` 的 PR，无论 LLM 评审结论为何，代码层都会强制升级给人合并（见 `cloud/loop/src/guard/floor.ts` 与 `.agents/notes/2026-11-27-loop-path-floor.md`）。其余路径由评审按实质内容判断；若改动实质性削弱了安全边界、CI 门禁、权限策略或评审标准，必须判为 `escalate`（若为明显可修复错误则判 `reject`）。
 - **宁保守，不放水**：有可修复的 blocker/major 缺陷就判 `reject` 并给出明确修复意见；对安全边界、范围或设计取舍有需要人判断的合理怀疑，就判 `escalate` 并写明具体原因；不要靠猜测放行 `merge`。
 - **先核查再下结论**：不得只看 diff 片段下结论，必须结合完整变更文件、相关调用方与测试代码核实。
 - **评审会话只读**：评审会话不得编辑、创建、删除文件，不得提交代码，不得直接操作 GitHub；结论由 Loop 写成 PR 评论并执行后续动作。
@@ -56,8 +56,9 @@
 
 命中以下任一需要人决策的情形，判为 `escalate` 并逐条写明原因：
 
-- 放宽安全边界、权限白名单、凭据传递范围，或扩大网络/文件系统暴露面。
-- 削弱 CI 门禁、跳过检查规则，或降低 `REVIEW.md` / `AGENTS.md` / `cloud/loop` 的防护要求。
+- 放宽安全边界、权限白名单、凭据传递范围，或给会话新开凭据或网络暴露面。
+- 削弱 CI 门禁、跳过检查规则、修改路径底线名单（`cloud/loop/src/guard/floor.ts`），或降低 `REVIEW.md` / `AGENTS.md` / `cloud/loop` 的防护要求。
+- 让 `cloud/loop/src/engine/` 变大或把业务流程逻辑放回引擎，或绕开 Loop API 直接连 tracker / 解析评论。
 - 涉及持久化数据格式破坏性变更、不可逆迁移，或可能影响现有用户数据的行为改变。
 - 引入新的外部依赖、改变发版流程，或包含工单未明确授权的架构/产品交互取舍。
 - 改动规模或复杂度超出只读审查可充分确认的范围，或存在需由人拍板的业务歧义。

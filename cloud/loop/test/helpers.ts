@@ -407,10 +407,22 @@ export type World = {
   autoMerge?: boolean;
 };
 
+export const stripGitConfigFlags = (argv: string[]): string[] => {
+  const out: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === "-c" && i + 1 < argv.length) {
+      i++;
+      continue;
+    }
+    out.push(argv[i] as string);
+  }
+  return out;
+};
+
 export const makeExec =
   (world: World): Exec =>
   async (argv) => {
-    const line = argv.filter((a) => a !== "-c" && !a.startsWith("core.")).join(" ");
+    const line = stripGitConfigFlags(argv).join(" ");
     world.calls.push(line);
     const result = (output: string, code = 0): ExecResult => ({ code, output, timedOut: false });
     if (line.includes("diff --name-only")) return result("packages/client/src/a.ts\n");

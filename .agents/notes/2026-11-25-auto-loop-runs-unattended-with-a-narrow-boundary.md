@@ -29,3 +29,7 @@ The boundary is in the loop's code, not in prompts:
 ## Consequences
 
 A work item can only name a few kinds of verification, which is a deliberate limit. The command and permission lists will need maintenance as the repository grows. Verified end to end on 2026-11-25 against the live tracker and a real daemon: work items were taken, delivered, merged and cleaned up.
+
+## Related
+
+- [2026-11-27-loop-delivery-repo-and-clean-env](2026-11-27-loop-delivery-repo-and-clean-env.md) — tightens the git/gh isolation, per-run temporary verify HOME, exact command-shape allowlist, and outbound secret redaction introduced in CYC-470, while keeping the deterministic exit-code verification principle of this note.

@@ -156,6 +156,13 @@ const cases: [string, string, boolean][] = [
   ],
   ["packages/ui/src/store/store.ts", 'import { x } from "@cycle/loop";', true],
   ["apps/desktop/src/main/loop.ts", 'import { LoopProjectSchema } from "@cycle/protocol";', false],
+  // CYC-481: Loop engine stays agnostic of flows/dev, ports/github, ports/git; desktop drops itsaplan-key
+  ["cloud/loop/src/engine/engine.ts", 'import { x } from "../flows/dev/index.ts";', true],
+  ["cloud/loop/src/engine/engine.ts", 'import { x } from "../ports/github.ts";', true],
+  ["cloud/loop/src/engine/engine.ts", 'import { x } from "../ports/git.ts";', true],
+  ["cloud/loop/src/engine/engine.ts", 'import type { At } from "../ports/forge.ts";', false],
+  ["apps/desktop/src/main/loop.ts", 'const f = "itsaplan-key";', true],
+  ["apps/desktop/src/main/main.ts", 'const oldKeyFile = join(userData, "itsaplan-key");', false],
   // Elsewhere is not these rules' business
   ["apps/desktop/src/main/app.ts", 'import { readFile } from "node:fs";', false],
   ["apps/daemon/src/daemon.ts", 'import { x } from "node:fs";', false],
@@ -171,6 +178,13 @@ describe("import rules", () => {
     expect(line).toContain("packages/ui/src/model/x.ts");
     expect(line).toContain("model");
     expect(line).toContain('"react"');
+  });
+
+  test("engine.ts over 600 lines is rejected (CYC-481)", () => {
+    expect(violations("cloud/loop/src/engine/engine.ts", "x\n".repeat(599))).toEqual([]);
+    const over = violations("cloud/loop/src/engine/engine.ts", "x\n".repeat(605));
+    expect(over).toHaveLength(1);
+    expect(over[0]).toContain("exceeding the 600-line limit");
   });
 });
 

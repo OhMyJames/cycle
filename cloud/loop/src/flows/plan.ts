@@ -17,7 +17,7 @@ import { readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { StepResult } from "../engine/flow.ts";
 import { Blocked, type FlowHost, type Intake, type OwnRun, tail } from "../engine/flow.ts";
-import { deliverEnv, GIT_SAFE, verifyEnv } from "../env.ts";
+import { GIT_SAFE, gitCleanEnv } from "../env.ts";
 import { withRepoLock } from "../git-lock.ts";
 import { isNetworkError } from "../network.ts";
 import { RANK } from "../parse/blocks.ts";
@@ -388,10 +388,10 @@ export class PlanFlow {
     return [...(this.#d.config.research?.readRoots ?? []), this.#d.store.planBodiesDir(id)];
   }
 
-  async #git(args: string[], cwd: string, env = verifyEnv(this.#d.env)) {
+  async #git(args: string[], cwd: string) {
     return this.#d.exec(["git", ...GIT_SAFE, ...args], {
       cwd,
-      env,
+      env: gitCleanEnv(this.#d.env, this.#d.config.stateDir),
       timeoutMs: this.#d.config.commandTimeoutMs,
     });
   }
@@ -401,9 +401,7 @@ export class PlanFlow {
     const { config } = this.#d;
     const path = join(config.repoRoot, ".agents", "worktree", ctx.key);
     const fetched = await this.#host.netExec(ctx.key, "git fetch", () =>
-      withRepoLock(config.repoRoot, () =>
-        this.#git(["fetch", config.remote], config.repoRoot, deliverEnv(this.#d.env)),
-      ),
+      this.#d.workspace.fetchMain({ cwd: config.repoRoot, timeoutMs: config.commandTimeoutMs }),
     );
     if (fetched.code !== 0) throw new Blocked(`git fetch 失败：${tail(fetched.output)}`);
     if (!existsSync(path)) {

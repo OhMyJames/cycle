@@ -1,8 +1,9 @@
 # Agent Note: The PR review decides whether a person must look, with no code-enforced floor
 
-Status: accepted
+Status: superseded
 Date: 2026-11-25
 Basis: the user's choice "不加底线" in the 2026-11-25 planning session; CYC-332 (review stage) and the initiative 3 description.
+Superseded by: [Loop enforces a hard code path floor that blocks auto-merge regardless of PR review verdict](2026-11-27-loop-path-floor.md)
 
 ## Problem
 

@@ -1,10 +1,21 @@
-// The workspace over `git` and `bun` (CYC-477). Arguments, environments and working directories are what the loop
-// used before: `GIT_SAFE` on every git, `verifyEnv` for everything but the commands that talk to the remote.
-import { deliverEnv, GIT_SAFE, verifyEnv } from "../env.ts";
+// The workspace over `git` and `bun` (CYC-477, CYC-478). Every git carries full `GIT_SAFE` and clean config env;
+// when `delivery` is configured, authenticated git commands run ONLY inside `<stateDir>/delivery.git` after verifying
+// both the shared repo `.git/config` and `delivery.git/config` hashes.
+import { createHash } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import {
+  ensureVerifyDirs,
+  GIT_SAFE,
+  gitCleanEnv,
+  gitDeliverAuthArgs,
+  gitDeliverEnv,
+  verifyEnv,
+} from "../env.ts";
 import { withRepoLock } from "../git-lock.ts";
 import type { Exec } from "../types.ts";
 import type { At } from "./forge.ts";
-import type { Workspace } from "./workspace.ts";
+import type { Done, Workspace } from "./workspace.ts";
 
 const lines = (text: string): string[] =>
   text
@@ -12,26 +23,207 @@ const lines = (text: string): string[] =>
     .map((l) => l.trim())
     .filter((l) => l !== "");
 
+export const hashGitConfig = (text: string): string =>
+  createHash("sha256").update(text).digest("hex");
+
+/**
+ * Checks a git config file for directives that can redirect remotes, include arbitrary files, or run commands on
+ * fetch/push (CYC-478): `include.*`, `includeIf.*`, `url.*.insteadOf`, `remote.*.pushurl`, `core.sshCommand`.
+ */
+export const inspectGitConfig = (
+  text: string,
+): { ok: true; hash: string } | { ok: false; reason: string } => {
+  let section = "";
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.replace(/[;#].*$/, "").trim();
+    if (line === "") continue;
+    const sec = /^\[([^\s\]]+)(?:\s+"([^"]*)")?\]$/.exec(line);
+    if (sec !== null) {
+      section = (sec[1] ?? "").toLowerCase();
+      if (section === "include" || section === "includeif" || section === "filter") {
+        return { ok: false, reason: `git config contains forbidden section [${sec[1]}]` };
+      }
+      continue;
+    }
+    const eq = line.indexOf("=");
+    if (eq === -1) continue;
+    const key = line.slice(0, eq).trim().toLowerCase();
+    if (key === "sshcommand") {
+      return { ok: false, reason: "git config contains forbidden key core.sshCommand" };
+    }
+    if (key === "insteadof" || key === "pushinsteadof") {
+      return { ok: false, reason: `git config contains forbidden key url.*.${key}` };
+    }
+    if (key === "pushurl") {
+      return { ok: false, reason: "git config contains forbidden key remote.*.pushurl" };
+    }
+    if (key === "uploadpack" || key === "receivepack") {
+      return { ok: false, reason: `git config contains forbidden key remote.*.${key}` };
+    }
+    if (section === "include" || section === "includeif" || section === "filter") {
+      return { ok: false, reason: `git config contains forbidden directive in [${section}]` };
+    }
+  }
+  return { ok: true, hash: hashGitConfig(text) };
+};
+
+/** Reads `[remote "origin"] url = ...` from a git config file (used as fallback when `repo.url` is omitted). */
+export const originUrlFromGitConfig = (text: string): string | undefined => {
+  let inOrigin = false;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.replace(/[;#].*$/, "").trim();
+    if (line === "") continue;
+    const sec = /^\[([^\s\]]+)(?:\s+"([^"]*)")?\]$/.exec(line);
+    if (sec !== null) {
+      inOrigin = (sec[1] ?? "").toLowerCase() === "remote" && sec[2] === "origin";
+      continue;
+    }
+    if (!inOrigin) continue;
+    const eq = line.indexOf("=");
+    if (eq === -1) continue;
+    if (line.slice(0, eq).trim().toLowerCase() === "url") {
+      const url = line.slice(eq + 1).trim();
+      if (url !== "") return url;
+    }
+  }
+  return undefined;
+};
+
+/** Locates the shared `.git/config` for a checkout or worktree. */
+export const repoGitConfigPath = (repoRoot: string): string | undefined => {
+  const dotGit = join(repoRoot, ".git");
+  if (!existsSync(dotGit)) return undefined;
+  const st = statSync(dotGit);
+  if (st.isDirectory()) {
+    const cfg = join(dotGit, "config");
+    return existsSync(cfg) ? cfg : undefined;
+  }
+  const text = readFileSync(dotGit, "utf8");
+  const m = /^gitdir:\s*(.+)$/m.exec(text);
+  const rawDir = m?.[1]?.trim();
+  if (rawDir === undefined || rawDir === "") return undefined;
+  const gitDir = isAbsolute(rawDir) ? rawDir : resolve(repoRoot, rawDir);
+  const commonFile = join(gitDir, "commondir");
+  if (existsSync(commonFile)) {
+    const rel = readFileSync(commonFile, "utf8").trim();
+    const common = isAbsolute(rel) ? rel : resolve(gitDir, rel);
+    const cfg = join(common, "config");
+    if (existsSync(cfg)) return cfg;
+  }
+  const cfg = join(gitDir, "config");
+  return existsSync(cfg) ? cfg : undefined;
+};
+
+export type DeliveryRepo = {
+  dir: string;
+  configPath: string;
+  configHash: string;
+};
+
+/**
+ * Creates or refreshes `<stateDir>/delivery.git` as a clean bare repository whose `config` holds only
+ * `remote.origin.url = repoUrl` (CYC-478). Returns its path and config digest.
+ */
+export const initDeliveryRepo = async (
+  stateDir: string,
+  repoUrl: string,
+  exec: Exec,
+  env: Record<string, string | undefined>,
+): Promise<DeliveryRepo> => {
+  mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  const dir = join(stateDir, "delivery.git");
+  const head = join(dir, "HEAD");
+  if (!existsSync(head)) {
+    const init = await exec(["git", ...GIT_SAFE, "init", "--bare", dir], {
+      cwd: stateDir,
+      env: gitCleanEnv(env, stateDir),
+      timeoutMs: 30_000,
+    });
+    if (init.code !== 0) {
+      throw new Error(`failed to initialize delivery.git: ${init.output.trim()}`);
+    }
+  }
+  const configPath = join(dir, "config");
+  const configText = [
+    "[core]",
+    "\trepositoryformatversion = 0",
+    "\tfilemode = true",
+    "\tbare = true",
+    '[remote "origin"]',
+    `\turl = ${repoUrl}`,
+    "\tfetch = +refs/heads/*:refs/remotes/origin/*",
+    "",
+  ].join("\n");
+  mkdirSync(dirname(configPath), { recursive: true, mode: 0o700 });
+  writeFileSync(configPath, configText, { mode: 0o600 });
+  chmodSync(configPath, 0o600);
+  return { dir, configPath, configHash: hashGitConfig(configText) };
+};
+
+export type DeliveryConfig = {
+  repo: DeliveryRepo;
+  /** Expected sha256 of the shared `repoRoot/.git/config` read at startup. */
+  repoConfigHash: string;
+  /** Called whenever a config tamper is detected (e.g. to record a Notice). */
+  onTamper?: (reason: string) => void;
+};
+
 export const gitWorkspace = (deps: {
   exec: Exec;
   env: Record<string, string | undefined>;
   /** The main checkout, where worktrees are made and fetches are serialised. */
   repoRoot: string;
   remote: string;
+  stateDir?: string;
+  delivery?: DeliveryConfig;
 }): Workspace => {
-  const { exec, env, repoRoot, remote } = deps;
+  const { exec, env, repoRoot, remote, stateDir, delivery } = deps;
   const git = (at: At, args: string[]) =>
     exec(["git", ...GIT_SAFE, ...args], {
       cwd: at.cwd,
-      env: verifyEnv(env),
+      env: gitCleanEnv(env, stateDir),
       timeoutMs: at.timeoutMs,
     });
   const gitDeliver = (at: At, args: string[]) =>
-    exec(["git", ...GIT_SAFE, ...args], {
+    exec(["git", ...GIT_SAFE, ...gitDeliverAuthArgs(env), ...args], {
       cwd: at.cwd,
-      env: deliverEnv(env),
+      env: gitDeliverEnv(env, stateDir),
       timeoutMs: at.timeoutMs,
     });
+  const checkRepoConfig = (): Done => {
+    if (delivery === undefined) return { ok: true };
+    const cfgPath = repoGitConfigPath(repoRoot);
+    if (cfgPath === undefined) {
+      const reason = "仓库配置被改动，未推送";
+      delivery.onTamper?.(`${reason}（找不到 .git/config）`);
+      return { ok: false, error: reason };
+    }
+    const text = readFileSync(cfgPath, "utf8");
+    const inspected = inspectGitConfig(text);
+    if (!inspected.ok || inspected.hash !== delivery.repoConfigHash) {
+      const detail = inspected.ok ? "digest changed since startup" : inspected.reason;
+      const reason = "仓库配置被改动，未推送";
+      delivery.onTamper?.(`${reason}（${detail}）`);
+      return { ok: false, error: reason };
+    }
+    return { ok: true };
+  };
+  const checkDeliveryConfig = (): Done => {
+    if (delivery === undefined) return { ok: true };
+    if (!existsSync(delivery.repo.configPath)) {
+      const reason = "delivery.git 配置缺失，拒绝带凭据执行";
+      delivery.onTamper?.(reason);
+      return { ok: false, error: reason };
+    }
+    const text = readFileSync(delivery.repo.configPath, "utf8");
+    const inspected = inspectGitConfig(text);
+    if (!inspected.ok || inspected.hash !== delivery.repo.configHash) {
+      const reason = "delivery.git 配置被改动，拒绝带凭据执行";
+      delivery.onTamper?.(reason);
+      return { ok: false, error: reason };
+    }
+    return { ok: true };
+  };
   const done = (r: { code: number; output: string }) =>
     r.code === 0 ? ({ ok: true } as const) : ({ ok: false, error: r.output } as const);
   const mergeHead = async (at: At) =>
@@ -58,9 +250,58 @@ export const gitWorkspace = (deps: {
     }
   };
 
+  const fetchMain: Workspace["fetchMain"] = (at) =>
+    withRepoLock(repoRoot, async () => {
+      if (delivery === undefined) return gitDeliver(at, ["fetch", remote]);
+      const valid = checkDeliveryConfig();
+      if (!valid.ok) return { code: 1, output: valid.error, timedOut: false };
+      const dAt: At = { cwd: stateDir ?? dirname(delivery.repo.dir), timeoutMs: at.timeoutMs };
+      const fetched = await gitDeliver(dAt, [
+        "--git-dir",
+        delivery.repo.dir,
+        "fetch",
+        "origin",
+        "+refs/heads/main:refs/remotes/origin/main",
+      ]);
+      if (fetched.code !== 0 || fetched.timedOut) return fetched;
+      // Refresh repoRoot's origin/main from delivery.git without credentials.
+      return git({ cwd: repoRoot, timeoutMs: at.timeoutMs }, [
+        "fetch",
+        delivery.repo.dir,
+        "+refs/remotes/origin/main:refs/remotes/origin/main",
+      ]);
+    });
+
   return {
-    fetchMain: (at) => withRepoLock(repoRoot, () => gitDeliver(at, ["fetch", remote])),
-    push: (at, branch) => gitDeliver(at, ["push", remote, `HEAD:refs/heads/${branch}`]),
+    fetchMain,
+    push: async (at, branch) => {
+      if (delivery === undefined)
+        return gitDeliver(at, ["push", remote, `HEAD:refs/heads/${branch}`]);
+      const repoOk = checkRepoConfig();
+      if (!repoOk.ok) return { code: 1, output: repoOk.error, timedOut: false };
+      const delOk = checkDeliveryConfig();
+      if (!delOk.ok) return { code: 1, output: delOk.error, timedOut: false };
+      const dAt: At = { cwd: stateDir ?? dirname(delivery.repo.dir), timeoutMs: at.timeoutMs };
+      const stageRef = `refs/loop/${branch.replace(/[^A-Za-z0-9._/-]/g, "_")}`;
+      const moved = await git(dAt, [
+        "--git-dir",
+        delivery.repo.dir,
+        "fetch",
+        at.cwd,
+        `+HEAD:${stageRef}`,
+      ]);
+      if (moved.code !== 0 || moved.timedOut) return moved;
+      const rev = await git(dAt, ["--git-dir", delivery.repo.dir, "rev-parse", stageRef]);
+      if (rev.code !== 0 || rev.timedOut) return rev;
+      const sha = rev.output.trim();
+      return gitDeliver(dAt, [
+        "--git-dir",
+        delivery.repo.dir,
+        "push",
+        "origin",
+        `${sha}:refs/heads/${branch}`,
+      ]);
+    },
     async head(at) {
       const r = await git(at, ["rev-parse", "HEAD"]);
       return r.code === 0 ? { ok: true, sha: r.output.trim() } : { ok: false, error: r.output };
@@ -140,8 +381,8 @@ export const gitWorkspace = (deps: {
       return done(await git(at, ["commit", "--no-edit"]));
     },
     async conflictProbe(at, base) {
-      await withRepoLock(repoRoot, () => gitDeliver(at, ["fetch", remote]));
-      const merged = await gitDeliver(at, [
+      await fetchMain(at);
+      const merged = await git(at, [
         "merge-tree",
         "--write-tree",
         "--name-only",
@@ -152,11 +393,14 @@ export const gitWorkspace = (deps: {
       if (merged.code !== 1) return [];
       return lines(merged.output.split("\n").slice(1).join("\n"));
     },
-    async install(at) {
+    async install(at, runKey) {
+      const isolation =
+        stateDir !== undefined && runKey !== undefined ? { stateDir, key: runKey } : undefined;
+      if (isolation !== undefined) ensureVerifyDirs(isolation);
       return done(
         await exec(["bun", "install"], {
           cwd: at.cwd,
-          env: verifyEnv(env),
+          env: verifyEnv(env, isolation),
           timeoutMs: at.timeoutMs,
         }),
       );
@@ -212,7 +456,7 @@ export const gitWorkspace = (deps: {
       return "removed";
     },
     async configClean() {
-      return { ok: true };
+      return checkRepoConfig();
     },
   };
 };

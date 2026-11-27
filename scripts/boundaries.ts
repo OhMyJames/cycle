@@ -13,7 +13,7 @@
 import { builtinModules } from "node:module";
 import { posix } from "node:path";
 
-export type Zone = "model" | "renderer" | "preload" | "app";
+export type Zone = "model" | "renderer" | "preload" | "app" | "loop-engine";
 
 export const zoneOf = (file: string): Zone[] => {
   const zones: Zone[] = [];
@@ -24,6 +24,7 @@ export const zoneOf = (file: string): Zone[] => {
   if (file.startsWith("apps/desktop/src/preload/")) zones.push("preload");
   if (file.startsWith("apps/desktop/src/") || file.startsWith("packages/ui/src/"))
     zones.push("app");
+  if (file.startsWith("cloud/loop/src/engine/")) zones.push("loop-engine");
   return zones;
 };
 
@@ -192,18 +193,53 @@ const forbidden: Record<Zone, (name: string, file: string) => string | undefined
       return undefined;
     return "the preload may import only electron and @cycle/ui/api";
   },
+  "loop-engine": (name, file) => {
+    const resolved = isRelative(name)
+      ? posix.normalize(posix.join(posix.dirname(file), name)).replace(/\.tsx?$/, "")
+      : name;
+    if (
+      resolved === "cloud/loop/src/flows/dev" ||
+      resolved.startsWith("cloud/loop/src/flows/dev/") ||
+      resolved === "cloud/loop/src/ports/github" ||
+      resolved === "cloud/loop/src/ports/git"
+    ) {
+      return "the Loop engine must stay flow- and forge-agnostic (no flows/dev, ports/github, or ports/git)";
+    }
+    return undefined;
+  },
 };
+
+/** Maximum lines allowed in `cloud/loop/src/engine/engine.ts` (CYC-481). */
+export const MAX_ENGINE_LINES = 600;
 
 /** One line per broken rule in this file; empty when it keeps to its zones. */
 export const violations = (file: string, text: string): string[] => {
   const zones = zoneOf(file);
-  if (zones.length === 0) return [];
-  const names = importsOf(text);
   const out: string[] = [];
-  for (const zone of zones)
-    for (const name of names) {
-      const why = forbidden[zone](name, file);
-      if (why) out.push(`${file}: ${zone} imports "${name}" (${why})`);
+  if (zones.length > 0) {
+    const names = importsOf(text);
+    for (const zone of zones)
+      for (const name of names) {
+        const why = forbidden[zone](name, file);
+        if (why) out.push(`${file}: ${zone} imports "${name}" (${why})`);
+      }
+  }
+  if (
+    file.startsWith("apps/desktop/src/") &&
+    file !== "apps/desktop/src/main/main.ts" &&
+    /\bitsaplan-key\b/i.test(text)
+  ) {
+    out.push(
+      `${file}: desktop must not hold or reference itsaplan-key (the Loop server holds the key, CYC-481/483)`,
+    );
+  }
+  if (file === "cloud/loop/src/engine/engine.ts") {
+    const lines = text.split("\n").length;
+    if (lines > MAX_ENGINE_LINES) {
+      out.push(
+        `${file}: has ${lines} lines, exceeding the ${MAX_ENGINE_LINES}-line limit (keep flow logic out of engine.ts, CYC-481)`,
+      );
     }
+  }
   return out;
 };

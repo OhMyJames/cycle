@@ -28,6 +28,10 @@ export type Stats = {
   permissions: PermissionRow[];
   /** Times a Dev session asked a person to decide (`dev_asked`, CYC-494), and the runs that asked. */
   devAsked: { asked: number; runs: number };
+  /** Supervisor metrics (CYC-484, CYC-485): Work loop restarts, stuck escalations, and completed self-updates. */
+  restarts: number;
+  stuck: number;
+  selfUpdates: number;
   /** The planning node (CYC-322), counted apart: its rounds are not runs and are in none of the numbers above. */
   planning: PlanningStats;
 };
@@ -246,6 +250,9 @@ export const computeStats = (events: LoopEvent[]): Stats => {
       ),
       runs: Array.from(byRun.values()).filter((l) => l.some((e) => e.kind === "dev_asked")).length,
     },
+    restarts: events.filter((e) => e.kind === "supervisor_restart").length,
+    stuck: events.filter((e) => e.kind === "stuck_escalated").length,
+    selfUpdates: events.filter((e) => e.kind === "self_updated").length,
   };
 };
 

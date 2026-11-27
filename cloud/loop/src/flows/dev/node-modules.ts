@@ -10,13 +10,13 @@ export async function restoreNodeModules(
   save: Save,
 ): Promise<void> {
   if (!run.dev.nodeModulesReleased) return;
-  await install(h, worktree);
+  await install(h, worktree, run.key);
   await save({ dev: { nodeModulesReleased: false } });
   await h.d.store.event(run.key, "node_modules_restored");
 }
 
-export async function install(h: FlowHost, worktree: string): Promise<void> {
-  const installed = await h.d.workspace.install(where(h, worktree));
+export async function install(h: FlowHost, worktree: string, runKey?: string): Promise<void> {
+  const installed = await h.d.workspace.install(where(h, worktree), runKey);
   if (!installed.ok) throw new Blocked(`bun install 失败：${tail(installed.error)}`);
 }
 

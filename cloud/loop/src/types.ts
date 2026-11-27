@@ -376,4 +376,6 @@ export interface Sessions {
       readRoots?: string[];
     },
   ): Promise<TurnResult>;
+  /** Cancels an in-flight turn for `sessionId` when supported (CYC-484). */
+  cancel?(sessionId: string): Promise<boolean>;
 }

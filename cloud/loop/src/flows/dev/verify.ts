@@ -1,5 +1,5 @@
 import type { CriteriaBook } from "../../criteria.ts";
-import { verifyEnv } from "../../env.ts";
+import { ensureVerifyDirs, verifyEnv } from "../../env.ts";
 import { summarizeFailure } from "../../failure.ts";
 import { testLayers } from "../../layers.ts";
 import type { Exec, ExecResult } from "../../types.ts";
@@ -50,7 +50,9 @@ export async function verify(
     results.set(key, done);
     return done;
   };
-  const env = verifyEnv(h.d.env);
+  const isolation = { stateDir: config.stateDir, key: run.key };
+  ensureVerifyDirs(isolation);
+  const env = verifyEnv(h.d.env, isolation);
   const checks: { command: string; passed: boolean }[] = [];
   if (files.length > 0) {
     for (const argv of testLayers(files)) {
