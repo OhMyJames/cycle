@@ -206,3 +206,54 @@ test("the model menu of a new session heads the owner's models with their provid
   expect(headings).toEqual(["Model", "Lab", "OpenRouter"]);
   expect(menu.getByRole("group", { name: "Lab" })).toBeTruthy();
 });
+
+test("the model menu notes the limits of provider models, only where provider models are listed, and still lets one be chosen", async () => {
+  const agent = (id: string, withProvider: boolean) => ({
+    id,
+    name: id,
+    available: true,
+    promptCapabilities: {},
+    configSchema: {
+      type: "object",
+      properties: {
+        model: {
+          type: "string",
+          title: "Model",
+          default: "gpt-5",
+          oneOf: [
+            { const: "gpt-5", title: "GPT-5" },
+            ...(withProvider
+              ? [
+                  {
+                    const: "lab/small",
+                    title: "small",
+                    _meta: { "cycle/provider": { id: "lab", name: "Lab" } },
+                  },
+                ]
+              : []),
+          ],
+        },
+      },
+    },
+  });
+  const note = "A session cannot switch between Codex's own models";
+  for (const withProvider of [true, false]) {
+    const script = fakeBridge({ connected: true });
+    script.bridge.agents = async () => [agent("codex", withProvider)];
+    await renderApp(script.bridge);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "New session" }));
+    await screen.findByRole("heading", { name: "New session" });
+    await user.click(await screen.findByRole("button", { name: /^Model: / }));
+    const menu = within(await screen.findByRole("menu", { name: "Model" }));
+    expect(menu.queryByText(new RegExp(note)) !== null).toBe(withProvider);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    if (withProvider) {
+      const item = menu.getByRole("menuitemradio", { name: "small" });
+      expect(item.getAttribute("aria-disabled")).not.toBe("true");
+      await user.click(item);
+      await waitFor(() => expect(screen.queryByRole("menu", { name: "Model" })).toBeNull());
+    }
+    cleanup();
+  }
+});
