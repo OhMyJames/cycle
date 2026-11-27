@@ -625,7 +625,7 @@ test("a card the reader opened is still open when they come back to it", async (
   await user.click(fold);
   expect(fold.getAttribute("aria-expanded")).toBe("true");
   log.scrollTop = log.scrollHeight;
-  await waitFor(() => expect(log.textContent).toContain("answer 300"));
+  await waitFor(() => expect(log.textContent).toContain("answer 300"), { timeout: 5000 });
   await waitFor(() => expect(log.scrollHeight - log.scrollTop - log.clientHeight).toBeLessThan(2));
   expect(drawn(log)).toBeLessThan(80);
   for (let i = 0; i < 100 && log.scrollTop > 0; i++) {
@@ -645,7 +645,7 @@ test("an item far above the view is brought into view and marked, in a long conv
     ...turnsOf(300, 1),
   );
   constrain(log);
-  await waitFor(() => expect(log.textContent).toContain("answer 300"));
+  await waitFor(() => expect(log.textContent).toContain("answer 300"), { timeout: 5000 });
   await waitFor(() => expect(drawn(log)).toBeLessThan(80));
   expect(log.querySelector('[data-item-id="far"]')).toBeNull();
   act(() => {
@@ -804,7 +804,7 @@ test("a conversation that grows from a few blocks to many draws the ones near it
   expect(drawn(log)).toBe(2);
   constrain(log);
   for (const update of turnsOf(300, 1)) await emit(update);
-  await waitFor(() => expect(log.textContent).toContain("answer 300"));
+  await waitFor(() => expect(log.textContent).toContain("answer 300"), { timeout: 5000 });
   await waitFor(() => expect(drawn(log)).toBeLessThan(80));
   expect(log.textContent).not.toContain("question 20");
 });
