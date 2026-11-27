@@ -23,6 +23,7 @@
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.model.json && tsc -p tsconfig.renderer.json",
     "lint": "biome check --error-on-warnings .",
     "format": "biome check --write .",
+    "unused": "knip --no-progress --no-config-hints",
     "test": "bun test",
     "prepare": "git config core.hooksPath .githooks || true",
     "pr-ship": "bun scripts/pr-ship.ts",
@@ -34,6 +35,7 @@
     "@biomejs/biome": "^2.6.8",
     "@types/bun": "^1.4.4",
     "@types/node": "^26.6.6",
+    "knip": "6.49.0",
     "typescript": "^7.0.2"
   },
   "trustedDependencies": [

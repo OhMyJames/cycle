@@ -34,7 +34,7 @@ v1 已可用(桌面应用加 Linux daemon),在迭代功能。协议先行:改行
 
 ## 命令
 
-- `bun run check`:门禁,提交前必须通过(pre-commit 钩子会运行它)。依次检查边界、类型、lint、测试。
+- `bun run check`:门禁,提交前必须通过(pre-commit 钩子会运行它)。依次检查边界、类型、lint、没人用的文件和依赖(knip,见 `knip.jsonc`)、测试。
 - `bun run test:browser`(根目录):界面测试,在无界面的 Chromium 里跑(`packages/ui/test/browser`),不在门禁里(约 23 秒、2 GB),CI 的 `browser` 作业每次跑。改了界面,提交前自己跑一次。
 - `bun run format`:格式化并修复可自动修复的 lint。
 - `bun run test:integration`(根目录):集成测试,串行跑 8 个套件(Node 下的客户端、Claude、Codex 和 agy 适配、真实 ssh、整个后端、打包后的应用、浏览器里的端到端),每个套件有自己的时限。每次全跑,不按改动挑选(见 `.agents/notes/2026-11-21-integration-runs-every-suite.md`),清单在 `scripts/integration-suites.ts`。它们会启动真实进程(Claude、daemon、打包后的 Electron 应用,Linux 上在 xvfb 下,macOS 上窗口隐藏、不抢焦点;以及无界面的 Chromium),最重的约 1.5 GB,所以不在门禁里。`bun run test:integration web` 只跑名字里有 web 的。

@@ -17,4 +17,4 @@
 - [0011 agent 向用户提问(elicitation)](0011-elicitation.md):已接受(只发给声明了能力的客户端,没有就回退)
 - [0012 界面的源语言是 en-US,为 i18n 预留](0012-ui-language-en-us.md):已接受(文字进消息目录;新文字走目录,存量由棘轮只减不增)
 - [0013 附件字节落盘,日志里只留引用](0013-attachment-blobs.md):已接受(包在存储接口外面,读出时还原)
-- [0014 新 session 提前起进程;子 agent 只做通告](0014-warm-start-and-subagents.md):已接受(提前起是开关,默认关)
+- [0014 新 session 提前起进程;子 agent 只做通告](0014-warm-start-and-subagents.md):已接受(提前起是开关,默认关);子 agent 只做通告的部分已被 [子 agent 的对话转发到客户端](../../.agents/notes/2026-11-23-subagent-conversations-are-forwarded.md) 取代

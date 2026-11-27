@@ -385,34 +385,6 @@ bun packages/ui/gallery/shoot.ts permission --crop "[role=dialog]" --format webp
 - 窗口不在前台时，主进程在每次读取会话列表后通过纯函数 `attentionOf(之前, 现在)` 对状态差发系统通知：_Waiting for your answer_（`requires_action`）、_Waiting for your next message_（从运行/等待变为 idle，或首次出现的未读已完成会话）、_The agent stopped unexpectedly_（运行/等待变为 stopped，静默释放的空闲会话不报）。
 - 断线重连后只报 `requires_action`，不误报历史完成或释放。点击通知激活应用并聚焦对应会话；若工作位置已断开或会话已删除则静默忽略。
 
-## 附录 E：当前实现状态与已知待办（单一追踪清单）
+## 附录 E：当前实现状态与已知待办
 
-以下为当前设计规范已明确、但代码尚待补齐或真机尚未验证的项目（按 P0–P3 分级追踪）：
-
-### P0：代码缺陷与关键防呆修复
-
-- [x] **中文 IME 与 `@` 提及替换修复**：`markdown-input.tsx` 改用 `@ui-sdk/core` 的 `isComposing(event)`，并修复 `replaceBeforeCaret` 在非 TextNode 边界时的替换行为。
-- [x] **全局 `⌘Return` 批准权限**：去掉 `app.tsx` 中 `⌘Return` 的 `typing === null` 限制（仅模态弹窗开启时让位），并在 `Allow once` 按钮展示 `⌘↩` 提示。
-- [x] **macOS 折叠侧栏红绿灯避让与恢复按钮**：为折叠态下的主区顶部横幅与空状态补齐红绿灯避让空间，并在主区头部接入 `SidebarIcon` 恢复/折叠入口。
-- [x] **弹窗提交失败防丢 & ID 碰撞修复**：`saveLocation` / `renameSession` 失败时保留弹窗并就地展示原因（不关闭清空）；修复 `LocationDialog` `id` 碰撞；`ConfirmDialog` 异步动作等待期间禁用防重；显式补齐 `connectors.tsx` 表单内非提交按钮的 `type="button"`。
-- [x] **Hooks 依赖与渲染性能修复**：补齐 `app.tsx` 键盘监听 `useEffect` 依赖、优化 `conversation.tsx` 滚底触发、`SearchDialog` 关闭时跳过全量分组计算；修复 `composer.tsx` 拖放子元素触发 `dragleave` 闪烁并提示不支持的非图片文件。
-- [x] **Banner 与 KeyHints 窄屏修复**：`app.tsx` 警告横幅文本包入 `<span>`；`key-hints` 在窄屏下避免折行后第二行被 `overflow: hidden` 腰斩。
-
-### P1：落实第 3–5 层核心体验规范
-
-- [x] **破坏性与表单弹窗规范化**：`ConfirmDialog` 破坏性操作改用 `destructive` 按钮变体；移除远端工作位置增加二次确认并补充编辑远端工作位置能力；`LocationDialog` / `RenameDialog` 包裹 `<form>` 支持回车提交、打开自动聚焦首项、所有弹窗底部按钮统一右对齐（取消在左、主动作在右）。
-- [x] **空状态与无 Agent 引导**：主区空状态提供就地引导按钮；无可用 agent 时说明可能原因（凭证/安装）并给出排查与重检按钮。
-- [x] **第 3 层基础组件与材质/动效收口**：补充 `UpdateBanner` 临时关闭、`Button[data-variant="destructive"]` 约定；将 `--cycle-motion-enter`（200ms）实际接入弹窗/浮层/横幅出现过渡，清理死 CSS `[data-slot="session-main"]`。（注：`Banner` / `EmptyBlock` 抽取与功能色柔化令牌统一可在后续重构中继续收口。）
-- [x] **路径截断与危险设置芯片**：路径类文本（头部 `session-where`、连接器路径）改为优先保留尾部的截断方式；`SettingChips` 补充轻量下拉线索与免确认模式的警示色（协议 `_meta["cycle/danger"]`）。
-
-### P2：对话流与日常工作流质感打磨
-
-- [ ] **对话内高频操作**：空白会话转正式会话时平滑衔接。
-- [ ] **工具调用与侧栏辨识度**：连续工具从 1 个升格为多个时保留手动展开态；会话行补充未发送草稿标（相对时间已做，见 §4.1）；切换 workspace/工作位置时重置 `showAll`。
-- [ ] **窄视口与缓存治理**：720×480 下 `composer-toolbar` 折行/紧凑适配；为 `store.views` 增加 LRU 上限，为 `selectSession` 加并发加载保护。
-- [x] **存量 i18n 迁移**：JSX、对话框、更新提示、连接状态词和 store 的报错都已迁入 `packages/ui/src/messages/en-US.ts`（CYCL-68）。
-
-### P3：跨层能力与真机未验证项
-
-- [ ] **macOS 真机验收**：`hiddenInset` 红绿灯与拖动区域、自定义原生应用菜单与系统快捷键冲突、系统通知与点击唤起（需签名）、中文输入法实测、SF 字体实际行高与长会话帧率。
-- [ ] **协议/后端协同项**：利用 `config_option_update` 补齐 agent 主动改设置的 UI 回显、工具执行耗时计时（需 daemon 记录开始时间）、会话内容全文搜索（daemon 侧）、多窗口与 VoiceOver 完整审查。
+这里不再维护清单：未完成的设计待办在追踪器(itsaplan)里按工单跟踪；已完成的条目见 git 历史。

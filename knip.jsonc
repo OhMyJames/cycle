@@ -1,0 +1,78 @@
+// What `bun run check` asks knip (scripts/check.ts): no file nothing reaches, no dependency nothing uses, nothing
+// imported that is not declared. Unused exports are not checked yet: about 450 are used only in their own file, and
+// dropping the keyword is worth little. Turn `exports` and `types` on once that is done.
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "rules": {
+    "exports": "off",
+    "types": "off",
+    "nsExports": "off",
+    "nsTypes": "off",
+    "enumMembers": "off",
+    "duplicates": "off"
+  },
+  "workspaces": {
+    ".": {
+      "entry": ["scripts/*.ts", ".claude/skills/*/scripts/*.{mjs,ts}"],
+      "project": ["scripts/**/*.ts"]
+    },
+    "apps/daemon": {
+      "entry": ["scripts/*.ts", "test/**/*.integration.ts", "test/fixtures/*.ts"],
+      "project": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"]
+    },
+    "apps/desktop": {
+      "entry": [
+        "src/main/main.ts",
+        "src/preload/preload.ts",
+        "src/renderer/main.tsx",
+        "scripts/*.ts",
+        "test/**/*.integration.ts"
+      ],
+      "project": ["src/**/*.{ts,tsx}", "scripts/**/*.ts", "test/**/*.ts"],
+      // scripts/build.ts finds its headers with Bun.resolveSync.
+      "ignoreDependencies": ["node-api-headers"]
+    },
+    "packages/ui": {
+      "entry": [
+        "gallery/{build,shoot,main}.{ts,tsx}",
+        "scripts/*.ts",
+        "test/browser/**/*.browser.tsx"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx}",
+        "gallery/**/*.{ts,tsx}",
+        "scripts/**/*.ts",
+        "test/**/*.{ts,tsx}"
+      ],
+      // Read by scripts/build-css.ts by path (the fonts, the cli) and by app.css's `@import "tailwindcss"`.
+      "ignoreDependencies": [
+        "@fontsource/.+",
+        "@fontsource-variable/.+",
+        "@tailwindcss/cli",
+        "tailwindcss"
+      ]
+    },
+    "harness/codex": {
+      "entry": ["scripts/*.ts", "test/**/*.integration.ts"],
+      "project": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"],
+      // src/binary.ts finds the CLI with Bun.resolveSync.
+      "ignoreDependencies": ["@openai/codex"]
+    },
+    "harness/*": {
+      "entry": ["test/**/*.integration.ts"],
+      "project": ["src/**/*.ts", "test/**/*.ts"]
+    },
+    "cloud/loop": {
+      "project": ["src/**/*.ts", "test/**/*.ts"]
+    },
+    "packages/line-rpc": {
+      // The tests run peer.ts as a child process.
+      "entry": ["test/peer.ts"],
+      "project": ["src/**/*.ts", "test/**/*.ts"]
+    },
+    "packages/*": {
+      "entry": ["test/**/*.integration.ts"],
+      "project": ["src/**/*.ts", "test/**/*.ts"]
+    }
+  }
+}

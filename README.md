@@ -22,11 +22,7 @@ Bun、TypeScript、Electron,均使用最新版本。
 Desktop(Electron) ──L1: Cycle 协议──▶ Daemon ──L2: ACP──▶ Agent 适配进程(Claude、Codex、agy)
 ```
 
-- **L1** 客户端到 daemon:以 ACP v2 为蓝本加 `_cycle/*` 扩展,类型自己定义并固定,要稳定。
-- **L2** daemon 到 agent:以 ACP v2(Agent Client Protocol)为标准。L1 的消息模型也以它为蓝本,类型由我们固定版本。
-- **L3** agent 适配:每个 agent 一个适配,在 `apps/daemon/src/harnesses.ts` 的 `HARNESSES` 清单里注册;Claude 的适配自己写,基于 Claude Agent SDK。
-
-详见 [docs/architecture.md](docs/architecture.md)。
+三层:L1 客户端到 daemon 是 Cycle 自己的稳定协议(以 ACP v2 为蓝本加 `_cycle/*`),L2 daemon 到 agent 用 ACP v2,L3 是每个 agent 的适配。分层的理由和约束见 [docs/architecture.md](docs/architecture.md)。
 
 ## 开发
 

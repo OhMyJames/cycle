@@ -31,3 +31,7 @@ Basis: 2026-11-18 用户要求优化自动更新的体积:每次更新下载 300
 - 发布脚本多一步:对最终签名后的 `.app` 扫一遍生成文件表(约 5 秒);清单从几百字节变成几百 KB。
 - 实测过 GitHub 的下载地址(302 到 `release-assets.githubusercontent.com`)支持 Range,但不支持后缀 Range(`bytes=-N`),所以从清单里的大小算绝对范围。GitHub 以后改了这个行为,效果是回退到整包,不是更新失败。
 - 没有在真实 macOS 上验证:`ditto` 路径之外的新代码在 Linux 上用真实的 v0.2.0、v0.2.1 的包验证过;`codesign` 的 `--verify --deep --strict` 和替换在 macOS 的集成测试(`update.integration.ts`,会断言走了差分)里跑。
+
+## Related
+
+- [差分更新细到文件内的 1 MiB 块](2026-11-23-update-by-blocks.md):部分取代本条。签名让每次发版所有 Mach-O 都变,按文件比较几乎总退回整包，所以大文件改为按块比较;按文件的差分仍是基础。

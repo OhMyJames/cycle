@@ -1,8 +1,9 @@
 # Agent Note: A local alpha update is checked by certificate name, not pinned, and does not guard against the same user
 
-Status: superseded (2026-11-27, CYC-468: the local alpha path was removed; interface changes reach the app as signed bundles, see 2026-11-26-interface-bundles-signed-by-ci-key-not-by-github-account)
+Status: superseded
 Date: 2026-11-25
 Basis: CYC-417 and the locked CYC-414 Design, "签名与钥匙串" (updater gets a second source, the alpha repository in `<CYCLE_HOME>/alpha/`)
+Superseded by: [Interface bundles are trusted by a CI signature](2026-11-26-interface-bundles-signed-by-ci-key-not-by-github-account.md) (CYC-468, 2026-11-27: the local alpha path was removed; interface changes reach the app as signed bundles)
 
 ## Problem
 
