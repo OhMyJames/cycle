@@ -1,0 +1,156 @@
+// The dev flow: a Feature or a Bug, from the claim to a merged pull request (CYC-479). It holds what is particular to
+// a dev run: the pull request and its guard, CI, the review, a conflict with the base, `node_modules` released while
+// waiting. What every run shares (the lock, the workers, the retries, the loop from phase to phase) is the engine's.
+
+import type { Flow, FlowHost, StepResult } from "../../engine/flow.ts";
+import { DevStateSchema } from "../../store.ts";
+import { blockTicket, ticketStillMine, ticketStillWanted } from "../ticket.ts";
+import { ci } from "./ci.ts";
+import { claim } from "./claim.ts";
+import { rollbackMerge } from "./conflict.ts";
+import { asDev, type Dev } from "./context.ts";
+import { deliver } from "./deliver.ts";
+import { dev } from "./dev.ts";
+import { checkDocs } from "./docs.ts";
+import { guardPr } from "./guard.ts";
+import { DEV_QA, qa } from "./qa.ts";
+import { review } from "./review.ts";
+import { verify } from "./verify.ts";
+
+export const devFlow = (host: FlowHost): Flow => {
+  const x: Dev = { h: host, kept: new Set(), greenSeen: new Map() };
+  return {
+    kind: "dev",
+    phases: {
+      claimed: {
+        field: "dev",
+        step: ({ run, issue, save }) => claim(host, asDev(run), issue, save),
+      },
+      dev: {
+        field: "dev",
+        step: ({ run, issue, book, announce, save }) =>
+          dev(host, asDev(run), issue, book, announce, save),
+        announces: true,
+      },
+      verify: {
+        field: "verify",
+        step: ({ run, book, save }) => verify(host, asDev(run), book, save),
+      },
+      qa: {
+        field: "qa",
+        step: ({ run, issue, book, save }) => qa(host, asDev(run), issue, book, save),
+      },
+      delivering: {
+        field: "ci",
+        step: ({ run, issue, book, save }) => deliver(host, asDev(run), issue, book, save),
+      },
+      ci: { field: "ci", step: ({ run, save }) => ci(x, asDev(run), save) },
+      review: {
+        field: "review",
+        step: async ({ run, issue, book, save }): Promise<StepResult | undefined> => {
+          const done = await review(x, asDev(run), issue, book, save);
+          if (done === undefined) return undefined;
+          await host.clear(run, issue);
+          return {
+            status: "delivered",
+            key: run.key,
+            prUrl: done.prUrl,
+            autoMerge: done.autoMerge,
+          };
+        },
+      },
+    },
+    firstPhase: "dev",
+    qa: DEV_QA,
+
+    enabled: () => true,
+
+    open(accepted) {
+      if (accepted.kind !== "dev") throw new Error(`a ${accepted.kind} work item is not a dev run`);
+      // A dev run's `claimed` event stays as it always was: no `runKind`, which `stats` reads as dev.
+      return {
+        specs: accepted.specs,
+        state: {
+          kind: "dev",
+          dev: DevStateSchema.parse({ fullFlowDocs: accepted.docs ?? [] }),
+        },
+        claimed: {
+          criteria: accepted.specs.length,
+          ...(accepted.docs === undefined ? {} : { fullFlow: true }),
+        },
+      };
+    },
+
+    wouldTake(issue, accepted) {
+      if (accepted.kind !== "dev") throw new Error(`a ${accepted.kind} work item is not a dev run`);
+      return { status: "would-take", key: issue.key, criteria: accepted.specs.length };
+    },
+
+    stillWanted: (run) => ticketStillWanted(host, run),
+
+    stillMine: (run) => ticketStillMine(host, run),
+
+    // What the checks said is kept in `ci_state`, but a run going on from QA or the delivery runs them again. A human
+    // resume from `ci` or `review` also re-runs verify/QA/push in case they committed a fix locally; a crash recovery
+    // in `ci` or `review` continues directly from there.
+    recheck: (run, byPerson) =>
+      run.phase === "qa" ||
+      run.phase === "delivering" ||
+      (byPerson && (run.phase === "ci" || run.phase === "review"))
+        ? "verify"
+        : undefined,
+
+    // 大档 (CYC-328): the documents must still be as the run began. Then the pull request, once there is one: closed
+    // without merging stops the run, merged counts as delivered.
+    async beforePhase({ run, issue, save, rebase }) {
+      const state = asDev(run).dev;
+      if (state.fullFlowDocs.length > 0) await checkDocs(host, asDev(run), issue, save, rebase);
+      if (asDev(run).dev.prUrl !== null) return guardPr(host, asDev(run), issue, save);
+      return undefined;
+    },
+
+    async putBack(run) {
+      const current = asDev(run);
+      // A conflict turn that blocked before it was judged leaves the merge open, markers and all: back it out, or the
+      // next checkpoint would commit them.
+      const saved = current.dev.conflict;
+      if (saved?.state === "dev" && saved.preMergeSha !== undefined && current.worktree !== null) {
+        const failed = await rollbackMerge(host, current.worktree, saved.preMergeSha);
+        if (failed !== "") throw new Error(`conflict rollback on resume failed: ${failed}`);
+      }
+      return {
+        ...current,
+        dev: { ...current.dev, ciRound: 0, conflictRound: 0, conflict: null, resolvedFiles: [] },
+      };
+    },
+
+    afterRemoved: () => ({ dev: { reviewSessionId: null, prUrl: null } }),
+
+    forget(key) {
+      x.greenSeen.delete(key);
+      for (const id of x.kept) if (id.startsWith(`${key}:`)) x.kept.delete(id);
+    },
+
+    block: (args) =>
+      blockTicket(host, args, {
+        firstPhase: "dev",
+        session: `Dev 会话「[${args.run.key}] Dev」`,
+        redact: (said) => said,
+      }),
+
+    // Done is not enough: the pull request must be merged. One closed without merging is left for a person.
+    async whenDone(run) {
+      const { config } = host.d;
+      const prUrl = asDev(run).dev.prUrl;
+      if (prUrl === null) return "keep";
+      const read = await host.d.forge.prState(
+        { cwd: config.repoRoot, timeoutMs: config.commandTimeoutMs },
+        prUrl,
+      );
+      if (!read.ok) return "keep";
+      if (read.state === "CLOSED") return { note: "cleanup_skipped_unmerged" };
+      if (read.state !== "MERGED") return "keep";
+      return "remove";
+    },
+  };
+};

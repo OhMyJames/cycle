@@ -594,37 +594,6 @@
   color: var(--cycle-attention);
 }
 
-/* Above an open session's box: that it is in a worktree, and its branch. One quiet line as wide as the box. */
-[data-slot="worktree-strip"] {
-  display: flex;
-  align-items: baseline;
-  gap: 0.75rem;
-  /* As wide as the box beneath it: the reading column, less the page's own margin when the window is narrow. */
-  box-sizing: border-box;
-  width: min(var(--cycle-measure), calc(100% - 3rem));
-  margin-inline: auto;
-  padding: 0.375rem 0.875rem;
-  border-radius: var(--cycle-radius-composer);
-  background: var(--cycle-surface-hover);
-  color: var(--cycle-ink-secondary);
-  font-size: var(--cycle-text-meta);
-  line-height: var(--cycle-leading-meta);
-}
-
-[data-slot="worktree-strip-name"] {
-  flex: none;
-}
-
-[data-slot="worktree-strip-branch"] {
-  min-width: 0;
-  overflow: hidden;
-  /* The fade at the end covers this room, so a branch that fits is not faded; one that does not fit fades into it. */
-  padding-inline-end: 1.5rem;
-  white-space: nowrap;
-  font-family: var(--font-mono);
-  mask-image: var(--cycle-fade-end);
-}
-
 /* The branch menu's search: a row of its own over the list, kept in view as the list scrolls. */
 [data-slot="branch-search"] {
   position: sticky;
@@ -675,194 +644,433 @@
   white-space: pre-wrap;
 }
 
-/* The Loop page (CYC-386, CYC-431): a Project's board, one row of columns across the whole content width (the exception
-   to the one column width, DESIGN.md §4.7). The row scrolls sideways by itself, so the page never does. The layout is
-   after SakaniUI's KanbanBoardBlock (MIT). */
+/* The Loop page (CYC-386, CYC-431): full-width Kanban board filling the content pane (DESIGN.md §4.7),
+   aligned with SakaniUI's KanbanBoardBlock visual and interaction craft while using Cycle's five-layer tokens. */
+[data-slot="loop-offline-banner"] {
+  padding: 0.75rem 1.5rem;
+  border-bottom: 1px solid var(--cycle-border-subtle);
+  background: var(--cycle-attention-soft);
+}
+
+[data-slot="loop-board-state"] {
+  display: grid;
+  place-items: center;
+  flex: 1;
+  min-height: 0;
+  padding: 2rem 1.5rem;
+}
+
 [data-kind="loop-board"] {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 1rem;
-  min-width: 0;
-  padding: 1.5rem 1.5rem 2rem;
-}
-
-[data-kind="loop-overview"] {
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-  padding: 1.5rem var(--cycle-column-pad) 2rem;
-}
-
-[data-slot="loop-project-list"] {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-[data-slot="loop-project-row"] {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  border-radius: var(--cycle-radius-sm);
-}
-
-[data-slot="loop-project-row"]:hover {
-  background: var(--cycle-surface-hover);
-}
-
-[data-slot="loop-project-open"] {
-  appearance: none;
   flex: 1;
   min-width: 0;
+  min-height: 0;
+  gap: 0.875rem;
+  padding: 0.5rem 1.5rem 1.25rem;
+  overflow: hidden;
+  container-type: inline-size;
+  container-name: loop-board;
+}
+
+/* ---- Toolbar (SakaniUI KanbanBoardBlock `.toolbar`) ---- */
+[data-slot="loop-toolbar"] {
   display: flex;
-  align-items: baseline;
-  gap: 0.75rem;
-  padding: 0.5rem;
-  border: 0;
-  background: none;
-  color: inherit;
-  text-align: start;
-  font-size: var(--cycle-text-ui);
-  cursor: pointer;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
 }
 
-[data-slot="loop-project-name"] {
-  font-weight: 600;
+[data-slot="loop-toolbar-left"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
 }
 
-[data-slot="loop-run"] {
-  display: inline-flex;
+[data-slot="loop-toolbar-right"] {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+[data-slot="loop-search"] {
+  display: flex;
   align-items: center;
   gap: 0.375rem;
+  width: 15.5rem;
+  height: 2rem;
+  padding: 0 0.375rem 0 0.625rem;
+  border: 1px solid var(--cycle-input-border);
+  border-radius: var(--ui-radius);
+  background: var(--cycle-surface-raised);
+  box-shadow: var(--cycle-edge-hardware);
   color: var(--cycle-ink-muted);
-  font-size: var(--cycle-text-meta);
+  transition:
+    border-color var(--cycle-motion-state) var(--cycle-ease),
+    box-shadow var(--cycle-motion-state) var(--cycle-ease);
 }
 
-[data-slot="loop-run"]::before {
-  content: "";
-  flex: none;
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 50%;
-  background: var(--cycle-ink-muted);
-}
-
-[data-slot="loop-run"][data-state="running"] {
+[data-slot="loop-search"]:focus-within {
+  border-color: var(--cycle-focus-ring);
+  box-shadow: var(--cycle-focus-halo);
   color: var(--cycle-ink-secondary);
 }
 
-[data-slot="loop-run"][data-state="running"]::before {
-  background: var(--cycle-success);
+[data-slot="loop-search"] > svg {
+  flex: none;
 }
 
-[data-slot="loop-project-counts"] {
-  margin-inline-start: auto;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
+[data-slot="loop-search"] > input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--cycle-ink);
+  font-family: var(--ui-font-sans);
+  font-size: var(--cycle-text-ui);
+  outline: none;
+}
+
+[data-slot="loop-search"] > input::placeholder {
   color: var(--cycle-ink-muted);
+}
+
+[data-slot="loop-search"] > input::-webkit-search-cancel-button {
+  display: none;
+}
+
+[data-kind="loop-search-clear"] {
+  flex: none;
+  width: 1.375rem;
+  height: 1.375rem;
+  padding: 0;
+  border-radius: var(--cycle-radius-sm);
+}
+
+[data-slot="loop-filter-chip"] {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  height: 2rem;
+  padding: 0 0.625rem;
+  border: 1px solid var(--cycle-border-default);
+  border-radius: var(--ui-radius);
+  background: var(--cycle-surface-raised);
+  box-shadow: var(--cycle-edge-hardware);
+  color: var(--cycle-ink-secondary);
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-meta);
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background-color var(--cycle-motion-state) var(--cycle-ease),
+    border-color var(--cycle-motion-state) var(--cycle-ease),
+    color var(--cycle-motion-state) var(--cycle-ease);
+}
+
+[data-slot="loop-filter-chip"]:hover {
+  background: var(--cycle-surface-hover);
+  color: var(--cycle-ink);
+}
+
+[data-slot="loop-filter-chip"][data-tone="attention"][data-active] {
+  border-color: color-mix(in oklab, var(--cycle-attention) 55%, var(--cycle-border-default));
+  background: var(--cycle-attention-soft);
+  color: var(--cycle-ink);
+}
+
+[data-slot="loop-filter-count"] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem;
+  height: 1.125rem;
+  padding: 0 0.3125rem;
+  border-radius: var(--cycle-radius-pill);
+  background: color-mix(in oklab, var(--cycle-attention) 18%, transparent);
+  color: var(--cycle-attention);
+  font-size: var(--cycle-text-meta);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+[data-kind="loop-priority-filter"] {
+  height: 2rem;
+  gap: 0.375rem;
+  padding-inline: 0.625rem;
+  font-size: var(--cycle-text-meta);
+  font-weight: 500;
+  color: var(--cycle-ink-secondary);
+}
+
+[data-kind="loop-priority-filter"][data-active] {
+  border-color: color-mix(in oklab, var(--cycle-accent) 45%, var(--cycle-input-border));
+  color: var(--cycle-ink);
+}
+
+[data-kind="loop-filter-clear"] {
+  height: 2rem;
+  padding-inline: 0.5rem;
   font-size: var(--cycle-text-meta);
 }
 
-[data-slot="loop-project-failed"] {
+[data-kind="loop-refresh"] {
+  height: 2rem;
+  gap: 0.375rem;
+  padding-inline: 0.625rem;
+  font-size: var(--cycle-text-meta);
+  font-weight: 500;
+}
+
+[data-kind="loop-refresh"][data-busy] > svg {
+  animation: cycle-spin 0.9s linear infinite;
+}
+
+/* Inline status/error notices directly below the toolbar (never trapped in a narrow column). */
+[data-slot="loop-board-notice"] {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 0.5rem;
-}
-
-[data-slot="loop-board-bar"] {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  color: var(--cycle-ink-muted);
+  padding: 0.4375rem 0.625rem 0.4375rem 0.75rem;
+  border: 1px solid var(--cycle-border-default);
+  border-radius: var(--ui-radius);
+  background: var(--cycle-surface-raised);
+  color: var(--cycle-ink);
   font-size: var(--cycle-text-meta);
+  line-height: var(--cycle-leading-meta);
 }
 
+[data-slot="loop-board-notice"] > svg {
+  flex: none;
+  color: var(--cycle-success);
+}
+
+[data-slot="loop-board-notice"] > span {
+  flex: 1;
+  min-width: 0;
+}
+
+[data-slot="loop-board-notice"][data-tone="error"] {
+  border-color: color-mix(in oklab, var(--ui-destructive) 35%, var(--cycle-border-default));
+  background: var(--cycle-destructive-soft);
+}
+
+[data-slot="loop-board-notice"][data-tone="error"] > svg {
+  color: var(--ui-destructive);
+}
+
+[data-slot="loop-board-notice"][data-tone="warning"] {
+  border-color: color-mix(in oklab, var(--cycle-attention) 35%, var(--cycle-border-default));
+  background: var(--cycle-attention-soft);
+}
+
+[data-slot="loop-board-notice"][data-tone="warning"] > svg {
+  color: var(--cycle-attention);
+}
+
+[data-kind="loop-notice-dismiss"] {
+  flex: none;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+}
+
+/* ---- Columns strip (fills remaining viewport height; scrolls sideways by itself) ---- */
 [data-slot="loop-columns"] {
   display: flex;
-  gap: 0.75rem;
-  align-items: flex-start;
+  flex: 1;
   min-width: 0;
+  min-height: 0;
+  align-items: stretch;
+  gap: 0.875rem;
   overflow-x: auto;
-  padding-bottom: 0.5rem;
+  overflow-y: hidden;
+  padding-bottom: 0.25rem;
 }
 
 [data-slot="loop-column"] {
-  flex: 1 0 16rem;
-  min-width: 16rem;
+  flex: 1 0 17.5rem;
+  min-width: 17.5rem;
+  max-width: 24rem;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  padding: 0.75rem;
+  gap: 0.625rem;
+  padding: 0.625rem;
   border: 1px solid var(--cycle-border-subtle);
   border-radius: var(--cycle-radius-card);
-  background: var(--cycle-surface-raised);
+  background: color-mix(in oklab, var(--cycle-surface-message) 52%, var(--cycle-surface-workspace));
 }
 
-/* Done is folded to its count: a narrow column, opened by its button. */
+/* Done is folded to a slim vertical rail with its dot and count; clicking unfolds it cleanly. */
 [data-slot="loop-column"][data-folded] {
   flex: 0 0 auto;
-  min-width: 0;
+  min-width: 3.25rem;
+  max-width: 4.5rem;
   align-items: center;
+  padding: 0.625rem 0.375rem;
+}
+
+[data-slot="loop-column"][data-folded] > [data-slot="loop-column-head"] {
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0;
+}
+
+[data-slot="loop-column"][data-folded] [data-kind="loop-toggle"] {
+  flex-direction: column;
+  height: auto;
+  padding: 0.375rem 0.25rem;
+  gap: 0.375rem;
+}
+
+[data-slot="loop-column"][data-folded] [data-slot="loop-column-count"] {
+  margin-inline-start: 0;
 }
 
 [data-slot="loop-column-head"] {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 0.5rem;
+  min-height: 1.75rem;
+  padding: 0 0.25rem;
 }
 
-[data-slot="loop-column-head"] > [data-slot="loop-column-count"] {
-  margin-inline-start: auto;
+[data-kind="loop-toggle"] {
+  height: 1.75rem;
+  gap: 0.375rem;
+  padding: 0 0.375rem;
+  margin-inline-start: -0.25rem;
+  color: var(--cycle-ink);
 }
 
 [data-slot="loop-column-dot"] {
   flex: none;
   width: 0.5rem;
   height: 0.5rem;
-  border-radius: 50%;
+  border-radius: var(--cycle-radius-pill);
   background: var(--cycle-ink-muted);
 }
 
-[data-state-type="unstarted"] > header > [data-slot="loop-column-dot"],
-[data-state-type="unstarted"] > header > button [data-slot="loop-column-dot"] {
+[data-state-type="unstarted"] > header [data-slot="loop-column-dot"] {
   background: var(--cycle-ink-secondary);
 }
 
-[data-state-type="started"] > header > [data-slot="loop-column-dot"] {
+[data-state-type="started"] > header [data-slot="loop-column-dot"] {
   background: var(--cycle-accent);
 }
 
-[data-state-type="completed"] > header > button [data-slot="loop-column-dot"] {
+[data-role="review"] > header [data-slot="loop-column-dot"] {
+  background: var(--cycle-link);
+}
+
+[data-role="blocked"] > header [data-slot="loop-column-dot"] {
+  background: var(--cycle-attention);
+}
+
+[data-state-type="completed"] > header [data-slot="loop-column-dot"] {
   background: var(--cycle-success);
 }
 
 [data-slot="loop-column-title"] {
   margin: 0;
+  font-family: var(--cycle-font-display);
   font-size: var(--cycle-text-ui);
   font-weight: 600;
+  letter-spacing: var(--cycle-tracking-display);
+  color: var(--cycle-ink);
+  white-space: nowrap;
 }
 
-[data-slot="loop-column-count"],
-[data-slot="loop-ticket-meta"],
-[data-slot="loop-column-empty"],
-[data-slot="loop-ticket-priority"],
-[data-slot="loop-repo"] {
+[data-slot="loop-column-count"] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.375rem;
+  height: 1.25rem;
+  padding: 0 0.375rem;
+  border-radius: var(--cycle-radius-pill);
+  background: var(--cycle-surface-message);
   color: var(--cycle-ink-muted);
   font-size: var(--cycle-text-meta);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+[data-slot="loop-column-select-all"] {
+  margin-inline-start: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  color: var(--cycle-ink-muted);
+  font-size: var(--cycle-text-meta);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+[data-slot="loop-column-select-all"]:hover {
+  color: var(--cycle-ink-secondary);
+}
+
+/* Each column scrolls vertically inside itself, never stretching the page. */
+[data-slot="loop-column-body"] {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 0.5rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 1px;
+}
+
+/* Leave room below the last card when the floating batch selection dock is visible. */
+[data-kind="loop-board"]:has([data-slot="loop-batch-bar"]) [data-slot="loop-column-body"] {
+  padding-bottom: 4.5rem;
 }
 
 [data-slot="loop-column-empty"] {
   margin: 0;
-  padding: 1rem 0.5rem;
+  display: grid;
+  place-items: center;
+  min-height: 5.5rem;
+  padding: 1rem 0.75rem;
   text-align: center;
   border: 1px dashed var(--cycle-border-default);
-  border-radius: var(--cycle-radius-sm);
+  border-radius: var(--ui-radius);
+  color: var(--cycle-ink-muted);
+  font-size: var(--cycle-text-meta);
 }
 
+[data-slot="loop-column-note"] {
+  margin: 0.25rem 0 0;
+  padding: 0 0.25rem;
+  color: var(--cycle-ink-muted);
+  font-size: var(--cycle-text-meta);
+  line-height: var(--cycle-leading-meta);
+}
+
+[data-kind="loop-more"] {
+  flex: none;
+  width: 100%;
+  height: 2rem;
+  font-size: var(--cycle-text-meta);
+  color: var(--cycle-ink-muted);
+}
+
+/* ---- Ticket cards (SakaniUI BoardCard proportions + Cycle Surface/Card materials) ---- */
 [data-slot="loop-tickets"] {
   margin: 0;
   padding: 0;
@@ -870,88 +1078,43 @@
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  /* Each column scrolls by itself, so a long Backlog does not stretch the others. */
-  max-height: calc(100vh - 16rem);
-  overflow-y: auto;
-  overscroll-behavior: contain;
 }
 
 [data-slot="loop-ticket"] {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 0.375rem;
-  padding: 0.625rem;
+  gap: 0.5rem;
+  padding: 0.75rem;
   border: 1px solid var(--cycle-border-default);
-  border-radius: var(--cycle-radius-sm);
-  background: var(--cycle-surface-workspace);
+  border-radius: var(--ui-radius);
+  background: var(--cycle-surface-raised);
+  box-shadow: var(--cycle-edge-hardware);
+  transition:
+    background-color var(--cycle-motion-state) var(--cycle-ease),
+    border-color var(--cycle-motion-state) var(--cycle-ease),
+    box-shadow var(--cycle-motion-state) var(--cycle-ease);
 }
 
 [data-slot="loop-ticket"]:hover {
-  background: var(--cycle-surface-hover);
+  border-color: color-mix(in oklab, var(--cycle-input-border) 55%, var(--cycle-border-default));
+  background: color-mix(in oklab, var(--cycle-surface-hover) 45%, var(--cycle-surface-raised));
 }
 
-[data-slot="loop-ticket-head"] {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.5rem;
+[data-slot="loop-ticket"][data-active] {
+  border-color: var(--cycle-accent);
+  box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--cycle-accent) 35%, transparent),
+    var(--cycle-edge-hardware);
 }
 
-[data-slot="loop-ticket-stage"] {
-  color: var(--cycle-ink-muted);
-  font-size: var(--cycle-text-meta);
-}
-
-/* Long on one step: a nudge, not an error. */
-[data-slot="loop-ticket-stage"][data-slow="true"] {
-  color: var(--cycle-attention);
-}
-
-[data-slot="loop-ticket-id"] {
-  font-family: var(--font-mono);
-  font-size: var(--cycle-text-meta);
-  color: var(--cycle-ink-secondary);
-}
-
-/* A long title is two lines at most, cut at its end; the whole of it is on hover and on the ticket's page. */
-[data-slot="loop-ticket"] > [data-slot="loop-ticket-title"] {
-  min-width: 0;
-  font-size: var(--cycle-text-ui);
-  line-height: 1.4;
-}
-
-/* Overview's Needs you rows: a plain row, the title cut on one line. */
-[data-slot="loop-notice"] {
-  display: grid;
-  gap: 0.25rem;
-  padding: 0.5rem;
-  border-radius: var(--cycle-radius-sm);
-}
-
-[data-slot="loop-notice"]:hover {
-  background: var(--cycle-surface-hover);
-}
-
-[data-slot="loop-notice"] > [data-slot="loop-ticket-title"] {
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  font-size: var(--cycle-text-ui);
-}
-
-[data-slot="loop-ticket-text"] {
-  /* Two lines at most; only a longer title is cut, with an ellipsis, and a short one is untouched. */
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  overflow: hidden;
+[data-slot="loop-ticket"][data-selected] {
+  border-color: var(--cycle-accent);
+  background: color-mix(in oklab, var(--cycle-accent) 5%, var(--cycle-surface-raised));
 }
 
 [data-slot="loop-ticket"]:has(> button[data-slot="loop-ticket-title"]:focus-visible) {
-  outline: 2px solid var(--cycle-focus-ring);
+  outline: 1.5px solid var(--cycle-focus-ring);
   outline-offset: 1px;
 }
 
@@ -959,29 +1122,682 @@
   outline: none;
 }
 
+[data-slot="loop-ticket-head"] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+[data-slot="loop-ticket-lead"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+  flex: none;
+}
+
+[data-slot="loop-ticket-badges"] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  min-width: 0;
+}
+
+[data-slot="loop-ticket-id"] {
+  font-family: var(--ui-font-mono);
+  font-feature-settings: normal;
+  font-size: var(--cycle-text-meta);
+  color: var(--cycle-ink-muted);
+  white-space: nowrap;
+  flex: none;
+}
+
+/* Custom crisp checkbox for selecting awaiting-approval cards and Select all. */
+[data-slot="loop-pending-pick"],
+[data-slot="loop-column-select-all"] > input {
+  appearance: none;
+  position: relative;
+  z-index: 1;
+  flex: none;
+  width: 0.9375rem;
+  height: 0.9375rem;
+  margin: 0;
+  border: 1.5px solid var(--cycle-input-border);
+  border-radius: 4px;
+  background: var(--cycle-surface-workspace);
+  cursor: pointer;
+  transition:
+    background-color var(--cycle-motion-state) var(--cycle-ease),
+    border-color var(--cycle-motion-state) var(--cycle-ease);
+}
+
+[data-slot="loop-pending-pick"]:hover,
+[data-slot="loop-column-select-all"] > input:hover {
+  border-color: var(--cycle-ink-secondary);
+}
+
+[data-slot="loop-pending-pick"]:checked,
+[data-slot="loop-column-select-all"] > input:checked {
+  border-color: var(--cycle-accent);
+  background: var(--cycle-accent);
+}
+
+[data-slot="loop-pending-pick"]:checked::after,
+[data-slot="loop-column-select-all"] > input:checked::after {
+  content: "";
+  position: absolute;
+  left: 0.25rem;
+  top: 0.0625rem;
+  width: 0.25rem;
+  height: 0.5rem;
+  border: solid var(--cycle-accent-foreground);
+  border-width: 0 1.75px 1.75px 0;
+  transform: rotate(42deg);
+}
+
+/* Awaiting-approval badge directly on the card: clear amber signal for fast approve. */
+[data-slot="loop-pending-badge"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3125rem;
+  height: 1.25rem;
+  padding: 0 0.4375rem;
+  border-radius: var(--cycle-radius-pill);
+  border: 1px solid color-mix(in oklab, var(--cycle-attention) 32%, transparent);
+  background: var(--cycle-attention-soft);
+  color: var(--cycle-attention);
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-meta);
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+[data-slot="loop-pending-dot"] {
+  flex: none;
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: var(--cycle-radius-pill);
+  background: var(--cycle-attention);
+}
+
+/* Priority pills: clear visual hierarchy without rainbow clutter. */
+[data-slot="loop-priority"] {
+  display: inline-flex;
+  align-items: center;
+  height: 1.25rem;
+  padding: 0 0.4375rem;
+  border-radius: var(--cycle-radius-sm);
+  background: var(--cycle-surface-message);
+  color: var(--cycle-ink-secondary);
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-meta);
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+[data-slot="loop-priority"][data-priority="urgent"] {
+  background: var(--cycle-destructive-soft);
+  color: var(--ui-destructive);
+}
+
+[data-slot="loop-priority"][data-priority="high"] {
+  background: var(--cycle-attention-soft);
+  color: var(--cycle-attention);
+}
+
+[data-slot="loop-priority"][data-priority="low"] {
+  background: transparent;
+  padding-inline: 0.125rem;
+  color: var(--cycle-ink-muted);
+}
+
 button[data-slot="loop-ticket-title"] {
   appearance: none;
   border: 0;
   background: none;
   padding: 0;
-  color: inherit;
+  color: var(--cycle-ink);
+  font-family: var(--ui-font-sans);
+  font-size: var(--cycle-text-ui);
+  font-weight: 500;
+  line-height: var(--cycle-leading-ui);
   text-align: start;
   cursor: pointer;
 }
 
-/* The title button covers the card, so the whole card opens the ticket. */
+/* The title button covers the card, so clicking anywhere on the card opens its drawer. */
 [data-slot="loop-ticket"] > button[data-slot="loop-ticket-title"]::after {
   content: "";
   position: absolute;
   inset: 0;
 }
 
+[data-slot="loop-ticket-text"] {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+
+[data-slot="loop-pending-reason"] {
+  margin: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  color: var(--cycle-ink-muted);
+  font-size: var(--cycle-text-meta);
+  line-height: var(--cycle-leading-meta);
+}
+
+/* Card footer (SakaniUI BoardCard hairline divider + meta left + compact actions right). */
+[data-slot="loop-ticket-foot"] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--cycle-border-subtle);
+}
+
+[data-slot="loop-ticket-foot-meta"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+[data-slot="loop-ticket-criteria"] {
+  color: var(--cycle-ink-muted);
+  font-size: var(--cycle-text-meta);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+[data-slot="loop-ticket-stage"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  color: var(--cycle-ink-secondary);
+  font-size: var(--cycle-text-meta);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+[data-slot="loop-stage-dot"] {
+  flex: none;
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: var(--cycle-radius-pill);
+  background: var(--cycle-accent);
+}
+
+/* Long on one step: a quiet amber nudge, not an error. */
+[data-slot="loop-ticket-stage"][data-slow="true"] {
+  color: var(--cycle-attention);
+}
+
+[data-slot="loop-ticket-stage"][data-slow="true"] > [data-slot="loop-stage-dot"] {
+  background: var(--cycle-attention);
+}
+
 [data-slot="loop-ticket-actions"] {
   position: relative;
-  display: flex;
+  z-index: 1;
+  display: inline-flex;
   flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-end;
   gap: 0.25rem;
+  margin-inline-start: auto;
+}
+
+/* Compact, quiet footer buttons on cards so they never overpower the title. */
+[data-slot="loop-ticket-actions"][data-surface="card"] > [data-slot="button"] {
+  height: 1.5rem;
+  gap: 0.25rem;
+  padding: 0 0.5rem;
+  border-radius: var(--cycle-radius-sm);
+  font-size: var(--cycle-text-meta);
+  font-weight: 500;
+  color: var(--cycle-ink-muted);
+}
+
+[data-slot="loop-ticket"]:hover
+  [data-slot="loop-ticket-actions"][data-surface="card"]
+  > [data-slot="button"] {
+  color: var(--cycle-ink-secondary);
+}
+
+[data-slot="loop-ticket-actions"][data-surface="card"] > [data-slot="button"]:hover:not(:disabled) {
+  color: var(--cycle-ink);
+}
+
+/* Quick Approve button on awaiting-approval cards: immediately inviting without screaming. */
+[data-slot="loop-ticket-actions"][data-surface="card"] > [data-slot="button"][data-quick] {
+  border-color: color-mix(in oklab, var(--cycle-accent) 28%, transparent);
+  background: color-mix(in oklab, var(--cycle-accent) 11%, transparent);
+  color: var(--cycle-accent);
+}
+
+[data-slot="loop-ticket"]:hover
+  [data-slot="loop-ticket-actions"][data-surface="card"]
+  > [data-slot="button"][data-quick] {
+  color: var(--cycle-accent);
+}
+
+[data-slot="loop-ticket-actions"][data-surface="card"]
+  > [data-slot="button"][data-quick]:hover:not(:disabled) {
+  background: var(--cycle-accent);
+  color: var(--cycle-accent-foreground);
+}
+
+/* ---- Floating selection dock (SakaniUI `.barDock` / `.bar`) ---- */
+@keyframes loop-bar-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+[data-slot="loop-batch-dock"] {
+  position: absolute;
+  left: 1.5rem;
+  right: 1.5rem;
+  bottom: 1rem;
+  z-index: 20;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+[data-slot="loop-batch-bar"] {
+  pointer-events: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  max-width: 100%;
+  padding: 0.5rem 0.5rem 0.5rem 0.75rem;
+  border: 1px solid var(--cycle-border-default);
+  border-radius: var(--cycle-radius-card);
+  background: var(--cycle-surface-raised);
+  box-shadow: var(--cycle-shadow-dialog), var(--cycle-edge-hardware);
+  animation: loop-bar-in var(--cycle-motion-enter) var(--cycle-ease) both;
+}
+
+[data-slot="loop-batch-count"] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.5rem;
+  height: 1.5rem;
+  padding: 0 0.4375rem;
+  border-radius: var(--cycle-radius-pill);
+  background: var(--cycle-accent);
+  color: var(--cycle-accent-foreground);
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-meta);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+[data-slot="loop-batch-label"] {
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-ui);
+  font-weight: 500;
+  color: var(--cycle-ink);
+  white-space: nowrap;
+}
+
+[data-kind="loop-batch-all"] {
+  height: 1.75rem;
+  padding-inline: 0.5rem;
+  font-size: var(--cycle-text-meta);
+}
+
+[data-slot="loop-batch-divider"] {
+  width: 1px;
+  height: 1.125rem;
+  background: var(--cycle-border-default);
+}
+
+[data-kind="loop-batch-why"] {
+  width: 14rem;
+  min-width: 9rem;
+  flex: 1 1 11rem;
+  height: 2rem;
+  font-size: var(--cycle-text-meta);
+}
+
+[data-slot="loop-batch-bar"] > [data-kind="loop-return-many"],
+[data-slot="loop-batch-bar"] > [data-kind="loop-approve-many"] {
+  height: 2rem;
+  padding-inline: 0.75rem;
+  font-size: var(--cycle-text-meta);
+}
+
+[data-kind="loop-batch-clear"] {
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+}
+
+/* ---- Right-side Ticket Drawer ---- */
+@keyframes loop-drawer-in {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+}
+
+@keyframes loop-scrim-in {
+  from {
+    opacity: 0;
+  }
+}
+
+[data-slot="loop-drawer-layer"] {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  justify-content: flex-end;
+}
+
+[data-slot="loop-drawer-backdrop"] {
+  position: absolute;
+  inset: 0;
+  background: var(--cycle-scrim);
+  animation: loop-scrim-in var(--cycle-motion-state) var(--cycle-ease) both;
+}
+
+[data-slot="loop-drawer"] {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  width: min(36rem, calc(100% - 1.5rem));
+  height: 100%;
+  border-left: 1px solid var(--cycle-border-default);
+  background: var(--cycle-surface-workspace);
+  box-shadow: var(--cycle-shadow-dialog);
+  animation: loop-drawer-in var(--cycle-motion-enter) var(--cycle-ease) both;
+}
+
+[data-slot="loop-drawer-head"] {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 3rem;
+  padding: 0.625rem 0.75rem 0.625rem 1.25rem;
+  border-bottom: 1px solid var(--cycle-border-subtle);
+}
+
+[data-slot="loop-drawer-meta"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+[data-slot="loop-drawer-column"] {
+  display: inline-flex;
+  align-items: center;
+  height: 1.25rem;
+  padding: 0 0.4375rem;
+  border-radius: var(--cycle-radius-sm);
+  background: var(--cycle-surface-message);
+  color: var(--cycle-ink-secondary);
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-meta);
+  font-weight: 500;
+}
+
+[data-kind="loop-drawer-close"] {
+  flex: none;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+}
+
+[data-slot="loop-drawer-body"] {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  padding: 1.25rem 1.25rem 2rem;
+}
+
+[data-slot="loop-detail-title"] {
+  margin: 0;
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-title);
+  font-weight: 600;
+  letter-spacing: var(--cycle-tracking-display);
+  line-height: var(--cycle-leading-title);
+  color: var(--cycle-ink);
+}
+
+[data-slot="loop-detail-stage"] {
+  margin-top: -0.75rem;
+}
+
+[data-slot="loop-detail-actions"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+[data-slot="loop-detail-actions"] [data-slot="loop-ticket-actions"] {
+  margin-inline-start: 0;
+  gap: 0.5rem;
+}
+
+[data-slot="loop-chat"],
+[data-slot="loop-join"] {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+[data-slot="loop-chat-note"] {
+  margin: 0;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--cycle-border-subtle);
+  border-radius: var(--ui-radius);
+  background: var(--cycle-surface-message);
+  color: var(--cycle-ink-secondary);
+  font-size: var(--cycle-text-meta);
+  line-height: var(--cycle-leading-meta);
+}
+
+[data-slot="loop-attention-card"] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem 0.875rem;
+  border: 1px solid color-mix(in oklab, var(--cycle-attention) 32%, var(--cycle-border-default));
+  border-left: 3px solid var(--cycle-attention);
+  border-radius: var(--ui-radius);
+  background: var(--cycle-attention-soft);
+}
+
+[data-slot="loop-attention-card"][data-attention="blocked"] {
+  border-color: color-mix(in oklab, var(--ui-destructive) 32%, var(--cycle-border-default));
+  border-left-color: var(--ui-destructive);
+  background: var(--cycle-destructive-soft);
+}
+
+[data-slot="loop-attention-head"] {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+[data-slot="loop-attention-head"] > svg {
+  flex: none;
+  color: var(--cycle-attention);
+}
+
+[data-slot="loop-attention-card"][data-attention="blocked"]
+  [data-slot="loop-attention-head"]
+  > svg {
+  color: var(--ui-destructive);
+}
+
+[data-slot="loop-attention-head"] > h4 {
+  margin: 0;
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-ui);
+  font-weight: 600;
+  color: var(--cycle-ink);
+}
+
+[data-slot="loop-attention-link"] {
+  font-size: var(--cycle-text-meta);
+  overflow-wrap: anywhere;
+}
+
+[data-slot="loop-pending-callout"] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.75rem 0.875rem;
+  border: 1px solid color-mix(in oklab, var(--cycle-attention) 26%, var(--cycle-border-default));
+  border-radius: var(--ui-radius);
+  background: var(--cycle-attention-soft);
+}
+
+[data-slot="loop-pending-callout"] > h4 {
+  margin: 0;
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-meta);
+  font-weight: 600;
+  color: var(--cycle-attention);
+}
+
+[data-slot="loop-pending-callout"] > p {
+  margin: 0;
+  font-size: var(--cycle-text-ui);
+  line-height: var(--cycle-leading-ui);
+  color: var(--cycle-ink);
+}
+
+[data-slot="loop-detail-section"] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--cycle-border-subtle);
+}
+
+[data-slot="loop-detail-section-head"] {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+[data-slot="loop-detail-section"] h4 {
+  margin: 0;
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-meta);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--cycle-ink-muted);
+}
+
+[data-slot="loop-detail-empty"] {
+  margin: 0;
+  color: var(--cycle-ink-muted);
+  font-size: var(--cycle-text-meta);
+}
+
+[data-slot="loop-detail-markdown"] {
+  font-size: var(--cycle-text-body);
+  line-height: var(--cycle-leading-body);
+  color: var(--cycle-ink);
+  min-width: 0;
+}
+
+[data-slot="loop-acceptance-list"],
+[data-slot="loop-links-list"] {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--cycle-border-default);
+  border-radius: var(--ui-radius);
+  background: var(--cycle-surface-raised);
+  box-shadow: var(--cycle-edge-hardware);
+}
+
+[data-slot="loop-acceptance-list"] > li {
+  counter-increment: loop-ac;
+  display: flex;
+  align-items: baseline;
+  gap: 0.625rem;
+  padding: 0.5625rem 0.75rem;
+  font-size: var(--cycle-text-ui);
+  line-height: var(--cycle-leading-ui);
+  color: var(--cycle-ink);
+}
+
+[data-slot="loop-acceptance-list"] {
+  counter-reset: loop-ac;
+}
+
+[data-slot="loop-acceptance-list"] > li::before {
+  content: counter(loop-ac);
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: var(--cycle-radius-pill);
+  background: var(--cycle-surface-message);
+  color: var(--cycle-ink-muted);
+  font-family: var(--ui-font-mono);
+  font-size: var(--cycle-text-meta);
+  font-variant-numeric: tabular-nums;
+}
+
+[data-slot="loop-acceptance-list"] > li + li,
+[data-slot="loop-links-list"] > li + li {
+  border-top: 1px solid var(--cycle-border-subtle);
+}
+
+[data-slot="loop-links-list"] > li {
+  padding: 0.5625rem 0.75rem;
+  font-size: var(--cycle-text-meta);
+  overflow-wrap: anywhere;
+}
+
+/* ---- Skeleton loading ---- */
+@keyframes loop-skeleton-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 0.9;
+  }
 }
 
 [data-slot="loop-skeleton"] {
@@ -989,14 +1805,15 @@ button[data-slot="loop-ticket-title"] {
   height: 0.75rem;
   border-radius: var(--cycle-radius-sm);
   background: var(--cycle-surface-hover);
+  animation: loop-skeleton-pulse 1.4s var(--cycle-ease) infinite;
 }
 
 [data-slot="loop-skeleton"][data-size="title"] {
-  width: 5rem;
+  width: 5.5rem;
 }
 
 [data-slot="loop-skeleton"][data-size="id"] {
-  width: 3rem;
+  width: 3.5rem;
 }
 
 [data-slot="loop-skeleton"][data-size="line"] {
@@ -1004,96 +1821,226 @@ button[data-slot="loop-ticket-title"] {
 }
 
 [data-slot="loop-skeleton"][data-size="line-short"] {
-  width: 60%;
+  width: 65%;
 }
 
-[data-slot="loop-pending"] {
+/* ---- Overview page (centered inside PageLayout's page-column, zero double padding) ---- */
+[data-kind="loop-overview"] {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  padding: 0.5rem;
-  border: 1px solid var(--cycle-attention);
+  gap: 1.5rem;
+}
+
+[data-slot="loop-notice-list"],
+[data-slot="loop-project-list"] {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+[data-slot="loop-notice"] + [data-slot="loop-notice"],
+[data-slot="loop-project-row"] + [data-slot="loop-project-row"] {
+  border-top: 1px solid var(--cycle-border-subtle);
+}
+
+[data-slot="loop-notice-open"],
+[data-slot="loop-project-open"] {
+  appearance: none;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.875rem 1rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+  transition: background-color var(--cycle-motion-state) var(--cycle-ease);
+}
+
+[data-slot="loop-notice"]:first-child [data-slot="loop-notice-open"],
+[data-slot="loop-project-row"]:first-child [data-slot="loop-project-open"] {
+  border-top-left-radius: calc(var(--cycle-radius-card) - 1px);
+  border-top-right-radius: calc(var(--cycle-radius-card) - 1px);
+}
+
+[data-slot="loop-notice"]:last-child [data-slot="loop-notice-open"],
+[data-slot="loop-project-row"]:last-child [data-slot="loop-project-open"] {
+  border-bottom-left-radius: calc(var(--cycle-radius-card) - 1px);
+  border-bottom-right-radius: calc(var(--cycle-radius-card) - 1px);
+}
+
+[data-slot="loop-notice-open"]:hover,
+[data-slot="loop-project-open"]:hover:not(:disabled) {
+  background: var(--cycle-surface-hover);
+}
+
+[data-slot="loop-project-open"]:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+
+[data-slot="loop-notice-open"] > svg,
+[data-slot="loop-project-open"] > svg {
+  flex: none;
+  color: var(--cycle-ink-muted);
+}
+
+[data-slot="loop-notice-icon"] {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
   border-radius: var(--cycle-radius-sm);
+  background: var(--cycle-attention-soft);
+  color: var(--cycle-attention);
 }
 
-[data-slot="loop-pending-head"] {
+[data-slot="loop-notice"][data-notice="blocked"] [data-slot="loop-notice-icon"] {
+  background: var(--cycle-destructive-soft);
+  color: var(--ui-destructive);
+}
+
+[data-slot="loop-notice-body"] {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+[data-slot="loop-notice-head"] {
   display: flex;
   align-items: center;
   gap: 0.5rem;
 }
 
-[data-slot="loop-pending-all"] {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  margin-left: auto;
+[data-slot="loop-notice-kind"] {
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-ui);
+  font-weight: 500;
+  color: var(--cycle-ink);
+}
+
+[data-slot="loop-notice-detail"] {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   color: var(--cycle-ink-muted);
   font-size: var(--cycle-text-meta);
 }
 
-[data-slot="loop-pending-reason"] {
-  position: relative;
-  margin: 0;
-  color: var(--cycle-ink-secondary);
-  font-size: var(--cycle-text-meta);
-}
-
-[data-slot="loop-pending-bar"] {
+[data-slot="loop-project-row"] {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 0.25rem;
 }
 
-[data-slot="loop-pending-bar"] > input {
-  flex: 1 1 8rem;
+[data-slot="loop-project-open"] {
+  flex: 1;
   min-width: 0;
 }
 
-/* The title button stretches over the card; the checkbox sits above it so it can be pressed. */
-[data-slot="loop-pending-pick"] {
-  position: relative;
-  z-index: 1;
+[data-slot="loop-project-info"] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-width: 0;
 }
 
-[data-slot="loop-ticket"][data-pending] > [data-slot="loop-ticket-head"] {
-  position: relative;
+[data-slot="loop-project-title"] {
+  display: flex;
   align-items: center;
-  gap: 0.375rem;
+  gap: 0.5rem;
+}
+
+[data-slot="loop-project-name"] {
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-body);
+  font-weight: 600;
+  color: var(--cycle-ink);
+}
+
+[data-slot="loop-project-key"] {
+  display: inline-flex;
+  align-items: center;
+  height: 1.125rem;
+  padding: 0 0.375rem;
+  border-radius: var(--cycle-radius-sm);
+  background: var(--cycle-surface-message);
+  color: var(--cycle-ink-muted);
+  font-family: var(--ui-font-mono);
+  font-feature-settings: normal;
+  font-size: var(--cycle-text-meta);
+}
+
+[data-slot="loop-repo"] {
+  color: var(--cycle-ink-muted);
+  font-family: var(--ui-font-mono);
+  font-feature-settings: normal;
+  font-size: var(--cycle-text-meta);
+}
+
+[data-slot="loop-project-counts"] {
+  margin-inline-start: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.625rem;
+  font-size: var(--cycle-text-meta);
+  font-variant-numeric: tabular-nums;
+}
+
+[data-slot="loop-project-count"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3125rem;
+  color: var(--cycle-ink-muted);
+}
+
+[data-slot="loop-project-count"] > strong {
+  font-weight: 600;
+  color: var(--cycle-ink-secondary);
+}
+
+[data-slot="loop-count-dot"] {
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: var(--cycle-radius-pill);
+  background: var(--cycle-ink-muted);
+}
+
+[data-slot="loop-project-count"][data-column="doing"] [data-slot="loop-count-dot"] {
+  background: var(--cycle-accent);
+}
+
+[data-slot="loop-project-count"][data-column="todo"] [data-slot="loop-count-dot"] {
+  background: var(--cycle-ink-secondary);
+}
+
+[data-slot="loop-project-count"][data-column="done"] [data-slot="loop-count-dot"] {
+  background: var(--cycle-success);
+}
+
+[data-slot="loop-project-failed"] {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding-inline-end: 0.75rem;
 }
 
 [data-slot="loop-problem"] {
   margin: 0;
-  color: var(--cycle-ink-secondary);
+  color: var(--ui-destructive);
   font-size: var(--cycle-text-meta);
+  line-height: var(--cycle-leading-meta);
 }
 
-[data-kind="loop-ticket-page"] {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  padding: 1.5rem var(--cycle-column-pad) 2rem;
-}
-
-[data-slot="loop-detail-title"] {
-  margin: 0;
-  font-size: var(--cycle-text-ui);
-  font-weight: 600;
-}
-
-[data-slot="loop-detail-section"] h4 {
-  margin: 0 0 0.25rem;
-  font-size: var(--cycle-text-ui);
-}
-
-[data-slot="loop-detail-body"] {
-  margin: 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font: inherit;
-  font-size: var(--cycle-text-ui);
-}
-
+/* ---- Breadcrumbs in PageLayout header ---- */
 [data-slot="loop-crumbs"] {
   display: block;
   min-width: 0;
@@ -1103,7 +2050,8 @@ button[data-slot="loop-ticket-title"] {
 }
 
 [data-slot="loop-crumbs"] > [aria-hidden="true"] {
-  margin: 0 0.35em;
+  margin: 0 0.4em;
+  color: var(--cycle-ink-muted);
 }
 
 html[data-platform="darwin"] [data-slot="loop-crumb"] {
@@ -1114,25 +2062,47 @@ html[data-platform="darwin"] [data-slot="loop-crumb"] {
   all: unset;
   cursor: pointer;
   color: var(--cycle-ink-muted);
+  transition: color var(--cycle-motion-state) var(--cycle-ease);
 }
 
 [data-slot="loop-crumb"]:hover {
-  text-decoration: underline;
+  color: var(--cycle-ink);
 }
 
 [data-slot="loop-crumb"]:focus-visible {
-  outline: 2px solid currentColor;
+  outline: 1.5px solid var(--cycle-focus-ring);
   outline-offset: 2px;
+  border-radius: var(--cycle-radius-sm);
 }
 
-[data-slot="loop-tabs"] {
-  display: flex;
-  align-items: center;
-  gap: var(--cycle-gap);
-  margin-bottom: var(--cycle-gap);
+@container loop-board (max-width: 720px) {
+  [data-slot="loop-toolbar"] {
+    gap: 0.375rem;
+  }
+
+  [data-slot="loop-toolbar-left"] {
+    flex: 1 1 auto;
+    gap: 0.375rem;
+  }
+
+  [data-slot="loop-search"] {
+    width: auto;
+    flex: 1 1 9rem;
+    min-width: 8rem;
+  }
+
+  [data-slot="loop-column"] {
+    flex: 0 0 17.5rem;
+    min-width: 17.5rem;
+  }
 }
 
-[data-slot="loop-tab-note"] {
-  color: var(--cycle-ink-muted);
-  font-size: var(--cycle-text-meta);
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="loop-drawer"],
+  [data-slot="loop-drawer-backdrop"],
+  [data-slot="loop-batch-bar"],
+  [data-slot="loop-skeleton"],
+  [data-kind="loop-refresh"][data-busy] > svg {
+    animation: none;
+  }
 }

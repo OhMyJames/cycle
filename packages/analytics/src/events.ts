@@ -82,7 +82,7 @@ export const EVENTS = {
   /** The person turned usage statistics on or off. Sent last when turning off, first when turning on. */
   analytics_toggled: o({ enabled: z.boolean() }),
   /** The Loop page read a Project's board: how it came out, never what is on it. */
-  loop_board_read: o({ result: z.enum(["ok", "no_key", "unreachable"]) }),
+  loop_board_read: o({ result: z.enum(["ok", "no_server", "unreachable"]) }),
   /** The Loop page read the Projects' run state: whether the Loop server answered, never which runs. */
   loop_runs_read: o({ result: z.enum(["ok", "disconnected"]) }),
   /** The person opened a ticket's page on the Loop page. */
@@ -93,7 +93,7 @@ export const EVENTS = {
       "started",
       "needs_model",
       "not_allowed",
-      "no_key",
+      "no_server",
       "offline",
       "refused",
       "failed",
@@ -107,7 +107,7 @@ export const EVENTS = {
     result: z.enum([
       "ok",
       "unconfirmed",
-      "no_key",
+      "no_server",
       "forbidden",
       "conflict",
       "not_allowed",
@@ -115,9 +115,10 @@ export const EVENTS = {
       "refused",
     ]),
   }),
-  /** The person approved or returned a batch of tickets waiting for approval: which, and how many came out how; never which tickets. */
+  /** The person approved or returned a batch of tickets waiting for approval: which, how many were asked for, and how many came out how; never which tickets. One event for one press, however many requests it took. */
   loop_tickets_acted: o({
     action: z.enum(["approve_many", "return_many"]),
+    total: z.number(),
     ok: z.number(),
     skipped: z.number(),
     failed: z.number(),
@@ -133,6 +134,7 @@ export const EVENTS = {
   /** The person asked to check for an update. */
   update_checked: o({ result: z.enum(["available", "up_to_date", "error", "disabled"]) }),
   update_install_started: o({}),
+  interface_update_applied: o({}),
   /** The person chose light, dark, or to follow the system. */
   theme_changed: o({ theme: z.enum(["system", "light", "dark"]) }),
   /** The person chose the interface's language: one of those the app has, or the system's. */
@@ -489,6 +491,7 @@ export const UI_EVENTS = [
   "background_shown_from_conversation",
   "file_previewed",
   "loop_notice_opened",
+  "loop_tickets_acted",
   "loop_session_joined",
   "diff_view_changed",
   "diff_file_opened",

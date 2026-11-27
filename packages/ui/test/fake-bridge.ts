@@ -9,6 +9,7 @@ import type {
   Environment,
   EnvironmentsState,
   GitBranches,
+  InterfaceState,
   LocationConfig,
   LoopAction,
   LoopActResult,
@@ -76,6 +77,7 @@ export const fakeBridge = (
     snapshot?: () => SessionSnapshot | Promise<SessionSnapshot>;
     connected?: boolean;
     update?: UpdateState;
+    interface?: InterfaceState;
     /** Whether usage statistics are on. Default: nowhere to report to. */
     analytics?: AnalyticsStatus;
     loopProjects?: LoopProjectsAnswer;
@@ -84,10 +86,12 @@ export const fakeBridge = (
     loopTickets?: Record<string, LoopTicketAnswer>;
     /** What a state button comes to. Default: it worked. */
     loopAct?: LoopActResult;
+    /** What starting a conversation about a ticket comes to. Default: it started. */
+    loopChat?: LoopChatResult;
+    /** What a state button comes to. Default: it worked. */
     /** What a batch comes to. Default: every ticket asked for worked. */
     loopActMany?: LoopManyResult;
     /** What starting a conversation about a ticket comes to. Default: it started. */
-    loopChat?: LoopChatResult;
     loopNotices?: Record<string, LoopNoticesAnswer>;
     /** What the daemon says it can do. Default: all of it. */
     capabilities?: {
@@ -154,6 +158,7 @@ export const fakeBridge = (
     language: "system" as Preferences["language"],
     promptSuggestions: true,
     worktreeAgents: [] as string[],
+    loopActor: "",
     systemLanguage: "en-US",
     ...options.preferences,
   };
@@ -630,6 +635,12 @@ export const fakeBridge = (
       async () => options.update ?? { current: "0.1.0", kind: "up-to-date" as const, checkedAt: 0 },
     ),
     installUpdate: record("installUpdate", async () => {}),
+    interfaceState: record(
+      "interfaceState",
+      async () => options.interface ?? { bundled: 100, running: 100 },
+    ),
+    interfaceBooted: record("interfaceBooted", async () => {}),
+    applyInterfaceUpdate: record("applyInterfaceUpdate", async () => {}),
     upgradeDaemon: record("upgradeDaemon", async () => {}),
     environments: record("environments", async () => environmentsNow()),
     saveEnvironment: record("saveEnvironment", async (environment: Environment) => {
@@ -691,22 +702,31 @@ export const fakeBridge = (
     loopBoard: record(
       "loopBoard",
       async (projectKey: string): Promise<LoopBoardAnswer> =>
-        options.loopBoards?.[projectKey] ?? { kind: "no_key" },
+        options.loopBoards?.[projectKey] ?? { kind: "no_server" },
     ),
     loopTicket: record(
       "loopTicket",
       async (_projectKey: string, identifier: string): Promise<LoopTicketAnswer> =>
-        options.loopTickets?.[identifier] ?? { kind: "no_key" },
+        options.loopTickets?.[identifier] ?? { kind: "no_server" },
     ),
     loopChat: record(
       "loopChat",
       async (_projectKey: string, _identifier: string): Promise<LoopChatResult> =>
         options.loopChat ?? { kind: "started", locationId: "local", sessionId: "chat-1" },
     ),
+    loopAct: record(
+      "loopAct",
+      async (
+        _projectKey: string,
+        _identifier: string,
+        _action: LoopAction,
+        _confirmed?: boolean,
+      ): Promise<LoopActResult> => options.loopAct ?? { kind: "ok" },
+    ),
     loopNotices: record(
       "loopNotices",
       async (projectKey: string): Promise<LoopNoticesAnswer> =>
-        options.loopNotices?.[projectKey] ?? { kind: "no_key" },
+        options.loopNotices?.[projectKey] ?? { kind: "no_server" },
     ),
     loopActMany: record(
       "loopActMany",
@@ -721,15 +741,6 @@ export const fakeBridge = (
           kind: "done",
           results: identifiers.map((identifier) => ({ identifier, outcome: "ok" as const })),
         },
-    ),
-    loopAct: record(
-      "loopAct",
-      async (
-        _projectKey: string,
-        _identifier: string,
-        _action: LoopAction,
-        _confirmed?: boolean,
-      ): Promise<LoopActResult> => options.loopAct ?? { kind: "ok" },
     ),
   };
   return {

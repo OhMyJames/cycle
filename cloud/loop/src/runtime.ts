@@ -3,6 +3,7 @@
 
 import type { Server } from "node:net";
 import { join } from "node:path";
+import type { LoopApi } from "./api.ts";
 import type { ProjectUnit } from "./assemble.ts";
 import { ConfigError, loadConfig } from "./config.ts";
 import type { ConfigFile } from "./config-file.ts";
@@ -25,12 +26,12 @@ export const startPipelines = async (
   log: (line: string) => void,
   stopped: { value: boolean } = { value: false },
   /** Runs once every Project is set up and before any loop starts; a throw closes the Projects and fails startup. */
-  ready: () => Promise<void> = async () => {},
+  ready: (projects: ProjectUnit[]) => Promise<void> = async () => {},
 ): Promise<Running> => {
   const projects: ProjectUnit[] = [];
   try {
     for (const file of files) projects.push(await setUp(file));
-    await ready();
+    await ready(projects);
   } catch (error) {
     await Promise.allSettled(projects.map((p) => p.close()));
     throw error;
@@ -66,6 +67,9 @@ export type ServerOptions = {
   setUp: (file: ConfigFile) => Promise<ProjectUnit>;
   log: (line: string) => void;
   stopped?: { value: boolean };
+  /** What `loop/status` reports as the version. */
+  version?: string;
+  now?: () => Date;
 };
 
 /** A fixed word or message for why startup failed, for the one line the process prints. */
@@ -85,11 +89,21 @@ export const startServer = async (
   // The same file: each Project's entry carries its pipeline fields, and one missing a required one fails here.
   const files = await loadConfigFiles(path);
   let server: Server | undefined;
-  const running = await startPipelines(files, o.setUp, o.log, o.stopped, async () => {
+  const now = o.now ?? (() => new Date());
+  const startedAt = now();
+  const running = await startPipelines(files, o.setUp, o.log, o.stopped, async (units) => {
+    const api: LoopApi = {
+      version: o.version ?? "unknown",
+      startedAt,
+      now,
+      log: o.log,
+      projects: units.flatMap((u) => (u.api === undefined ? [] : [u.api])),
+    };
     server = await listen(
       config,
       join(o.dataDir, "loop.sock"),
       (key) => files.find((f) => f.projectKey === key)?.stateDir,
+      api,
     );
   });
   const opened = server;

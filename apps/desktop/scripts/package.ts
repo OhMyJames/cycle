@@ -29,6 +29,7 @@ import {
   MAC_BUNDLE,
   MAIN,
 } from "../src/main/layout.ts";
+import { shellOfBuild } from "../src/main/ui-crypto.ts";
 import { POSTHOG_HOST, POSTHOG_KEY } from "../src/shared/posthog.ts";
 import { plistVersions } from "../src/shared/release.ts";
 import { removePlistDict, setPlistString } from "./plist.ts";
@@ -97,6 +98,8 @@ export const packageApp = (outDir = BUILD_DIR): Packaged => {
   const commit = git("rev-parse", "--short", "HEAD");
   const subject = git("log", "-1", "--format=%s");
   const electron = electronDist();
+  // Which interface bundles this app can take (shared/ui-bundle.ts): bundles are for the shell they were built with.
+  const uiVersion = Number(git("rev-list", "--count", "HEAD")) || 0;
 
   // The main process, preload and page; and the daemon with the agents' binaries beside it, for this platform.
   run([process.execPath, "scripts/build.ts"], DESKTOP);
@@ -108,6 +111,7 @@ export const packageApp = (outDir = BUILD_DIR): Packaged => {
   rmSync(staging, { recursive: true, force: true });
   mkdirSync(join(staging, dirname(DAEMON_BIN)), { recursive: true });
   cpSync(join(DESKTOP, "dist"), join(staging, DIST_DIR), { recursive: true });
+  const shell = shellOfBuild(join(DESKTOP, "dist"));
   cpSync(join(daemonDir, "cycle"), join(staging, DAEMON_BIN));
   chmodSync(join(staging, DAEMON_BIN), 0o755);
   for (const bin of AGENT_BINS) {
@@ -127,7 +131,7 @@ export const packageApp = (outDir = BUILD_DIR): Packaged => {
   );
   writeFileSync(
     join(staging, BUILD_FILE),
-    `${JSON.stringify({ name: APP_NAME, identifier: BUNDLE_ID, version, baseVersion, ...(commit ? { commit } : {}), ...(subject ? { subject } : {}), platform, arch, electron: electron.version, ...posthogProject() }, null, 2)}\n`,
+    `${JSON.stringify({ name: APP_NAME, identifier: BUNDLE_ID, version, baseVersion, ...(commit ? { commit } : {}), ...(subject ? { subject } : {}), platform, arch, electron: electron.version, shell, uiVersion, ...posthogProject() }, null, 2)}\n`,
   );
 
   const app = join(outDir, platform === "darwin" ? MAC_BUNDLE : "Cycle");

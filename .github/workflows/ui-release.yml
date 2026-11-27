@@ -1,0 +1,60 @@
+# Publishes the page of the app (what `apps/desktop/dist/renderer` holds) to the `ui-latest` release for each commit on main,
+# signed, so that an installed app can take it without a new version (docs/desktop.md, "Interface updates").
+#
+# The signing key is a secret of the environment `ui-release`, which only main may use (a rule of the environment), and
+# only the step that signs sees it. The job runs on the same kind of runner the release builds on: the page is for the
+# shell (main, preload) that was built there, and the hash of that has to come out the same on both.
+name: ui-release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".agents/**"
+  workflow_dispatch:
+
+# One at a time, in order: a later commit's page must not be put over by an earlier one that was waiting.
+concurrency:
+  group: ui-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    environment: ui-release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The version of a bundle is the number of commits: a clone without them would number every bundle 1.
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bun run --cwd apps/desktop build
+      - name: Is there a key to sign with
+        id: key
+        env:
+          UI_SIGNING_KEY: ${{ secrets.UI_SIGNING_KEY }}
+        run: |
+          if [ -n "$UI_SIGNING_KEY" ]; then echo "set=true" >> "$GITHUB_OUTPUT"; else
+            echo "::notice::UI_SIGNING_KEY is not set in the environment ui-release: no bundle is published."
+          fi
+      - name: Make and sign the bundle
+        if: steps.key.outputs.set == 'true'
+        env:
+          UI_SIGNING_KEY: ${{ secrets.UI_SIGNING_KEY }}
+        run: bun run --cwd apps/desktop ui-package
+      - name: Publish
+        if: steps.key.outputs.set == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bun run --cwd apps/desktop ui-publish

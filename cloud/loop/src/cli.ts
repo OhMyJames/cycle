@@ -4,6 +4,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
+import rootPackage from "../../../apps/desktop/package.json" with { type: "json" };
 import { setUpProject } from "./assemble.ts";
 import { handleStopSignals, startServer, startupReason } from "./runtime.ts";
 
@@ -20,6 +21,7 @@ let running: Awaited<ReturnType<typeof startServer>>;
 try {
   running = await startServer({
     dataDir,
+    version: rootPackage.version,
     stopped,
     log,
     setUp: (file) =>

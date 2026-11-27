@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { isNetworkError } from "../src/network.ts";
 import { PlanTracker, planningTracker, toIssue } from "../src/plan-mcp.ts";
 import { resolveLoopFields } from "../src/project.ts";
 import type { PlanningTracker } from "../src/types.ts";
@@ -665,4 +666,118 @@ test("linked documents: a reply of another shape is an error, not an unlocked or
   await expect(
     withList([listed[0]], { ok: true, data: { id: 43, version: 3 } }).listIssueDocuments({ id: 9 }),
   ).rejects.toThrow("get_document");
+});
+
+const result = (text: unknown, id = 1) => ({
+  jsonrpc: "2.0",
+  id,
+  result: { content: [{ type: "text", text: JSON.stringify(text) }] },
+});
+const bare = (over: { timeoutMs?: number } = {}) =>
+  new PlanTracker({ url: "http://x", key: "k", projectKey: "CYC", retryDelaysMs: [1, 1], ...over });
+
+test("a request that hangs fails at the timeout, with a network-looking message", async () => {
+  globalThis.fetch = ((_u: unknown, init: { signal: AbortSignal }) =>
+    new Promise((_, reject) =>
+      init.signal.addEventListener("abort", () => reject(init.signal.reason)),
+    )) as unknown as typeof fetch;
+  const t = bare({ timeoutMs: 30 });
+  await expect(t.comment({ id: 1 } as never, "x")).rejects.toThrow(/timed out/);
+});
+
+test("a read is tried again twice after a network error; then it works", async () => {
+  let n = 0;
+  globalThis.fetch = (async () => {
+    if (++n <= 2) throw new TypeError("fetch failed");
+    return new Response(JSON.stringify(result({ data: [] })));
+  }) as unknown as typeof fetch;
+  expect(
+    await bare()
+      .listDocuments()
+      .catch((e) => e),
+  ).toBeDefined();
+  expect(n).toBe(3);
+});
+
+test("a read is tried again after a 5xx, and gives up after two retries", async () => {
+  let n = 0;
+  globalThis.fetch = (async () => {
+    n++;
+    return new Response("bad", { status: 503 });
+  }) as unknown as typeof fetch;
+  await expect(bare().get(1)).rejects.toThrow(/503/);
+  expect(n).toBe(3);
+});
+
+test("a write is not tried again", async () => {
+  let n = 0;
+  globalThis.fetch = (async () => {
+    n++;
+    throw new TypeError("fetch failed");
+  }) as unknown as typeof fetch;
+  await expect(bare().comment({ id: 1 } as never, "x")).rejects.toThrow();
+  expect(n).toBe(1);
+  n = 0;
+  globalThis.fetch = (async () => {
+    n++;
+    return new Response("bad", { status: 502 });
+  }) as unknown as typeof fetch;
+  await expect(bare().comment({ id: 1 } as never, "x")).rejects.toThrow(/502/);
+  expect(n).toBe(1);
+});
+
+test("a stream with a notification before the result is read by the request's id", async () => {
+  const note = { jsonrpc: "2.0", method: "notifications/progress", params: { progress: 1 } };
+  const other = result({ wrong: true }, 7);
+  globalThis.fetch = (async () =>
+    new Response(
+      `event: message\ndata: ${JSON.stringify(note)}\n\nevent: message\ndata: ${JSON.stringify(other)}\n\nevent: message\ndata: ${JSON.stringify(result({ data: [{ id: 5, title: "d", parentId: null }] }))}\n\n`,
+    )) as unknown as typeof fetch;
+  expect(await bare().listDocuments()).toEqual([{ id: 5, title: "d", parentId: null }]);
+});
+
+test("a column is read with at most 8 gets at once", async () => {
+  let live = 0;
+  let peak = 0;
+  globalThis.fetch = (async (_u: unknown, init: { body: string }) => {
+    const { name, arguments: args } = JSON.parse(init.body).params;
+    live++;
+    peak = Math.max(peak, live);
+    await new Promise((r) => setTimeout(r, 2));
+    live--;
+    const body =
+      name === "list_issues"
+        ? { data: Array.from({ length: 30 }, (_, i) => ({ sequenceNumber: i + 1, id: i + 1 })) }
+        : { data: { id: args.sequenceNumber, sequenceNumber: args.sequenceNumber, columnId: 22 } };
+    return new Response(JSON.stringify(result(body)));
+  }) as unknown as typeof fetch;
+  const t = bare();
+  t.setColumns({ todo: 22, inProgress: 23, inReview: 34, blocked: 35, done: 24, canceled: 25 });
+  expect(await t.listTodo()).toHaveLength(30);
+  expect(peak).toBeLessThanOrEqual(8);
+  expect(peak).toBeGreaterThan(1);
+});
+
+test("a body that drops mid-read is a network error: a read is tried again, and the message says so", async () => {
+  let n = 0;
+  globalThis.fetch = (async () => {
+    n++;
+    return {
+      ok: true,
+      status: 200,
+      text: async () => {
+        throw new Error("terminated");
+      },
+    } as unknown as Response;
+  }) as unknown as typeof fetch;
+  const error = await bare()
+    .get(1)
+    .catch((e) => e);
+  expect(n).toBe(3);
+  expect(isNetworkError(error.message)).toBe(true);
+});
+
+test("a persistent 500 reads as a network error", () => {
+  expect(isNetworkError("tracker get_issue_by_number: HTTP 500")).toBe(true);
+  expect(isNetworkError("tracker get_issue_by_number: HTTP 404")).toBe(false);
 });

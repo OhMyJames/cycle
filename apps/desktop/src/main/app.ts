@@ -42,15 +42,19 @@ import {
   answerNotices,
   answerRuns,
   answerTicket,
+  callLoop,
   loopFeed,
-  loopRpc,
   readLoopProjects,
+  retireKeyFile,
   startTicketChat,
 } from "./loop.ts";
 import { noticePoller, showAlert } from "./loop-alerts.ts";
 import { ConnectionManager } from "./manager.ts";
 import { memoryPreferencesStore, type PreferencesStore, startPreferences } from "./preferences.ts";
 import { fileSettings } from "./settings.ts";
+import { createPageSwitch } from "./ui-page.ts";
+import type { UiStore } from "./ui-store.ts";
+import { UiUpdater, type UiUpdaterDeps } from "./ui-updater.ts";
 import { cleanStale, Updater, type UpdaterDeps } from "./updater.ts";
 import { type FrameStore, keepFrame, MIN_SIZE, restoredFrame } from "./window-frame.ts";
 
@@ -79,12 +83,24 @@ export type AppOptions = {
   /** Where the window's size and place are kept between runs. Without it, the window opens at the default frame. */
   windowFrame?: FrameStore;
   /**
-   * Loop (docs/protocol.md §17): the Loop server's socket on this computer, the file holding the person's own itsaplan
-   * key (mode 0600), and the tracker's MCP address. Without it, the page says Loop is not connected.
+   * Loop (docs/protocol.md §17): the Loop server's socket on this computer, and the key file an older version kept,
+   * which is removed at start. Without it, the page says Loop is not connected.
    */
-  loop?: { socket: string; keyFile: string; trackerUrl: string; chatCwd?: string };
+  loop?: { socket: string; oldKeyFile?: string; chatCwd?: string };
   /** How the app updates itself. Without it, updating is off. */
   update?: Omit<UpdaterDeps, "emit" | "quit">;
+  /**
+   * Interface updates: the page may be one taken from outside the app (docs/desktop.md, "Interface updates"). Without it,
+   * the window shows the page the app came with and nothing else.
+   */
+  interface?: {
+    store: UiStore;
+    /** The version of the page the app came with. */
+    bundledVersion: number;
+    updater: Omit<UiUpdaterDeps, "emit" | "store" | "holdOff" | "bundledVersion">;
+    /** How long a page from outside the app has to say it has drawn itself (a test shortens it). */
+    bootMs?: number;
+  };
 };
 
 /** What asking for an update came to, in the words of the dictionary; the states that are not an answer say nothing. */
@@ -190,7 +206,7 @@ export const startApp = async (options: AppOptions) => {
   if (hidden) stayInBackground();
   await app.whenReady();
   if (process.platform === "darwin") createRequire(options.preloadPath)("./ime-paste.node");
-  const indexUrl = pathToFileURL(join(options.rendererDir, "index.html")).href;
+  const bundledUrl = pathToFileURL(join(options.rendererDir, "index.html")).href;
   let window: BrowserWindow | undefined;
 
   const usage = options.analytics ?? offAnalytics;
@@ -211,6 +227,12 @@ export const startApp = async (options: AppOptions) => {
     return translatorFor(resolveLanguage(language, systemLanguage));
   };
 
+  /** What the Loop calls need: the socket, and the person's name for `actor` (Settings), read at each call. */
+  const loopOptions = () =>
+    options.loop
+      ? { socket: options.loop.socket, actor: () => preferences.state().loopActor }
+      : undefined;
+
   const emit = (event: AppEvent) => {
     if (window !== undefined && !window.isDestroyed())
       window.webContents.send(EVENT_CHANNEL, event);
@@ -219,7 +241,7 @@ export const startApp = async (options: AppOptions) => {
   // when the run state changed. Without a Loop server on this computer there is nothing to follow.
   const loopRuns = options.loop
     ? loopFeed({
-        call: (method, params) => loopRpc(options.loop?.socket ?? "", method, params),
+        call: (method, params) => callLoop(options.loop?.socket ?? "", method, params, 3000),
         changed: (runs) => emit({ type: "loop-runs", runs }),
         lazy: true,
       })
@@ -308,8 +330,29 @@ export const startApp = async (options: AppOptions) => {
     emit: (state) => emit({ type: "app-update", state }),
     quit: () => app.quit(),
   });
-  /** The sessions of every location as last read: what a waiting session is, for the Notices. */
-  const sessionsNow = async () => Object.values((await manager.locations()).sessions).flat();
+  // The page the window shows: the one the app came with, or a newer one taken from outside it that has proved to work.
+  const bundledVersion = options.interface?.bundledVersion ?? 0;
+  const interfaceUpdater =
+    options.interface !== undefined
+      ? new UiUpdater({
+          ...options.interface.updater,
+          store: options.interface.store,
+          bundledVersion,
+          // A whole-app update carries the newest page itself.
+          holdOff: () => ["available", "downloading", "installing"].includes(updater.state.kind),
+          emit: () => pages.refresh(),
+        })
+      : undefined;
+  const pages = createPageSwitch({
+    ...(options.interface !== undefined ? { store: options.interface.store } : {}),
+    bundledUrl,
+    bundledVersion,
+    ...(options.interface?.bootMs !== undefined ? { bootMs: options.interface.bootMs } : {}),
+    load: (url) => contents.loadURL(url),
+    installed: () => interfaceUpdater?.state.installed,
+    emit: (state) => emit({ type: "interface-update", state }),
+    log: (message) => console.warn(`[interface] ${message}`),
+  });
   /** The most the page may put on the clipboard at once: a long output, not a file. */
   const MAX_COPY = 5_000_000;
   const methods: Handlers = {
@@ -323,6 +366,14 @@ export const startApp = async (options: AppOptions) => {
     installUpdate: () => {
       analytics.track("update_install_started", {});
       return updater.install();
+    },
+    interfaceState: () => pages.state(),
+    interfaceBooted: () => {
+      pages.booted();
+    },
+    applyInterfaceUpdate: () => {
+      analytics.track("interface_update_applied", {});
+      return pages.apply();
     },
     // From the page, so only what the page may say, and checked: anything else is dropped.
     track: (event: unknown, props: unknown) => {
@@ -346,28 +397,18 @@ export const startApp = async (options: AppOptions) => {
     },
     loopRuns: () => answerRuns(loopRuns, (event, props) => analytics.track(event, props)),
     loopBoard: (projectKey: unknown) =>
-      answerBoard(options.loop, projectKey, (event, props) => analytics.track(event, props)),
+      answerBoard(loopOptions(), projectKey, (event, props) => analytics.track(event, props)),
     loopTicket: (projectKey: unknown, identifier: unknown) =>
-      answerTicket(options.loop, projectKey, identifier, (event, props) =>
+      answerTicket(loopOptions(), projectKey, identifier, (event, props) =>
         analytics.track(event, props),
       ),
     loopAct: (projectKey: unknown, identifier: unknown, action: unknown, confirmed: unknown) =>
-      actOnTicket(options.loop, projectKey, identifier, action, confirmed, (event, props) =>
-        analytics.track(event, props),
-      ),
-    loopActMany: (
-      projectKey: unknown,
-      action: unknown,
-      identifiers: unknown,
-      confirmed: unknown,
-      reason: unknown,
-    ) =>
-      actOnMany(options.loop, projectKey, action, identifiers, confirmed, reason, (event, props) =>
+      actOnTicket(loopOptions(), projectKey, identifier, action, confirmed, (event, props) =>
         analytics.track(event, props),
       ),
     loopChat: (projectKey: unknown, identifier: unknown) =>
       startTicketChat(
-        options.loop,
+        loopOptions(),
         {
           locationId: "local",
           cwd: options.loop?.chatCwd ?? "",
@@ -379,10 +420,15 @@ export const startApp = async (options: AppOptions) => {
         identifier,
         (event, props) => analytics.track(event, props),
       ),
+    loopActMany: (
+      projectKey: unknown,
+      action: unknown,
+      identifiers: unknown,
+      confirmed: unknown,
+      reason: unknown,
+    ) => actOnMany(loopOptions(), projectKey, action, identifiers, confirmed, reason),
     loopNotices: (projectKey: unknown) =>
-      answerNotices(options.loop, projectKey, sessionsNow, (event, props) =>
-        analytics.track(event, props),
-      ),
+      answerNotices(loopOptions(), projectKey, (event, props) => analytics.track(event, props)),
     setAnalytics: (enabled: unknown) => usage.set(enabled === true),
     // Through main, not the page's navigator.clipboard: the page is given no permissions. Text only, of a sane size.
     copyText: (text: unknown) => {
@@ -438,7 +484,8 @@ export const startApp = async (options: AppOptions) => {
   const call = dispatch(manager, methods, () => account.status().open);
   for (const method of API_METHODS) {
     ipcMain.handle(channel(method), (event, ...args: unknown[]) => {
-      if (event.senderFrame?.url !== indexUrl) throw new Error("Refused: not from the app's page");
+      if (event.senderFrame?.url !== pages.url())
+        throw new Error("Refused: not from the app's page");
       return call(method, args);
     });
   }
@@ -506,18 +553,27 @@ export const startApp = async (options: AppOptions) => {
     return { action: "deny" };
   });
   contents.on("will-navigate", (event, url) => {
-    if (url === indexUrl) return;
+    if (url === pages.url()) return;
     event.preventDefault();
     if (isOpenable(url)) void shell.openExternal(url);
   });
   contents.on("will-attach-webview", (event) => event.preventDefault());
-  await window.loadURL(indexUrl);
+  // A page from outside the app that falls over before it said it was drawn is not shown again.
+  contents.on("render-process-gone", (_event, details) => {
+    pages.broke(details.reason)?.catch((error) => console.warn(`[interface] ${String(error)}`));
+  });
+  await pages.start();
   // Every location is connected from here, not when the person picks one: what is wrong with one is in its status.
   // Signed out, that waits for the sign-in.
   void accountReady.then(() => {
     connectWhenOpen = true;
     if (account.status().open) void manager.connectAll();
   });
+  if (interfaceUpdater !== undefined && options.interface !== undefined) {
+    interfaceUpdater.noteInstalled((await options.interface.store.readState()).current);
+    pages.refresh();
+    interfaceUpdater.start();
+  }
   if (options.update !== undefined && options.update.disabled === undefined) {
     await cleanStale(options.update.appPath);
     updater.start();
@@ -525,6 +581,12 @@ export const startApp = async (options: AppOptions) => {
 
   // Blocked tickets and escalated reviews are told with a system notification, also while the Loop page is not open.
   // Not in a test's hidden window: it would read the tracker for nothing.
+  // The itsaplan key file an older version kept: Loop holds the key now. Removed, and the person is told once.
+  if (options.loop?.oldKeyFile !== undefined && !hidden)
+    void retireKeyFile(options.loop.oldKeyFile, () => {
+      if (!Notification.isSupported()) return;
+      new Notification({ title: translator().t("loop.keyMoved") }).show();
+    });
   let stopNotices = () => {};
   if (options.loop && !hidden) {
     const loop = options.loop;
@@ -535,7 +597,7 @@ export const startApp = async (options: AppOptions) => {
         if (answer.kind !== "ok") throw new Error("the Loop server did not answer");
         return answer.projects;
       },
-      read: (projectKey) => answerNotices(loop, projectKey, sessionsNow, () => {}),
+      read: (projectKey) => answerNotices(loopOptions(), projectKey, () => {}),
       alert: showAlert({
         window: () => window,
         supported: () => Notification.isSupported(),
@@ -564,6 +626,7 @@ export const startApp = async (options: AppOptions) => {
   let flushed = false;
   app.on("before-quit", (event) => {
     updater.stop();
+    interfaceUpdater?.stop();
     stopNotices();
     account.close();
     void manager.close();

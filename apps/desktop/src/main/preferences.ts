@@ -19,6 +19,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   language: "system",
   promptSuggestions: true,
   worktreeAgents: [],
+  loopActor: "",
 };
 
 const isTheme = (value: unknown): value is ThemeChoice =>
@@ -29,11 +30,15 @@ const isLanguage = (value: unknown): value is LanguageChoice =>
 /** What is understood of what was read or asked: a value that is not one of the choices is not taken. */
 export const preferencesOf = (value: unknown): Partial<Preferences> => {
   if (typeof value !== "object" || value === null) return {};
-  const { theme, language, promptSuggestions, worktreeAgents } = value as Record<string, unknown>;
+  const { theme, language, promptSuggestions, worktreeAgents, loopActor } = value as Record<
+    string,
+    unknown
+  >;
   return {
     ...(isTheme(theme) ? { theme } : {}),
     ...(isLanguage(language) ? { language } : {}),
     ...(typeof promptSuggestions === "boolean" ? { promptSuggestions } : {}),
+    ...(typeof loopActor === "string" ? { loopActor: loopActor.trim().slice(0, 100) } : {}),
     ...(Array.isArray(worktreeAgents)
       ? {
           worktreeAgents: [
@@ -131,7 +136,8 @@ export const startPreferences = async (options: {
     const language = next.language !== current.language;
     const suggestions = next.promptSuggestions !== current.promptSuggestions;
     const worktrees = next.worktreeAgents.join("\0") !== current.worktreeAgents.join("\0");
-    if (!theme && !language && !suggestions && !worktrees) return state();
+    const actor = next.loopActor !== current.loopActor;
+    if (!theme && !language && !suggestions && !worktrees && !actor) return state();
     const was = current.worktreeAgents;
     // Kept first: if it cannot be, nothing changes and the person is told, instead of a look that is gone at the next start.
     await options.store.save(next);

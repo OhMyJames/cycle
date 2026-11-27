@@ -1,3 +1,4 @@
+import type { Tracker } from "../src/ports/tracker.ts";
 import {
   type Config,
   type DocumentEntry,
@@ -12,7 +13,6 @@ import {
   type SessionRole,
   type Sessions,
   type Stage,
-  type Tracker,
   type TurnResult,
 } from "../src/types.ts";
 
@@ -114,7 +114,7 @@ export class FakeTracker implements Tracker {
   async get(number: number) {
     await this.gates.get;
     const found = this.issues.find((i) => i.number === number);
-    if (!found) throw new Error("no issue");
+    if (!found) throw new Error("issue not found");
     return found;
   }
   async move(i: Issue, stage: Stage) {
@@ -126,6 +126,16 @@ export class FakeTracker implements Tracker {
   }
   async comment(i: Issue, text: string) {
     this.comments.push(`${i.key}:${text}`);
+    const thread = this.threads[i.key] ?? [];
+    thread.push({
+      id: thread.length + 1,
+      replyToId: null,
+      authorId: "loop",
+      authorName: "loop",
+      body: text,
+      createdAt: "2026-11-25T00:00:00Z",
+    });
+    this.threads[i.key] = thread;
   }
   async setLoopPhase(i: Issue, phase: string | null, _at?: Date, _signal?: AbortSignal) {
     if (this.failPhase) throw new Error("field write failed");
@@ -139,7 +149,7 @@ export class FakeTracker implements Tracker {
     return this.issueDocs[key] ?? [];
   }
   async getDocumentContent(docId: number) {
-    return this.docContent[docId] ?? "";
+    return this.docContent[docId] ?? this.written.find((w) => w.id === docId)?.content ?? "";
   }
   documents: DocumentEntry[] = [{ id: 10, title: "调研", parentId: null }];
   /** Every document written, with its content. */

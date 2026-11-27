@@ -3,21 +3,8 @@
 // claimed → research → research_qa → publishing → done. The sessions only read; the loop checks the reply, has it
 // judged, and publishes it. There is no install, no commit, no push and no pull request.
 
-import { deliverEnv, GIT_SAFE } from "../env.ts";
-import { withRepoLock } from "../git-lock.ts";
-import type { StepResult } from "../pipeline.ts";
-import { conclusionIsEmpty } from "../preflight.ts";
-import {
-  formatFindings,
-  researchBrief,
-  researchContinueBrief,
-  researchFixBrief,
-  researchQaBrief,
-} from "../prompts.ts";
-import { checkResearch, parseResearch, replaceConclusion } from "../research.ts";
-import { findSecrets } from "../secrets.ts";
-import type { ResearchState, RunRecord } from "../store.ts";
-import { type Config, type Issue, SessionLost, type TurnResult } from "../types.ts";
+import type { StoreOps } from "../../db/store.ts";
+import type { Save, StepResult } from "../../engine/flow.ts";
 import {
   type Accepted,
   type BlockArgs,
@@ -29,8 +16,24 @@ import {
   type Phase,
   type PhaseDef,
   tail,
-} from "./flow.ts";
-import { blockTicket, ticketStillWanted } from "./ticket.ts";
+} from "../../engine/flow.ts";
+import { writeIntent } from "../../engine/reconcile.ts";
+import { deliverEnv, GIT_SAFE } from "../../env.ts";
+import { withRepoLock } from "../../git-lock.ts";
+import { conclusionIsEmpty } from "../../preflight.ts";
+import {
+  formatFindings,
+  researchBrief,
+  researchContinueBrief,
+  researchFixBrief,
+  researchQaBrief,
+} from "../../prompts/index.ts";
+import { findSecrets } from "../../secrets.ts";
+import { type ResearchState, type RunRecord, researchOf } from "../../store.ts";
+import { type Config, type Issue, SessionLost, type TurnResult } from "../../types.ts";
+import { judge, newQaSession, nextRound } from "../dev/qa.ts";
+import { blockTicket, tellTicket, ticketStillMine, ticketStillWanted } from "../ticket.ts";
+import { checkResearch, parseResearch, replaceConclusion } from "./output.ts";
 
 export class ResearchFlow implements Flow {
   readonly kind = "research";
@@ -77,14 +80,17 @@ export class ResearchFlow implements Flow {
       throw new Error(`a ${accepted.kind} work item is not a research run`);
     return {
       specs: [],
-      research: {
-        questions: accepted.questions,
-        output: null,
-        docId: null,
-        docLinked: false,
-        conclusionDone: false,
-        followups: [],
-        commented: false,
+      state: {
+        kind: "research",
+        research: {
+          questions: accepted.questions,
+          output: null,
+          docId: null,
+          docLinked: false,
+          conclusionDone: false,
+          followups: [],
+          commented: false,
+        },
       },
       // `runKind` is what `stats` tells the runs apart by (`kind` is taken: it is the event's name).
       claimed: { runKind: "research", questions: accepted.questions.length },
@@ -107,6 +113,15 @@ export class ResearchFlow implements Flow {
 
   stillWanted(run: RunRecord) {
     return ticketStillWanted(this.#host, run);
+  }
+
+  stillMine(run: RunRecord) {
+    return ticketStillMine(this.#host, run);
+  }
+
+  /** A person's put-back changes nothing of its own: the record says how far publishing got. */
+  async putBack(run: RunRecord): Promise<RunRecord> {
+    return run;
   }
 
   /** Nothing to check again: it goes on from its own phase, and what it has published is in its record. */
@@ -195,7 +210,7 @@ export class ResearchFlow implements Flow {
   ): Promise<void> {
     const { config, store } = this.#host.d;
     const bounds = this.#host.need(config.research ?? undefined);
-    const state = this.#host.need(run.research ?? undefined);
+    const state = researchOf(run);
     const worktree = this.#host.need(run.worktree ?? undefined);
     const brief = () => {
       const first = researchBrief(issue, state.questions, {
@@ -261,7 +276,8 @@ export class ResearchFlow implements Flow {
         : `The reply did not pass the checks:\n${findings.map((f) => `- ${f}`).join("\n")}`,
     );
     if (findings.length > 0) {
-      await this.#host.nextRound(
+      await nextRound(
+        this.#host,
         run,
         `The loop's checks found:\n${findings.map((f) => `- ${f}`).join("\n")}`,
         save,
@@ -301,19 +317,20 @@ export class ResearchFlow implements Flow {
   ): Promise<void> {
     const { config } = this.#host.d;
     const bounds = this.#host.need(config.research ?? undefined);
-    const state = this.#host.need(run.research ?? undefined);
+    const state = researchOf(run);
     const output = this.#host.need(state.output ?? undefined);
     const worktree = this.#host.need(run.worktree ?? undefined);
     if (run.qaSessionId === null) {
-      const sessionId = await this.#host.newQaSession(run, issue);
+      const sessionId = await newQaSession(this.#host, this.qa, run, issue);
       await save({ qaSessionId: sessionId });
       run = { ...run, qaSessionId: sessionId };
     }
     const before = await this.#host.snapshot(worktree);
     const prompt = researchQaBrief(issue, state.questions, output, bounds.readRoots);
-    const verdict = await this.#host.judge(run, issue, worktree, before, prompt, save);
+    const verdict = await judge(this.#host, this.qa, run, issue, worktree, before, prompt, save);
     if (!verdict.pass) {
-      await this.#host.nextRound(
+      await nextRound(
+        this.#host,
         run,
         `Independent review found:\n${formatFindings(verdict)}`,
         save,
@@ -330,18 +347,14 @@ export class ResearchFlow implements Flow {
    * Each step looks at the saved progress first and saves as soon as it is done, so a restart goes on from the first
    * step not done. A follow-up made but not yet saved when the process died is the one thing that can be made twice.
    */
-  async #publish(
-    start: RunRecord,
-    issue: Issue,
-    save: (patch: Partial<RunRecord>) => Promise<void>,
-  ): Promise<StepResult> {
+  async #publish(start: RunRecord, issue: Issue, save: Save): Promise<StepResult> {
     const { config, tracker, store } = this.#host.d;
     const bounds = this.#host.need(config.research ?? undefined);
-    let state = this.#host.need(start.research ?? undefined);
+    let state = researchOf(start);
     const output = this.#host.need(state.output ?? undefined);
-    const progress = async (patch: Partial<ResearchState>) => {
+    const progress = async (patch: Partial<ResearchState>, also?: (tx: StoreOps) => void) => {
       state = { ...state, ...patch };
-      await save({ research: state });
+      await save({ research: state }, also);
     };
 
     // 0. Nothing that looks like a credential leaves the machine. Only the kinds are said, never the text.
@@ -367,9 +380,26 @@ export class ResearchFlow implements Flow {
     // 1. The report, under the research folder, on the work item.
     const title = `${start.key} ${issue.title}`;
     if (state.docId === null) {
-      const created = await tracker.createDocument(bounds.folderId, title, output.report);
-      await progress({ docId: created.id });
-      await store.event(start.key, "report_created", { docId: created.id });
+      // Made before a restart and not yet noted? Then it is in the research folder under this title: use it.
+      const existing = (await tracker.listDocuments()).filter(
+        (d) => d.parentId === bounds.folderId && d.title === title,
+      );
+      // Used only when its text is this report: a same-titled one with other text is some earlier run's.
+      let found: (typeof existing)[number] | undefined;
+      for (const d of existing) {
+        if ((await tracker.getDocumentContent(d.id)).trim() === output.report.trim()) {
+          found = d;
+          break;
+        }
+      }
+      if (found !== undefined) {
+        await progress({ docId: found.id });
+        await store.event(start.key, "report_reused", { docId: found.id });
+      } else {
+        const created = await tracker.createDocument(bounds.folderId, title, output.report);
+        await progress({ docId: created.id });
+        await store.event(start.key, "report_created", { docId: created.id });
+      }
     }
     const docId = this.#host.need(state.docId ?? undefined);
     if (!state.docLinked) {
@@ -386,12 +416,19 @@ export class ResearchFlow implements Flow {
       if (replaced !== fresh.description) {
         if (conclusionIsEmpty(fresh.description)) await tracker.setDescription(fresh, replaced);
         else
-          await tracker.comment(
-            fresh,
-            `调研摘要（「结论」一节已经有人写过，没有覆盖）：\n\n${output.summary}\n\n报告：「${title}」（已挂在本工单上）`,
+          await progress({ conclusionDone: true }, (tx) =>
+            writeIntent(tx, {
+              run: start.key,
+              issue: fresh,
+              kind: "comment",
+              dedupe: `researched-summary:${start.key}`,
+              payload: {
+                body: `调研摘要（「结论」一节已经有人写过，没有覆盖）：\n\n${output.summary}\n\n报告：「${title}」（已挂在本工单上）`,
+              },
+            }),
           );
       }
-      await progress({ conclusionDone: true });
+      if (!state.conclusionDone) await progress({ conclusionDone: true });
     }
 
     // 3. The follow-ups, one at a time, each saved as soon as it is made: in Backlog, under the same parent, with no
@@ -423,23 +460,22 @@ export class ResearchFlow implements Flow {
     // 4. Say what was published, then Done.
     const project = start.key.replace(/-\d+$/, "");
     const keys = state.followups.map((f) => `${project}-${f.number ?? "?"}`);
-    if (!state.commented) {
-      const followups =
-        state.followups.length === 0
-          ? "没有后续工单。"
-          : `后续工单（在 Backlog，没有打 auto，等人批准）：\n${state.followups
-              .map((f, i) => `- ${keys[i]} ${f.title}`)
-              .join("\n")}`;
-      await tracker.comment(
-        issue,
-        `调研完成。报告：「${title}」（已挂在本工单上）。\n\n${followups}`,
-      );
-      await progress({ commented: true });
-    }
+    // The closing comment, the move to Done and the run's end are written together; the reconciler brings the
+    // tracker to them, so a move that fails is made up later and the comment is not written twice.
     await this.#host.clear(start, issue);
-    await tracker.move(issue, "done");
-    await store.event(start.key, "researched", { docId, followups: keys.length });
-    await save({ phase: "done" });
+    const followups =
+      state.followups.length === 0
+        ? "没有后续工单。"
+        : `后续工单（在 Backlog，没有打 auto，等人批准）：\n${state.followups
+            .map((f, i) => `- ${keys[i]} ${f.title}`)
+            .join("\n")}`;
+    await save({ phase: "done", research: { ...state, commented: true } }, (tx) => {
+      tellTicket(tx, start, issue, `researched:${start.key}`, {
+        body: `调研完成。报告：「${title}」（已挂在本工单上）。\n\n${followups}`,
+        to: "done",
+      });
+      tx.event(start.key, "researched", { docId, followups: keys.length });
+    });
     return { status: "researched", key: start.key, docId, followups: keys };
   }
 }

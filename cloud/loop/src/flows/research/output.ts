@@ -3,8 +3,9 @@
 // blocks, and the loop publishes them. Tag blocks and not JSON: the report and the drafts are long Markdown, which a
 // model escapes badly inside a JSON string.
 
-import { CONCLUSION, findSection, type PreflightConfig, preflight } from "./preflight.ts";
-import type { Config, Issue } from "./types.ts";
+import { attribute, last } from "../../parse/blocks.ts";
+import { CONCLUSION, findSection, type PreflightConfig, preflight } from "../../preflight.ts";
+import type { Config, Issue } from "../../types.ts";
 
 export type FollowupType = "Feature" | "Bug";
 
@@ -26,14 +27,6 @@ export const MAX_SUMMARY = 600;
 /** Below the tracker's own limits (250k for a document, 50k for an issue description), with room for what the loop adds. */
 export const MAX_REPORT = 200_000;
 export const MAX_FOLLOWUP_BODY = 40_000;
-
-const last = (text: string, tag: string): string | null => {
-  const found = Array.from(text.matchAll(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, "g"))).at(-1);
-  return found === undefined ? null : (found[1] as string).trim();
-};
-
-const attribute = (attributes: string, name: string): string | undefined =>
-  new RegExp(`\\b${name}\\s*=\\s*"([^"]*)"`).exec(attributes)?.[1];
 
 /**
  * The last `<summary>` and `<report>`, and every `<followup>`, in what the session said. Earlier summaries and reports

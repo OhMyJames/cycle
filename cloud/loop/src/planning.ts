@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import { posix } from "node:path";
 import { suites } from "../../../scripts/integration-suites.ts";
 import { parseCriteria, parseVerify } from "./criteria.ts";
+import { attribute, last } from "./parse/blocks.ts";
 import { findSection, type PreflightConfig, preflight } from "./preflight.ts";
 import type { PlanMemory } from "./store.ts";
 import {
@@ -229,14 +230,6 @@ export const shouldPlan = (state: PlanState): boolean => {
 
 // ---------------------------------------------------------------------------------------------------------------
 // Reading tag blocks
-
-const last = (text: string, tag: string): string | null => {
-  const found = Array.from(text.matchAll(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, "g"))).at(-1);
-  return found === undefined ? null : (found[1] as string).trim();
-};
-
-const attribute = (attributes: string, name: string): string | undefined =>
-  new RegExp(`\\b${name}\\s*=\\s*"([^"]*)"`).exec(attributes)?.[1];
 
 /** The first paragraph of a description, before its first heading: what a person reads first. Empty when there is none. */
 export const openingParagraph = (description: string): string => {

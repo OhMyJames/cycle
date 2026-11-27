@@ -1,7 +1,7 @@
 import { AccountNotice } from "./account.tsx";
 import { AnalyticsNotice } from "./analytics.tsx";
 import { useAppState } from "./store-context.tsx";
-import { DaemonNotice, UpdateNotice } from "./update.tsx";
+import { DaemonNotice, InterfaceNotice, UpdateNotice } from "./update.tsx";
 
 /**
  * What concerns the whole app, in one stack: the account first (online features stop on it), then each location's
@@ -23,6 +23,7 @@ export function AppNotices({ at = "sidebar" }: { at?: "sidebar" | "top" }) {
         ? null
         : daemons.split("\n").map((id) => <DaemonNotice key={id} locationId={id} />)}
       <UpdateNotice />
+      <InterfaceNotice />
       <AnalyticsNotice />
     </div>
   );

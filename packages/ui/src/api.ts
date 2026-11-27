@@ -768,6 +768,18 @@ export type UpdateState = {
   | { kind: "error"; message: string; version?: string }
 );
 
+/**
+ * Which page the app is showing and whether a newer one is waiting (docs/desktop.md, "Interface updates"). A version
+ * is the number of commits the page was built at; `bundled` is the page the app came with.
+ */
+export type InterfaceState = {
+  bundled: number;
+  /** The page that is showing: `bundled`, or the newer one taken since. */
+  running: number;
+  /** A newer page, on this computer and checked, that shows after a reload or the next start. */
+  ready?: number;
+};
+
 /** One of a subscription's usage limits (docs/protocol.md §8 "套餐用量"). */
 export type PlanWindow = {
   /** `five_hour`, `seven_day`, or another the agent names. */
@@ -856,6 +868,7 @@ export type AppEvent =
   /** A session was deleted elsewhere while the connection was away: nothing of it is kept. */
   | { type: "session-gone"; locationId: string; sessionId: string }
   | { type: "app-update"; state: UpdateState }
+  | { type: "interface-update"; state: InterfaceState }
   /** A session's terminals, whole: one was opened, closed, renamed, resized or ended. */
   | { type: "terminals"; locationId: string; sessionId: string; terminals: TerminalInfo[] }
   /** Output of a terminal the app is attached to. Drop it if the screen in hand already holds `seq`. */
@@ -904,6 +917,8 @@ export type Preferences = {
   promptSuggestions: boolean;
   /** The agents (by id) whose new sessions start in a worktree unless the person says otherwise. Off for all until chosen. */
   worktreeAgents: string[];
+  /** The person's name in itsaplan, sent as `actor` when they approve or return tickets on the Loop page. May be empty. */
+  loopActor: string;
 };
 
 /** The preferences, and the system's language as main reads it (`system` follows it). */
@@ -1248,6 +1263,12 @@ export type AppApi = {
   checkForUpdate(): Promise<UpdateState>;
   /** Downloads the update that was found, checks it, and restarts the app as the new version. */
   installUpdate(): Promise<void>;
+  /** Which page shows, and whether a newer one is waiting. */
+  interfaceState(): Promise<InterfaceState>;
+  /** The page says it has drawn itself. A page that does not say so in time is not used again (main falls back). */
+  interfaceBooted(): Promise<void>;
+  /** Shows the newer page, if there is one (the page loads again; main keeps the sessions). */
+  applyInterfaceUpdate(): Promise<void>;
   /**
    * Updates the daemon of a remote location by running `daemon.upgrade.command` on it over ssh. What is wrong comes
    * back in the location's status (`daemon.upgrade.error`), not as a throw. `when` is the person's choice when
@@ -1297,19 +1318,19 @@ export type AppApi = {
    * the main process pushes `loop-runs` when it changes. Read-only: there is no start or stop.
    */
   loopRuns(): Promise<LoopRunsAnswer>;
-  /** One Project's itsaplan board, read with the person's own key, which stays in the main process. */
+  /** One Project's board, as the Loop server answers it (main holds no itsaplan key). */
   loopBoard(projectKey: string): Promise<LoopBoardAnswer>;
-  /** One ticket's body, acceptance criteria and PR/MR links, read with the person's own key. */
+  /** One ticket's body, acceptance criteria, PR/MR links and the buttons it gets, as the Loop server answers it. */
   loopTicket(projectKey: string, identifier: string): Promise<LoopTicketAnswer>;
   /** What needs a person in a Project: Blocked tickets, escalated reviews, sessions waiting on an answer (§17). */
   loopNotices(projectKey: string): Promise<LoopNoticesAnswer>;
   /**
-   * Opens a conversation with an agent about a Backlog or Todo ticket (CYC-389): main reads the ticket again, takes the
-   * default model of the agent, makes the session with the ticket's number in its first message.
+   * Opens a conversation with an agent about a Backlog or Todo ticket (CYC-389): main asks the Loop server whether it may
+   * (`chat: "new"`), takes the default model of the agent, makes the session with the ticket's number in its first message.
    */
   loopChat(projectKey: string, identifier: string): Promise<LoopChatResult>;
   /**
-   * Changes one ticket's state with the person's own key. `approve` writes nothing unless `confirmed` is true: main
+   * Changes one ticket's state through the Loop server. `approve` writes nothing unless `confirmed` is true: main
    * refuses it, whatever the page did. Never throws for a failed write: the reason comes back.
    */
   loopAct(
@@ -1319,7 +1340,7 @@ export type AppApi = {
     confirmed?: boolean,
   ): Promise<LoopActResult>;
   /**
-   * Approves or returns a batch of the tickets waiting for approval (CYC-451). Main reads each ticket again and writes
+   * Approves or returns a batch of the tickets waiting for approval (CYC-451). The Loop server reads each ticket again and writes
    * nothing unless `confirmed` is true. `reason` (return only) is posted as a comment on each returned ticket.
    */
   loopActMany(
@@ -1356,46 +1377,25 @@ export type LoopTicket = {
   identifier: string;
   title: string;
   priority: string | null;
-  /** The name of the board column it is in (In Progress, In Review, Blocked...). */
+  /** The name of the board column it is in. */
   column: string;
-  /** The buttons this ticket gets, from its column and label (main decides; the page only draws them). */
-  actions: LoopAction[];
   /**
-   * What the person can do with an agent here (main decides from the column): `new` a conversation about it (Backlog,
-   * Todo); `watch` only look, as In Progress is taken to be Loop's (a ticket Loop left there when it died is too: CYC-390
-   * corrects it); `none` neither.
+   * A Backlog ticket the planning node shaped and left for a person to approve. `reason` is the Loop server's short
+   * summary of why. The server tells a waiting ticket by this alone, so one whose reason could not be read is not here.
    */
-  chat: LoopChat;
-  /**
-   * A Backlog ticket the planning node shaped and left for a person to approve (it has the `待批准` label). `reason` is
-   * the summary of Loop's newest `Loop 规划` comment, empty when it could not be read; `criteria` how many acceptance
-   * criteria the body has (absent when the body could not be read).
-   */
-  pending?: { reason: string; criteria?: number };
-  /** Where Loop is on an In Progress ticket, and since when (ISO time): from the ticket's own fields (CYC-443). */
-  loopStage?: { stage: LoopStage; since: string };
+  pending?: { reason: string };
+  /** Where Loop is on a ticket it is working on, and since when (ISO time), from its run record. */
+  phase?: { name: string; since: string };
 };
 
-/** The steps Loop goes through on a ticket, as fixed words (not the tracker's option names). */
-export type LoopStage =
-  | "develop"
-  | "verify"
-  | "qa"
-  | "ci"
-  | "review"
-  | "merge"
-  | "research"
-  | "researchQa"
-  | "plan"
-  | "planQa";
-
+/** What the person can do with an agent on a ticket: `new` a conversation; `watch` only look; `none` neither. */
 export type LoopChat = "new" | "watch" | "none";
 
 /** Why a conversation was not made: fixed words. `needs_model`: the agent's default model is not set (Settings). */
 export type LoopChatFailure =
   | "needs_model"
   | "not_allowed"
-  | "no_key"
+  | "no_server"
   | "offline"
   | "refused"
   | "failed"
@@ -1409,10 +1409,10 @@ export type LoopChatResult =
 /** `approve`: Backlog to Todo with `auto`. `to_backlog`: back to Backlog, `auto` off. `to_todo`: back to Todo. */
 export type LoopAction = "approve" | "to_backlog" | "to_todo";
 
-/** Why a write did not happen: fixed words, never the tracker's text. */
+/** Why a write did not happen: fixed words, never the tracker's text. `no_server`: no Loop server answered. */
 export type LoopActFailure =
   | "unconfirmed"
-  | "no_key"
+  | "no_server"
   | "forbidden"
   | "conflict"
   | "not_allowed"
@@ -1424,42 +1424,46 @@ export type LoopActResult = { kind: "ok" } | { kind: "failed"; reason: LoopActFa
 export type LoopManyAction = "approve_many" | "return_many";
 /** How one ticket of a batch came out: `skipped` is one that is not in Backlog any more or has no `待批准` now. */
 export type LoopManyItem =
-  | { identifier: string; outcome: "ok"; commentFailed?: true }
+  | { identifier: string; outcome: "ok" }
   | { identifier: string; outcome: "skipped" }
   | { identifier: string; outcome: "failed"; reason: LoopActFailure };
 export type LoopManyResult =
   | { kind: "done"; results: LoopManyItem[] }
   | { kind: "failed"; reason: LoopActFailure };
 
-/** One thing that needs a person. Order on the page: `permission`, then `blocked`, then `review`. */
-export type LoopNotice =
-  /** A Dev session of a ticket waits on a permission or a form. */
-  | {
-      kind: "permission";
-      identifier: string;
-      locationId: string;
-      sessionId: string;
-    }
-  /** A ticket in Blocked; `reason` is Loop's own words from its comment (may be empty when it cannot be read). */
-  | { kind: "blocked"; identifier: string; title: string; reason: string }
-  /** A ticket whose review was escalated to a person. */
-  | { kind: "review"; identifier: string; title: string; conclusion: string };
+/** The kinds of Notice the Loop server has. The page orders them: `permission`, `blocked`, `review`, then the rest. */
+export type LoopNoticeKind =
+  | "permission"
+  | "blocked"
+  | "review"
+  | "stuck"
+  | "intent_stuck"
+  | "supervisor"
+  | "operator";
+
+/** One thing that needs a person, as the Loop server says it. `session`: the session to join, when it names one. */
+export type LoopNotice = {
+  id: string;
+  kind: LoopNoticeKind;
+  /** The work item key, `CYC-390`. */
+  identifier: string;
+  text: string;
+  session: { kind: string; id: string } | null;
+};
 export type LoopNoticesAnswer =
   | { kind: "ok"; notices: LoopNotice[] }
-  | { kind: "no_key" }
+  /** No Loop server answered. */
+  | { kind: "no_server" }
   | { kind: "unreachable" };
 
 export type LoopTicketDetail = LoopTicket & {
-  /** Why a Blocked or escalated ticket needs a person, from Loop's comment on it. */
-  attention?: {
-    kind: "blocked" | "review";
-    /** The reason (blocked) or the review's conclusion (review), as Loop wrote it. */
-    text: string;
-    /** The title of the Dev session to join, `[CYC-1] Dev`. */
-    session?: string;
-    /** The PR/MR the review is about. */
-    prUrl?: string;
-  };
+  /** What the person can do with the ticket, decided by the Loop server; the page only draws it. */
+  actions: LoopAction[];
+  chat: LoopChat;
+  /** Why a Blocked or escalated ticket needs a person, from the Loop's own records. */
+  attention?:
+    | { kind: "blocked"; text: string; session: { kind: string; id: string } | null }
+    | { kind: "review"; text: string; prUrl: string | null };
   /** The ticket's text as written (Markdown). */
   body: string;
   /** The items of its acceptance criteria section, one per line. */
@@ -1469,10 +1473,10 @@ export type LoopTicketDetail = LoopTicket & {
 };
 export type LoopTicketAnswer =
   | { kind: "ok"; ticket: LoopTicketDetail }
-  | { kind: "no_key" }
+  | { kind: "no_server" }
   | { kind: "unreachable" };
 
-/** One column of the Project's board, as itsaplan has it. `more`: the column has tickets that are not listed (a completed column lists the newest 20). */
+/** One column of the Project's board. `more`: the column has tickets that are not listed. */
 export type LoopBoardColumn = {
   id: number;
   name: string;
@@ -1480,12 +1484,12 @@ export type LoopBoardColumn = {
   tickets: LoopTicket[];
   more: boolean;
 };
-/** The Project's columns in the tracker's board order, Canceled left out. */
+/** The Project's columns in the Loop server's order. `stale`: the server could not read itsaplan and sent its last good read. */
 export type LoopBoardAnswer =
-  | { kind: "ok"; columns: LoopBoardColumn[] }
-  /** There is no key file, or it is readable by others. */
-  | { kind: "no_key" }
-  /** The tracker did not answer, or refused the key. */
+  | { kind: "ok"; columns: LoopBoardColumn[]; stale: boolean }
+  /** No Loop server answered. */
+  | { kind: "no_server" }
+  /** The server answered but had no board to give. */
   | { kind: "unreachable" };
 
 /** What came of saving a picture: written, the person closed the dialog, or it could not be (not a picture, a disk error). */
@@ -1583,6 +1587,9 @@ const METHODS: { readonly [method in keyof AppApi]-?: true } = {
   updateState: true,
   checkForUpdate: true,
   installUpdate: true,
+  interfaceState: true,
+  interfaceBooted: true,
+  applyInterfaceUpdate: true,
   upgradeDaemon: true,
   environments: true,
   saveEnvironment: true,
@@ -1602,8 +1609,8 @@ const METHODS: { readonly [method in keyof AppApi]-?: true } = {
   loopBoard: true,
   loopTicket: true,
   loopAct: true,
-  loopActMany: true,
   loopChat: true,
+  loopActMany: true,
   loopNotices: true,
 };
 

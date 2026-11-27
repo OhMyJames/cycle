@@ -24,6 +24,20 @@ bun cloud/loop/src/pipeline-cli.ts stats       # 自主完成率（只算 Loop �
 
 配置文件可选字段：`planUrl`、`autoLabel`（默认 `auto`）、`featureType`、`bugType`（默认 `Feature`、`Bug`，按名字在 `get_project` 里找类型 id）、`devAgent`、`qaAgent`、`reviewAgent`（默认 `claude`）。`devModel`、`qaModel`、`reviewModel`、`devEffort`、`qaEffort`、`reviewEffort`（可选，非空字符串）：按角色指定会话的模型和思考强度，创建会话后通过 `setConfig` 设置；省略表示沿用 agent 默认配置，空白串校验失败。必填项缺失时启动报错并指出缺哪一项。不再读 `AUTO_LOOP_*` 环境变量；`CYCLE_HOME`、`CYCLE_SOCKET` 仍用于找 daemon。`workers`（正整数，可选）：该 Project 的 worker 数，命令行 `--workers N` 优先，都没有为 1；写错时启动报错并指出是哪个 Project。改配置后重启生效。
 
+## 把旧状态导入 SQLite（CYC-476）
+
+stateDir 里有 `loop.db` 就读写 SQLite，没有就读写文件（`runs/`、`events.jsonl`、`plans/`）。切换方式：合并后**重启一次 Loop**，不用停机等 run 做完。**切换前先备份整个 stateDir**。
+
+启动时先拿 `<stateDir>/loop.lock`，再选存储；`loop.db` 不存在而 `runs/` 或 `events.jsonl` 存在时导入（`--dry-run` 不导入）：
+
+1. 用文件算一份 `stats`；
+2. 在 `loop.db.importing` 里建表，把 `runs/*/run.json`（按现有 schema 和旧默认值）、`criteria.json`、`progress.md`、`events.jsonl`（丢掉末尾半行）、`plans/` 在一个事务里写入；
+3. 用 SQLite 算 `stats`，逐字段比较，并把 run、进度、验收标准、规划记录读回来和文件比；
+4. 全部一致：`loop.db.importing` 改名为 `loop.db`，`runs`、`events.jsonl`、`plans` 改名为 `*.imported-<日期>`（不删），写一条 `storage_imported` 事件，照常启动；规划轮次的 `bodies/` 会复制回新的 `plans/`；
+5. 不一致或任何一步出错：删掉 `loop.db.importing`，旧文件不动，进程以非零退出码退出，日志写明哪一项不同。修好原因（或把坏文件挪走）后再启动即可。
+
+进行中的 run 也能导入：拿到锁之后、第一个 step 之前没有 step 在处理 run，导入后从 SQLite 读出并续跑。`pipeline-cli.ts stats` 同样是有 `loop.db` 读 SQLite，否则读文件。
+
 ## 冲突处理（CYC-411）
 
 PR 与 main 冲突时，Loop 自己处理，每个工单最多处理 1 次：
@@ -55,6 +69,7 @@ PR 与 main 冲突时，Loop 自己处理，每个工单最多处理 1 次：
 | `mergeTimeoutMinutes`                                    | 10         | 1–240  |
 | `turnTimeoutMinutes`                                     | 30         | 1–240  |
 | `commandTimeoutMinutes`                                  | 20         | 1–240  |
+| `trackerTimeoutSeconds`（itsaplan 每个请求的超时）       | 30         | 5–120  |
 | `releaseNodeModules`（布尔，见下）                       | false      | —      |
 | `blockedReminderDays`（Blocked 多少天后提醒，0 为关闭）  | 7          | 0–365  |
 
@@ -99,8 +114,11 @@ Loop 推进一张工单时，把当前阶段和进入时间写进工单的两个
 
 **字段是尽力而为的镜像，真实状态以 run 记录为准，字段偶尔过时是接受的**（看板上看写入时间就知道新不新）：
 
-- 同一张工单的写入排成一个队列，一个写完才写下一个，所以不会乱序；推进不等队列，只有交付和转 Blocked 时等清空最多 10 秒，超时就接着走。
-- 写失败不重试，同一次运行里每种失败只记一条日志和一条 `phase_field_failed` 事件，下一次阶段变化再写。每个请求限时 10 秒。
+- 阶段字段、评论和移列都是对账写法（CYC-480、CYC-496）：先在同一个 SQLite 事务里写 run 和 intent（`comment`、`move`、`label`、`phase`），再由对账补齐。领单、转 Blocked、预检退回、交付、评审结论、「PR 在 Loop 之外被合并」和调研发布都是这样；只有规划节点和桌面端经 API 发起的批准、退回直接写。
+- 同一张工单的写入排成一个队列，一个写完才写下一个，所以不会乱序；推进不等队列，交付、评审结论和转 Blocked 时等清空最多 10 秒，超时就接着走。
+- 写失败的 intent 留在待办里，每一步开始时再试；连续失败超过 10 次变成 `stuck`，记一条 `intent_stuck` 事件并发 Notice，不再重试。评论带 `<!-- loop:<dedupe> -->` 标记，写之前先查，所以重试不会重复评论；去重键带 run key 和这件事的标识（如 `review:<key>:<headSha>:<结论>`、`merged-outside:<key>:<prUrl>`、`researched:<key>`）。移列的 payload 带 `from`，人已把工单移到别处时不动。
+- 阶段字段是其中最低优先的一路，不挡评论和移列；只写最新的阶段。
+- 评审写到 GitHub 的 PR 评论不进对账，用 run 里的 `reviewCommented`（`<headSha>:<结论>`）记下，重进评审时同一个 head 的同一个结论只评论一次。调研发布的文档创建和挂载仍直接调用（按标题查重），只有工单评论和移列走 intent。
 - 「阶段开始于」写的是写入那一刻的时间；进程重启后续跑，是续跑时的时间。「等合并」没有对应的 run 阶段，在等合并期间重启，续跑后字段会显示「评审」。
 - 启动时 `list_custom_fields` 失败，或字段有问题（缺字段、缺选项、类型不对、限定了工单类型、同名多个），打一行警告说明原因，整个运行期间不写字段，Loop 照常工作。
 
@@ -200,3 +218,5 @@ Loop 推进一张工单时，把当前阶段和进入时间写进工单的两个
 - 测量失败（`df` 不可用、非零退出、输出读不出、只读到一次）、或可用块数反而变多（别的 worker 或会话在同卷释放了空间）：只记 `{ measured: false }`，不阻断 `bun install` 和后续流程。分析时丢掉 `measured: false` 的行。
 - 局限：差值是整个卷的变化，同卷上别的写入（`--workers N` 的其他 worker、会话写文件）会让 `usedKb` 偏大；取多个样本里的低值，并丢掉明显偏离的。
 - 结论：测量结果要在 Loop 实际跑过几张单之后，从 `events.jsonl` 里读 `usedKb`。`usedKb` 明显小于 `du` 的 1.4G，说明已经在克隆；接近 1.4G，才把 `bunfig.toml` 的 `[install] backend` 固定为 `clonefile`（bun 在 macOS 上默认就是 clonefile，固定只在默认被改动或回退到复制时才有意义）。在拿到数据前不改 `bunfig.toml`，也不做 worktree 共享 `node_modules`。
+
+**Dev 提问（CYC-494）**：Dev 回复里带非空 `<question>` 时，Loop 不验证、不计轮次，checkpoint 后转 Blocked（`blockedReason` 为「等人决定」），评论以「Loop 的 Dev 会话需要你决定：」开头并附问题原文，另写一条 `blocked` Notice（带 Dev 会话的种类和 id）；事件 `dev_asked` 只记字数。人回答后把工单放回 Todo，从原会话继续，提示要求先读最新评论。同一 run 连续第 3 次提问（中间没有通过验证）评论加「已多次提问，建议重写工单」。`stats.devAsked` 记提问次数和涉及的 run 数。

@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { renderReviewComment } from "../src/pr.ts";
-import { formatReviewFindings, parseReviewVerdict } from "../src/prompts.ts";
+import { formatReviewFindings, parseReviewVerdict } from "../src/prompts/index.ts";
 
 const repoRoot = resolve(import.meta.dir, "../../..");
 const reviewDocPath = resolve(repoRoot, "REVIEW.md");

@@ -88,6 +88,10 @@ export class AppStore extends StoreBase {
       // An event that came while this was asked is newer than the answer.
       this.set((s) => (s.update === undefined ? { update } : {}));
     });
+    void this.attempt(async () => {
+      const state = await this.bridge.interfaceState();
+      this.set((s) => (s.interface === undefined ? { interface: state } : {}));
+    });
     void this.attempt(async () => this.set({ analytics: await this.bridge.analytics() }));
     // Read before the page is ready: its first words are already in the language that was chosen.
     const preferences = this.bridge.preferences().then(
@@ -183,6 +187,9 @@ export class AppStore extends StoreBase {
         return;
       case "app-update":
         this.set({ update: event.state });
+        return;
+      case "interface-update":
+        this.set({ interface: event.state });
         return;
       case "focus-session":
         this.set((s) => ({ focusRequests: s.focusRequests + 1 }));
@@ -347,9 +354,23 @@ export class AppStore extends StoreBase {
   loadLoopNotices = this.#loop.loadNotices;
   takeLoopRequest = this.#loop.takeRequest;
 
+  /** Shows the session a Notice names in place of the Loop page; false when no connected location has it. */
+  joinLoopSession = (sessionId: string): boolean => {
+    const found = Object.entries(this.getState().sessions)
+      .flatMap(([locationId, list]) =>
+        list.filter((x) => !x.archived && x.sessionId === sessionId).map(() => locationId),
+      )
+      .at(0);
+    if (found === undefined) return false;
+    this.set((s) => ({ focusRequests: s.focusRequests + 1 }));
+    void this.focusSession(found, sessionId);
+    this.track("loop_session_joined", {});
+    return true;
+  };
+
   /** Shows the Dev session of a ticket (`[CYC-1] Dev`) in place of the Loop page; false when no session has that name. */
-  joinLoopSession = (identifier: string, title?: string): boolean => {
-    const wanted = title ?? `[${identifier}] Dev`;
+  joinLoopDevSession = (identifier: string): boolean => {
+    const wanted = `[${identifier}] Dev`;
     const sessions = Object.entries(this.getState().sessions).flatMap(([locationId, list]) =>
       list.filter((x) => !x.archived && x.title?.trim() === wanted).map((x) => ({ locationId, x })),
     );
@@ -501,6 +522,11 @@ export class AppStore extends StoreBase {
   /** How it goes comes back in the location's status. */
   upgradeDaemon = async (locationId: string, when?: "now" | "later"): Promise<void> => {
     await this.attempt(() => this.bridge.upgradeDaemon(locationId, when));
+  };
+
+  /** Shows the newer page; the page loads again, so nothing after this is waited for. */
+  applyInterfaceUpdate = async (): Promise<void> => {
+    await this.attempt(() => this.bridge.applyInterfaceUpdate());
   };
 
   /** Main says how it goes through app-update events; an error it throws is shown as any other. */

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { devOf } from "../src/store.ts";
 import { fourDocs, fullFlowIssue, setupFullFlow } from "./full-flow-helpers.ts";
 import { done, issue, PASS, REVIEW_MERGE, readyDescription } from "./helpers.ts";
 
@@ -10,7 +11,7 @@ test("a 完整流程 work item with four locked documents is taken, with the Spe
   const result = await s.pipeline.step();
   expect(result.status).toBe("delivered");
   const run = await s.store.load("CYC-1");
-  expect(run?.fullFlowDocs.map((d) => [d.title, d.version])).toEqual([
+  expect(run && devOf(run).fullFlowDocs.map((d) => [d.title, d.version])).toEqual([
     ["[CYC-1] Intent", 3],
     ["[CYC-1] Spec", 3],
     ["[CYC-1] Design", 3],
@@ -82,7 +83,8 @@ test("a work item without the label needs no documents and is judged as before",
   const small = issue({ description: readyDescription });
   const s = await setupFullFlow([small], undefined, happy);
   expect((await s.pipeline.step()).status).toBe("delivered");
-  expect((await s.store.load("CYC-1"))?.fullFlowDocs).toEqual([]);
+  const small1 = await s.store.load("CYC-1");
+  expect(small1 && devOf(small1).fullFlowDocs).toEqual([]);
   const bad = await setupFullFlow([issue({ description: "no criteria" })], fourDocs(), none);
   expect((await bad.pipeline.step()).status).toBe("rejected");
   expect(bad.tracker.comments[0]).not.toContain("[Blocked:需规格]");

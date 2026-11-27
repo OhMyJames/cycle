@@ -7,10 +7,10 @@ import { existsSync } from "node:fs";
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { SqliteStore } from "../src/db/store.ts";
 import { NOTES_HEADING, ORIGINAL_HEADING } from "../src/flows/plan.ts";
-import { type Deps, Pipeline } from "../src/pipeline.ts";
+import { type DepsInput as Deps, Pipeline } from "../src/pipeline.ts";
 import { computeStats } from "../src/stats.ts";
-import { RunStore } from "../src/store.ts";
 import type { Exec, Issue, PlanningConfig } from "../src/types.ts";
 import {
   CHECKED,
@@ -175,7 +175,7 @@ const setup = (
     }
     return base(argv, options);
   };
-  const store = new RunStore(cfg.stateDir, () => clock.now());
+  const store = SqliteStore.open(cfg.stateDir, () => clock.now());
   const deps = (more: Partial<Deps> = {}): Deps => ({
     config: cfg,
     tracker,
@@ -203,8 +203,8 @@ const setup = (
   };
 };
 
-const events = async (store: RunStore) => await store.events();
-const kinds = async (store: RunStore) => (await events(store)).map((e) => e.kind);
+const events = async (store: SqliteStore) => await store.events();
+const kinds = async (store: SqliteStore) => (await events(store)).map((e) => e.kind);
 const byKey = (s: ReturnType<typeof setup>, key: string) =>
   s.tracker.issues.find((i) => i.key === key) as Issue;
 const commentsOn = (s: ReturnType<typeof setup>, key: string) =>
@@ -344,6 +344,8 @@ test("approved work comes first: with a Todo work item to take, no round starts"
   expect(s.tracker.moves).toEqual(["CYC-9:inProgress"]);
   expect(s.sessions.inputs.map((i) => i.role)).toEqual(["dev"]);
   expect(await s.store.plans()).toEqual([]);
+  // With loop.db there is no plans/ directory to list: no rounds, and no open one, is the same claim.
+  expect(await s.store.unfinishedPlans()).toEqual([]);
 
   // In a dry run likewise; with Todo empty, it says it would plan.
   const dry = setup(
@@ -541,10 +543,10 @@ test("a restart in the middle of a split makes nothing twice and misses nothing,
   s.tracker.createIssue = async (input) => {
     const made = await create(input);
     creates++;
-    if (creates === 2) throw new Error("killed");
+    if (creates === 2) throw new Error("tracker x: connection reset (killed)");
     return made;
   };
-  await expect(s.pipeline.step()).rejects.toThrow("killed");
+  expect(await s.pipeline.step()).toMatchObject({ status: "network_wait" });
   expect(s.tracker.issues.filter((i) => i.parentId === 101)).toHaveLength(2);
 
   const again = s.restart();
@@ -579,10 +581,10 @@ test("a comment posted just before a restart is not posted again", async () => {
     await comment(i, text);
     if (!killed && text.startsWith(NOTES_HEADING)) {
       killed = true;
-      throw new Error("killed");
+      throw new Error("tracker x: connection reset (killed)");
     }
   };
-  await expect(s.pipeline.step()).rejects.toThrow("killed");
+  expect(await s.pipeline.step()).toMatchObject({ status: "network_wait" });
   expect(await s.restart().step()).toMatchObject({ status: "planned", shaped: 1 });
   expect(commentsOn(s, "CYC-1").filter((c) => c.startsWith(NOTES_HEADING))).toHaveLength(1);
   expect(byKey(s, "CYC-1").labelIds).toEqual([LABELS.pending]);
@@ -765,12 +767,12 @@ test("a round killed in the middle goes on after a restart, from where it was", 
   const s = setup(
     {
       triage: [done(triageReply([can("CYC-1")], ["CYC-1"]))],
-      shape: [new Error("daemon gone"), done(rewrite())],
+      shape: [new Error("connection reset (daemon gone)"), done(rewrite())],
       shape_qa: [done(PASS)],
     },
     [backlogItem(1)],
   );
-  await expect(s.pipeline.step()).rejects.toThrow("daemon gone");
+  expect(await s.pipeline.step()).toMatchObject({ status: "network_wait" });
   expect((await s.store.unfinishedPlans()).map((r) => r.phase)).toEqual(["shaping"]);
   const again = s.restart();
   expect(await again.step()).toMatchObject({ status: "planned", shaped: 1 });
@@ -931,8 +933,6 @@ test("nothing to plan makes no round: no directory under plans/, only the index"
   expect(await s.pipeline.step()).toEqual({ status: "idle" });
   expect(s.sessions.created).toEqual([]);
   expect(await s.store.plans()).toEqual([]);
-  const { readdir } = await import("node:fs/promises");
-  expect(await readdir(join(s.cfg.stateDir, "plans"))).toEqual(["index.json"]);
   expect(await s.store.loadPlanIndex()).toMatchObject({
     open: null,
     lastEndedAt: "2026-11-26T10:00:00.000Z",
@@ -942,7 +942,6 @@ test("nothing to plan makes no round: no directory under plans/, only the index"
   // Each interval the same: still no directory.
   s.clock.at = new Date("2026-11-26T10:31:00.000Z");
   expect(await s.pipeline.step()).toEqual({ status: "idle" });
-  expect(await readdir(join(s.cfg.stateDir, "plans"))).toEqual(["index.json"]);
 });
 
 test("a work item deleted in the middle of a round does not hold it up", async () => {
@@ -1023,4 +1022,138 @@ test("a round asks about at most maxAsk work items, highest priority first; the 
   expect(
     (await events(s.store)).filter((e) => e.kind === "plan_asked").map((e) => e.issue),
   ).toEqual(["CYC-2", "CYC-4"]);
+});
+
+test("a work item deleted after shaping stops alone: the next one is shaped, and a new round can begin", async () => {
+  const s = setup(
+    {
+      triage: [done(triageReply([can("CYC-1"), can("CYC-2")], ["CYC-1", "CYC-2"]))],
+      shape: [done(rewrite()), done(rewrite("第二张的新标题", good("第二张")))],
+      shape_qa: [done(PASS), done(PASS)],
+    },
+    [backlogItem(1), backlogItem(2)],
+  );
+  const turn = s.sessions.turn.bind(s.sessions);
+  s.sessions.turn = async (id, prompt, ctx) => {
+    const out = await turn(id, prompt, ctx);
+    if (ctx.role === "shape_qa" && s.tracker.issues.some((i) => i.number === 1))
+      s.tracker.issues = s.tracker.issues.filter((i) => i.number !== 1);
+    return out;
+  };
+  expect(await s.pipeline.step()).toMatchObject({ status: "planned", shaped: 1, stopped: 1 });
+  expect(byKey(s, "CYC-2").labelIds).toEqual([LABELS.pending]);
+  const failed = (await events(s.store)).find((e) => e.kind === "plan_item_failed");
+  expect(failed).toMatchObject({ issue: "CYC-1" });
+  expect(Object.keys(failed ?? {}).sort()).toEqual(["error", "issue", "kind", "run", "ts"]);
+  expect(await s.store.unfinishedPlans()).toEqual([]);
+});
+
+test("an error that is not the network's ends the round, and the next step is not stuck on it", async () => {
+  const s = setup({ triage: [done(triageReply([can("CYC-1")], ["CYC-1"]))] }, [backlogItem(1)]);
+  const rows = s.tracker.listBacklogRows.bind(s.tracker);
+  let broken = true;
+  let calls = 0;
+  s.tracker.listBacklogRows = async () => {
+    if (broken && ++calls > 1) throw new Error("boom: secret detail");
+    return rows();
+  };
+  // The round's end reads the Backlog rows; that fails, and the round ends instead of failing again on every step.
+  expect(await s.pipeline.step()).toMatchObject({ status: "plan_stopped" });
+  expect((await events(s.store)).find((e) => e.kind === "plan_failed")).toMatchObject({
+    error: "Error",
+  });
+  expect(JSON.stringify(await events(s.store))).not.toContain("secret detail");
+  expect(await s.store.unfinishedPlans()).toEqual([]);
+  broken = false;
+});
+
+test("after a restart, a person's edit before the next write leaves the rest unwritten", async () => {
+  const s = setup(
+    {
+      triage: [done(triageReply([can("CYC-1")], ["CYC-1"]))],
+      shape: [done(rewrite())],
+      shape_qa: [done(PASS)],
+    },
+    [backlogItem(1)],
+  );
+  // The original is commented, then the process dies; a person edits meanwhile.
+  const comment = s.tracker.comment.bind(s.tracker);
+  s.tracker.comment = async (i, text) => {
+    await comment(i, text);
+    if (text.startsWith(ORIGINAL_HEADING)) throw new Error("connection reset (killed)");
+  };
+  expect(await s.pipeline.step()).toMatchObject({ status: "network_wait" });
+  s.tracker.comment = comment;
+  Object.assign(byKey(s, "CYC-1"), { description: "人在重启期间改的正文" });
+  expect(await s.restart().step()).toMatchObject({ status: "planned", shaped: 0, abandoned: 1 });
+  expect(byKey(s, "CYC-1").description).toBe("人在重启期间改的正文");
+  expect(commentsOn(s, "CYC-1").filter((c) => c.startsWith(NOTES_HEADING))).toEqual([]);
+  expect(byKey(s, "CYC-1").labelIds).not.toContain(LABELS.pending);
+});
+
+test("a rewrite that keeps the title still gives way to a person's edit of the body before the first write", async () => {
+  const s = setup(
+    {
+      triage: [done(triageReply([can("CYC-1")], ["CYC-1"]))],
+      shape: [done(rewrite("原来的标题 1"))],
+      shape_qa: [done(PASS)],
+    },
+    [backlogItem(1)],
+  );
+  const turn = s.sessions.turn.bind(s.sessions);
+  s.sessions.turn = async (id, prompt, ctx) => {
+    const out = await turn(id, prompt, ctx);
+    if (ctx.role === "shape_qa") Object.assign(byKey(s, "CYC-1"), { description: "人改的正文" });
+    return out;
+  };
+  expect(await s.pipeline.step()).toMatchObject({ shaped: 0, abandoned: 1 });
+  expect(byKey(s, "CYC-1").description).toBe("人改的正文");
+  expect(commentsOn(s, "CYC-1")).toEqual([]);
+});
+
+for (const [name, title, killAfter] of [
+  ["the title unchanged, killed after the description", "原来的标题 1", "setDescription"],
+  ["a new title, killed after the title", "全新的标题", "setTitle"],
+] as const) {
+  test(`a restart in the middle of the rewrite (${name}) finishes the item`, async () => {
+    const s = setup(
+      {
+        triage: [done(triageReply([can("CYC-1")], ["CYC-1"]))],
+        shape: [done(rewrite(title))],
+        shape_qa: [done(PASS)],
+      },
+      [backlogItem(1)],
+    );
+    const call = s.tracker[killAfter].bind(s.tracker);
+    s.tracker[killAfter] = async (i, text) => {
+      await call(i, text);
+      throw new Error("connection reset (killed)");
+    };
+    expect(await s.pipeline.step()).toMatchObject({ status: "network_wait" });
+    s.tracker[killAfter] = call;
+    expect(await s.restart().step()).toMatchObject({ status: "planned", shaped: 1 });
+    expect(byKey(s, "CYC-1").labelIds).toEqual([LABELS.pending]);
+    expect(commentsOn(s, "CYC-1").filter((c) => c.startsWith(NOTES_HEADING))).toHaveLength(1);
+  });
+}
+
+test("a person's edit between the title and the description writes is not overwritten", async () => {
+  const s = setup(
+    {
+      triage: [done(triageReply([can("CYC-1")], ["CYC-1"]))],
+      shape: [done(rewrite("全新的标题"))],
+      shape_qa: [done(PASS)],
+    },
+    [backlogItem(1)],
+  );
+  const setTitle = s.tracker.setTitle.bind(s.tracker);
+  s.tracker.setTitle = async (i, text) => {
+    await setTitle(i, text);
+    throw new Error("connection reset (killed)");
+  };
+  await s.pipeline.step();
+  s.tracker.setTitle = setTitle;
+  Object.assign(byKey(s, "CYC-1"), { description: "人改的正文" });
+  expect(await s.restart().step()).toMatchObject({ shaped: 0, abandoned: 1 });
+  expect(byKey(s, "CYC-1").description).toBe("人改的正文");
 });

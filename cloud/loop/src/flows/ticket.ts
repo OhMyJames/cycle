@@ -1,12 +1,22 @@
 // What the flows of one work item in the tracker share: dev and research runs both come from the `Todo` column, go
 // on when a person puts them back, and stop in Blocked with a comment.
 
+import type { StoreOps } from "../db/store.ts";
+import {
+  type BlockArgs,
+  type FlowHost,
+  type Intake,
+  NetworkWait,
+  PHASE_NAMES,
+  type Phase,
+} from "../engine/flow.ts";
+import { writeIntent } from "../engine/reconcile.ts";
 import { fullFlowPreflight, isFullFlow } from "../full-flow.ts";
+import { isNetworkError } from "../network.ts";
 import { preflight, sendBackComment } from "../preflight.ts";
 import { pickNext } from "../select.ts";
-import type { RunRecord } from "../store.ts";
-import type { Issue } from "../types.ts";
-import { type BlockArgs, type FlowHost, type Intake, PHASE_NAMES, type Phase } from "./flow.ts";
+import { applyPatch, type RunRecord } from "../store.ts";
+import type { Issue, Stage } from "../types.ts";
 
 /**
  * The `Todo` column: the next work item `pickNext` chooses, checked by `preflight`, which also says its kind. One
@@ -44,10 +54,34 @@ export const todoIntake = (host: FlowHost): Intake => ({
   },
 
   async reject(issue, reasons) {
-    const { tracker, store } = host.d;
-    await tracker.comment(issue, sendBackComment(reasons));
-    await tracker.move(issue, "blocked");
-    await store.event(issue.key, "preflight_rejected", { reasons: reasons.length });
+    const { store } = host.d;
+    const body = sendBackComment(reasons);
+    const why = new Bun.CryptoHasher("sha256").update(body).digest("hex").slice(0, 12);
+    store.transaction((tx) => {
+      const seq = tx.countEvents(issue.key, "preflight_rejected") + 1;
+      // One comment for one reason, however many rounds or re-queues see it (on purpose: a person who puts the
+      // work item back unfixed has already read it); the move is written each time, and does nothing
+      // when the work item is already in Blocked.
+      writeIntent(tx, {
+        run: issue.key,
+        issue,
+        kind: "comment",
+        dedupe: `rejected:${issue.key}:${why}`,
+        payload: { body },
+      });
+      // Not while a move to Blocked is still waiting: a tracker that is down must not collect one per round.
+      const waiting = tx.pendingIntents().some((i) => i.kind === "move" && i.runKey === issue.key);
+      if (!waiting)
+        writeIntent(tx, {
+          run: issue.key,
+          issue,
+          kind: "move",
+          dedupe: `move:${issue.key}:rejected:${seq}`,
+          payload: { to: "blocked", from: "todo" },
+        });
+      tx.event(issue.key, "preflight_rejected", { reasons: reasons.length });
+    });
+    await host.reconcile.flush(issue.id, { capMs: host.d.mirrorCapMs ?? 10_000 });
   },
 });
 
@@ -65,24 +99,116 @@ export const ticketStillWanted = async (
   return { issue, byPerson: run.phase === "blocked" };
 };
 
+/** The state type a column stands for, for the event that says where a person moved a work item. */
+const stateTypeOf = (columnId: number, config: FlowHost["d"]["config"]): string => {
+  const { columns } = config;
+  if (columnId === columns.todo) return "unstarted";
+  if (columnId === columns.inProgress || columnId === columns.inReview) return "started";
+  if (columnId === columns.done) return "completed";
+  if (columnId === columns.canceled) return "canceled";
+  if (columnId === columns.blocked) return "blocked";
+  if (columnId === config.research?.backlogColumn) return "backlog";
+  return "other";
+};
+
+/** Still the loop's: in Todo or In Progress and carrying `auto`. Anything else is a person's move, to be respected. */
+export const ticketStillMine = async (
+  host: FlowHost,
+  run: RunRecord,
+): Promise<true | { stateType: string }> => {
+  const { config, tracker } = host.d;
+  let issue: Issue;
+  try {
+    issue = await tracker.get(run.issueNumber);
+  } catch (error) {
+    if (error instanceof Error && isNetworkError(error.message)) throw new NetworkWait("tracker");
+    throw error;
+  }
+  const inColumn =
+    issue.columnId === config.columns.todo || issue.columnId === config.columns.inProgress;
+  if (inColumn && issue.labelIds.includes(config.autoLabelId)) return true;
+  return { stateType: stateTypeOf(issue.columnId, config) };
+};
+
 /**
  * Blocked: the reason in a comment on the work item, which says which session to open, and the work item in Blocked.
  * `redact` turns what was said into what may be written there.
  */
 export const blockTicket = async (
   host: FlowHost,
-  { run, issue, said, save, resumeFrom }: BlockArgs,
+  { run, issue, said, resumeFrom, asked }: BlockArgs,
   how: { firstPhase: Phase; session: string; redact: (said: string) => string },
 ) => {
-  const { tracker, store } = host.d;
+  const { store } = host.d;
   const reason = how.redact(said);
   const from = run.phase === "blocked" || run.phase === "done" ? how.firstPhase : run.phase;
-  await save({ phase: "blocked", blockedReason: reason, resumeFrom: resumeFrom ?? from });
-  await tracker.comment(
-    issue,
-    `自动化在「${PHASE_NAMES[from]}」卡住了：${reason}\n\n现场已保留：${how.session}可在 Cycle 桌面端打开接管。处理后把工单放回 Todo，自动化会在原会话里继续。`,
-  );
-  await tracker.move(issue, "blocked");
-  await store.event(run.key, "blocked", { phase: from, round: run.round });
+  const body =
+    asked?.comment ??
+    `自动化在「${PHASE_NAMES[from]}」卡住了：${reason}\n\n现场已保留：${how.session}可在 Cycle 桌面端打开接管。处理后把工单放回 Todo，自动化会在原会话里继续。`;
+  // The run and what the tracker should show are written together; the reconciler brings the tracker to it, now or on
+  // a later step. `blockSeq` is which Blocked this is for the run: one comment each, the next Blocked comments again.
+  store.transaction((tx) => {
+    const blockSeq = tx.countEvents(run.key, "blocked") + 1;
+    const waitingFrom = tx
+      .pendingIntents()
+      .filter((i) => i.kind === "move" && i.runKey === run.key)
+      .flatMap((i) => [(i.payload as { from?: Stage | Stage[] }).from ?? []].flat());
+    tx.save(
+      applyPatch(run, { phase: "blocked", blockedReason: reason, resumeFrom: resumeFrom ?? from }),
+    );
+    writeIntent(tx, {
+      run: run.key,
+      issue,
+      kind: "comment",
+      dedupe: `blocked:${run.key}:${blockSeq}`,
+      payload: { body },
+    });
+    writeIntent(tx, {
+      run: run.key,
+      issue,
+      kind: "move",
+      dedupe: `move:${run.key}:${blockSeq}`,
+      // A claim still waiting was replaced by this move, so the work item may well still be where it said.
+      payload: { to: "blocked", from: ["inProgress", ...waitingFrom] },
+    });
+    tx.event(run.key, "blocked", { phase: from, round: run.round });
+    if (asked !== undefined)
+      tx.notice(run.key, "blocked", asked.notice, `blocked:${run.key}:${blockSeq}`, asked.session);
+  });
+  await host.reconcile.flush(issue.id, { capMs: host.d.mirrorCapMs ?? 10_000 });
   return { status: "blocked" as const, key: run.key, reason };
+};
+
+/**
+ * What a run that goes on to a stop (delivered, researched) says in the tracker: a comment and a move, written inside
+ * the transaction of the run's own save. `what` tells this one from the next (a PR, a head and a decision); the
+ * comment is one per `what`, however often the step runs. The move may come from where a claim still waiting left it.
+ */
+export const tellTicket = (
+  tx: StoreOps,
+  run: Pick<RunRecord, "key">,
+  issue: Issue,
+  what: string,
+  say: { body?: string; to?: Stage },
+): void => {
+  if (say.body !== undefined)
+    writeIntent(tx, {
+      run: run.key,
+      issue,
+      kind: "comment",
+      dedupe: `${what}`,
+      payload: { body: say.body },
+    });
+  if (say.to === undefined) return;
+  const waitingFrom = tx
+    .pendingIntents()
+    .filter((i) => i.kind === "move" && i.runKey === run.key)
+    .flatMap((i) => [(i.payload as { from?: Stage | Stage[] }).from ?? []].flat());
+  writeIntent(tx, {
+    run: run.key,
+    issue,
+    kind: "move",
+    dedupe: `move:${what}`,
+    payload: { to: say.to, from: ["inProgress", ...waitingFrom] },
+  });
 };

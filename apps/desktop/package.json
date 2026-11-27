@@ -1,6 +1,6 @@
 {
   "name": "@cycle/desktop",
-  "version": "0.3.31",
+  "version": "0.3.36",
   "private": true,
   "type": "module",
   "exports": {
@@ -30,6 +30,8 @@
   "scripts": {
     "build": "bun scripts/build.ts",
     "package": "bun scripts/package.ts",
+    "ui-package": "bun scripts/ui-package.ts",
+    "ui-publish": "bun scripts/ui-publish.ts",
     "sign": "bun scripts/sign.ts",
     "release-assets": "bun scripts/release-assets.ts",
     "start": "bun scripts/start.ts",

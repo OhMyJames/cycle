@@ -35,6 +35,7 @@ export const TuningSchema = z
     mergeTimeoutMinutes: whole(1, 240),
     turnTimeoutMinutes: whole(1, 240),
     commandTimeoutMinutes: whole(1, 240),
+    trackerTimeoutSeconds: whole(5, 120),
     releaseNodeModules: z.boolean(),
     blockedReminderDays: whole(0, 365),
   })

@@ -1,15 +1,20 @@
 // Everything one Project owns: tracker, store, lock, daemon connection, pipeline. Shared by the CLI and the server.
 
 import { join } from "node:path";
+import { type ProjectApi, sessionOfId } from "./api.ts";
 import { type ConfigFile, readTuning } from "./config-file.ts";
+import { type ImportResult, importLegacyState, needsImport } from "./db/import.ts";
+import { openLoopStore, SqliteStore } from "./db/store.ts";
 import { effectiveWorkers } from "./loop.ts";
 import { Pipeline } from "./pipeline.ts";
-import { PlanTracker } from "./plan-mcp.ts";
+import { DEFAULT_TIMEOUT_MS, PlanTracker } from "./plan-mcp.ts";
+import { gitWorkspace } from "./ports/git.ts";
+import { githubForge } from "./ports/github.ts";
+import { DaemonSessions } from "./ports/sessions.ts";
 import { docsBaseOf } from "./pr.ts";
 import { type LoopFields, resolveLoopFields, resolveProject } from "./project.ts";
 import { runCommand } from "./runner.ts";
-import { DaemonSessions } from "./sessions.ts";
-import { acquireLock, RunStore } from "./store.ts";
+import { acquireLock } from "./store.ts";
 import { DEFAULT_CHECK_MINUTES, DEFAULT_MAX_ASK, defaultConfig } from "./types.ts";
 
 export type SetUpOptions = {
@@ -28,6 +33,8 @@ export type ProjectUnit = {
   release: () => Promise<void>;
   close: () => Promise<void>;
   workers: number;
+  /** What the `loop/` methods use of this Project (CYC-482). */
+  api?: ProjectApi;
 };
 
 export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<ProjectUnit> => {
@@ -40,6 +47,9 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
     url: file.planUrl,
     key: file.planKey,
     projectKey: file.projectKey,
+    ...(file.tuning?.trackerTimeoutSeconds !== undefined
+      ? { timeoutMs: file.tuning.trackerTimeoutSeconds * 1000 }
+      : {}),
   });
   // Research (CYC-447) is resolved only when it is on; the folder is a document, which `get_project` does not list.
   const research = file.research?.enabled === true ? file.research : null;
@@ -106,23 +116,72 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
   };
   const tuning = {
     initial: file.tuning ?? {},
-    reload: () => readTuning(configPath, file.projectKey),
+    reload: async () => {
+      const next = await readTuning(configPath, file.projectKey);
+      tracker.setTimeoutMs(
+        next.trackerTimeoutSeconds !== undefined
+          ? next.trackerTimeoutSeconds * 1000
+          : DEFAULT_TIMEOUT_MS,
+      );
+      return next;
+    },
   };
-  const store = new RunStore(stateDir, clock.now);
+  // The lock first: with it held no step is working on a run, so the files can be moved into loop.db (CYC-476).
   const release = dryRun ? async () => {} : await acquireLock(stateDir);
+  let imported: ImportResult | null = null;
+  try {
+    if (!dryRun && needsImport(stateDir)) {
+      imported = await importLegacyState(stateDir, clock.now);
+      plog(
+        `imported ${imported.runs} runs, ${imported.events} events and ${imported.plans} planning rounds into loop.db; stats are the same; the old files are kept as ${imported.kept.join(", ")}`,
+      );
+    }
+  } catch (error) {
+    await release();
+    throw error;
+  }
+  // The loop writes intents, which only loop.db holds: a real run creates it when there is nothing to import.
+  const store = openLoopStore(stateDir, clock.now, dryRun);
+  if (imported !== null) {
+    await store.event("storage", "storage_imported", {
+      runs: imported.runs,
+      events: imported.events,
+      plans: imported.plans,
+    });
+  }
+  // A session waits for a person: the run's event, and a Notice that names the session (any kind: Dev, QA, review,
+  // research, the planning node's).
+  const waiting = async (sessionId: string, title: string): Promise<void> => {
+    const runs = await store.unfinished();
+    const run = runs.find((r) => sessionOfId(r, sessionId) !== undefined);
+    if (run !== undefined) {
+      await store.event(run.key, "permission_pending");
+      const session = sessionOfId(run, sessionId);
+      if (store instanceof SqliteStore && session !== undefined)
+        store.notice(
+          run.key,
+          "permission",
+          title === "" ? `${session.kind} session is waiting for a person` : title,
+          `permission:${sessionId}:${clock.now().toISOString()}`,
+          session,
+        );
+      return;
+    }
+    const round = (await store.unfinishedPlans()).find((r) => r.triageSessionId === sessionId);
+    if (round !== undefined && store instanceof SqliteStore)
+      store.notice(
+        `plan-${round.id}`,
+        "permission",
+        title === "" ? "triage session is waiting for a person" : title,
+        `permission:${sessionId}:${clock.now().toISOString()}`,
+        { kind: "triage", id: sessionId },
+      );
+  };
   const sessions = new DaemonSessions(
     process.env.CYCLE_SOCKET ?? join(dataDir, "daemon.sock"),
     (sessionId, title) => {
       plog(`waiting for a person in session ${sessionId}: ${title}`);
-      void store.unfinished().then((runs) => {
-        const run = runs.find(
-          (r) =>
-            r.devSessionId === sessionId ||
-            r.qaSessionId === sessionId ||
-            r.reviewSessionId === sessionId,
-        );
-        if (run !== undefined) return store.event(run.key, "permission_pending");
-      });
+      void waiting(sessionId, title);
     },
     (run, kind, data) => store.event(run, kind, data),
   );
@@ -132,6 +191,13 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
     tracker,
     sessions,
     exec: runCommand,
+    forge: githubForge({ exec: runCommand, env: process.env }),
+    workspace: gitWorkspace({
+      exec: runCommand,
+      env: process.env,
+      repoRoot: config.repoRoot,
+      remote: config.remote,
+    }),
     store,
     clock,
     log: plog,
@@ -146,5 +212,16 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
   const workers = effectiveWorkers({ once, dryRun, flag: workersFlag, file: file.workers });
   if (workers > 4)
     plog(`warning: ${workers} workers; each one holds a session and a worktree, watch memory`);
-  return { name, pipeline, release, close, workers };
+  const api: ProjectApi = {
+    projectKey: file.projectKey,
+    tracker,
+    store,
+    labels: {
+      auto: file.autoLabel,
+      pending: file.planning?.pending ?? "待批准",
+      skip: file.planning?.skip ?? "Loop 跳过",
+    },
+    workers,
+  };
+  return { name, pipeline, release, close, workers, api };
 };

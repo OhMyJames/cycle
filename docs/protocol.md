@@ -1231,7 +1231,7 @@ Loop 服务(`cloud/loop`)是独立于 daemon 的进程:一个进程服务多个 
 - **实时**:桌面主进程对每个 Project 按 `afterSeq = 最后收到的 seq` 短间隔轮询 `events/list`;`hasMore` 为真时立刻再取。`seq <= 已收到的最后 seq` 的事件丢弃,同一个 `seq` 只应用一次。收到新事件后重读 `runs/list`,运行态变了才通知页面(app 事件 `loop-runs`)。页面不用手动刷新。
 - **断线重连**:连不上或读失败时保留最后收到的 `seq`,不清零;下一次轮询带着它请求。`seq_ahead`、`seq_gone`(`-32602`)时从 0 重取,已应用过的 `seq` 同样只应用一次。
 - **看板和工单页随之刷新**(监督者的默认决定,可在 PR 里推翻):某 Project 正在跑的工单集合变了,页面重读它的看板,打开着的工单页也重读,所以 `chat: "watch"` 跟着运行态更新。集合没变的重复推送不触发读取。
-- **退避和冷启动**:轮询只在"有新事件"或"服务连不上"时强制重读 `runs/list`;某个 Project 的 `events/list` 持续报错(非连接问题)不触发重读,只对这个 Project 按 1、2、4…个周期(最多 30)退避,其他 Project 照常。单次读不到 `runs/list` 不翻转运行态,连续 3 次读不到才算连不上。`runs/list` 的任何错误(含某个 Project 的 `-32603`)都按读不到处理,不细分到 Project。看板和工单页读 `chat` 时自己读 `runs/list`,读不到就按"没在跑"算,所以在那两次容忍期内,概览可能仍说运行中而卡片没有旁观入口。页面第一次读运行态之后才开始轮询。第一次把某 Project 的日志读到末尾,那之前的事件算历史,不当新事件。
+- **退避和冷启动**:轮询只在"有新事件"或"服务连不上"时强制重读 `runs/list`;某个 Project 的 `events/list` 持续报错(非连接问题)不触发重读,只对这个 Project 按 1、2、4…个周期(最多 30)退避,其他 Project 照常。单次读不到 `runs/list` 不翻转运行态,连续 3 次读不到才算连不上。`runs/list` 的任何错误(含某个 Project 的 `-32603`)都按读不到处理,不细分到 Project。`chat` 由 Loop 服务决定,桌面端不读 `runs/list` 来判断它;运行态变了,桌面端只重读看板和当前工单页。页面第一次读运行态之后才开始轮询。第一次把某 Project 的日志读到末尾,那之前的事件算历史,不当新事件。
 - **埋点**:`loop_runs_read`(`result`: `ok`/`disconnected`)。
 
 ### 工单状态按钮(桌面端写 itsaplan,CYC-387)
@@ -1249,7 +1249,7 @@ Loop 服务(`cloud/loop`)是独立于 daemon 的进程:一个进程服务多个 
 工单页的"与 agent 对话"按钮:桌面主进程再读一次工单,按列的状态类型决定,然后用本机 daemon 新开会话。
 
 - Backlog / Todo(`chat: "new"`;Todo 里带 `auto` 的是排给 Loop 的,Loop 会自己接手,所以为 `none`,要细化先退回 Backlog):新开 codex 会话,模型取该 agent 在设置里的默认模型;第一条消息带工单号,agent 通过 itsaplan connector 读写工单,凭据由网关注入。不限制 agent 的工具(CYC-375 的强制部分推迟)。
-- In Progress(按启动列的角色,第一个启动列;`chat: "watch"`):只读旁观,不提供对话,**且该工单在运行数据里有 `active` 的记录**(见下一节"Loop 运行态")。工单留在 In Progress 但没有 `active` 记录(含 Loop 服务连不上、`runs/list` 读失败)时不判为"Loop 正在跑",`chat` 为 `none`。其余列(In Review、Blocked,接入原会话见 CYC-388)为 `none`。
+- In Progress(按启动列的角色,第一个启动列;`chat: "watch"`):只读旁观,不提供对话,由 Loop 服务按运行数据决定。其余列(In Review、Blocked,接入原会话见 CYC-388)为 `none`。
 - **工作目录**:ticket 对话的会话跑在专用目录 `<Cycle 数据目录>/ticket-chat/`(安装版是 `~/.cycle/ticket-chat/`),首次使用时创建;不用用户的主目录,也没有默认回退(没配置目录就不创建会话)。
 - 会话已创建但第一条消息没发出去:失败结果带上 `sessionId`,页面给出"打开这个会话"。
 - 默认模型没设:不创建会话,返回 `needs_model`,页面提示去设置里配置,而不是创建失败。
@@ -1266,6 +1266,41 @@ Loop 页顶部的 Notice 区由桌面主进程从两处派生,不依赖 Loop 服
 - **接入会话**:工单页的"接入开发会话"按会话名在已连接的工作位置里找 `[<工单号>] Dev`,找到就在会话区打开,人在那里回答权限、给指示。
 - **系统通知**:只对 `blocked` 和 `review` 发。主进程每分钟读一次每个 Project(同一时刻只有一次在读),与上一次比较,只对新出现的发;每个 Project 第一次读不发;读失败不改变已知状态;因窗口在前台没有弹出的,不算已见,下次再发。页面打开时每 30 秒也重读 Notice。`permission` 不发:会话自己的 attention 通知(`needs-you`)已经管,再发会重复。窗口在前台时不发。
 - **埋点**:`loop_notices_read`(各类几条)、`loop_notice_notified`(`kind`)、`loop_notice_opened`(`kind`)、`loop_session_joined`;不含原因、标题或评论文字。
+
+### `loop/` 方法:看板、run、Notice、批量批准(CYC-482)
+
+桌面端和运营 agent 之后只调这组方法,itsaplan 只在 Loop 内部对接一处,不再解析评论、不再写死标签名。决定见 [2026-11-26-loop-api-is-the-only-way-in](../.agents/notes/2026-11-26-loop-api-is-the-only-way-in.md)。**本节取代上文"服务不访问 itsaplan""工单状态按钮(桌面端写 itsaplan)""Notice(桌面端派生)"三处**:桌面端改用这组方法由下一张单做,在那之前它们仍是桌面端现在的行为。`projects/list`、`runs/list`、`events/list` 保持原名;新方法在 `loop/` 下,`loop/projects/list` 与 `projects/list` 同。schema 在 `loop.ts`,每个返回都按它校验。
+
+| 方法                 | 参数                                                            | 返回                                                   |
+| -------------------- | --------------------------------------------------------------- | ------------------------------------------------------ |
+| `loop/projects/list` | 无                                                              | `{projects}`                                           |
+| `loop/board/get`     | `{project}`                                                     | `{project, columns, stale, readAt}`                    |
+| `loop/runs/list`     | `{project, filter?: {state?}}`                                  | `{project, runs}`                                      |
+| `loop/run/get`       | `{project, key}`                                                | 阶段、轮次、会话 `{kind,id}`、PR、最近 50 条事件、心跳 |
+| `loop/notices/list`  | `{project?}`                                                    | `{notices}`                                            |
+| `loop/ticket/get`    | `{project, key}`                                                | 单张工单的详情(见下)                                   |
+| `loop/tickets/act`   | `{project, verb, keys[], reason?, confirmed, actor, actorKind}` | `{results}`                                            |
+| `loop/intents/retry` | `{project, id?, key?, actor, actorKind}`                        | `{retried}`(重新排队的 intent 数)                      |
+| `loop/status`        | 无                                                              | `{version, restartedAt, projects}`                     |
+
+- **看板**:server 用 `planKey` 读 itsaplan,列按 stateType(backlog、unstarted、started、completed、canceled)再按看板顺序;完成和取消的列只取最近 30 张。卡片有编号、标题、类型名、优先级、标签名、`pendingReason`(带 `待批准` 的卡,取最新评论首行,最多 20 张、140 字,读不到为 `null`)、`phase`(只对 started 列里有未完成 run 的卡,`{name, since}` 取自 run 的 `phase` 和 `updatedAt`,不读 tracker 自定义字段;心跳在 `run/get` 和 `stuck` Notice 里用)。缓存 15 秒;读失败时返回上一次的结果并标 `stale: true`(`readAt` 仍是上次成功的时间);第一次就失败返回 `-32603`,`data.reason` 为 `tracker_unreachable`。
+- **run**:`state` 为 `active`/`blocked`/`done`;`filter.state` 过滤。`run/get` 的会话是 `{kind, id}`(kind:`dev`、`qa`、`review`、`research`、`research_qa`、`triage`、`shape`、`shape_qa`),run 不存在返回 `-32602`,`data.reason` 为 `unknown_run`。
+- **Notice**:`kind` 为 `permission`、`blocked`、`review`、`stuck`、`intent_stuck`、`supervisor`、`operator`;每条有 `project`、工单 `key`、`session`(种类和 id,可为 `null`)、`text`、`at`。来源:`runs`(Blocked 的 run 直接带 `resumeFrom` 对应的会话,不解析评论)、`notices` 表(`permission` 在会话等权限时由 Loop 写,会话种类不限:Dev、QA、评审、调研、规划;其余种类由写入方写)、`intents` 里卡住的(`intent_stuck`)、心跳超过 15 分钟没动的未完成 run(`stuck`)。**寿命**:`blocked`、`intent_stuck` 在原因存在时就在;表里的 Notice 在它的 run 结束、或 run 记录在 Notice 之后又更新(已往前走)时消失;`permission` 每个 run 只显示最新一条,且超过 24 小时不再显示。
+- **`loop/tickets/act`**:`verb` 为 `approve`(移到 Todo,打 `auto`,摘 `待批准`)或 `return`(摘 `待批准`,打 `Loop 跳过`)。每张**重读**,只在它还在 Backlog 且带 `待批准` 时才写;标签和列按名字/stateType 每次从 `get_project` 解析(名字来自配置,默认 `auto`、`待批准`、`Loop 跳过`),改名后不用重启。先写标签、再移列,移列失败会尽量还原标签。`approve` 必须 `confirmed: true`,否则整次请求 `-32602`(`unconfirmed`),什么都不写;`return` 不要求确认。`approve` 总是发一条评论,`return` 有 `reason` 才发,末尾是「由 <actor> 在桌面端批准/退回」(`actorKind` 为 `operator` 时写「经运营 agent」)。每张结果:`{key, status: "ok"}`、`{status: "skipped", reason}`(`not_found`、`not_in_backlog`、`not_pending`)、`{status: "failed", reason}`(`offline`、`forbidden`、`conflict`、`label_missing`、`refused`),不透传 itsaplan 的文字;重复的 key 只做一次。每张(含 skipped、failed)写一条 `actions`(`ticket_approve`/`ticket_return`,带 `actor`、`actorKind`、结果)。这些写入直接写,不走对账。同一 Project 的写请求一个接一个做。
+- **`loop/ticket/get`(CYC-493)**:单张工单,给工单页用。规则从桌面端搬来,在 Loop server 里一处实现。返回 `{identifier, title, priority, column, actions, chat, body, attention?, acceptance, links}`:
+  - `column` 是列名;`actions` 是 `approve`、`to_backlog`、`to_todo` 的子集;`chat` 为 `new`、`watch`、`none`。列的角色沿用 Loop 的约定:`started` 列按看板顺序,第 1 个是 In Progress,第 2 个是 In Review,第 3 个是 Blocked。
+  - `actions`:Backlog 有 `approve`;Todo(`unstarted`)只有 `to_backlog`;进行中的列(`started`)里带 `auto` 且不是 Blocked 的归 Loop,没有按钮,否则 `to_backlog`、`to_todo`;Done、Canceled 没有。
+  - `chat`:Backlog 为 `new`;Todo 不带 `auto` 为 `new`,带 `auto` 为 `none`(Loop 会自己接手);In Progress 为 `watch`;其余 `none`。开对话的会话仍由桌面端经 daemon 创建,这里只告诉能不能开。
+  - `acceptance`:正文里 `## 验收标准`(或 `## Acceptance criteria`)一节的各条;`links`:正文和 development 链接里的 PR/MR 地址,只要 https。
+  - `attention` 只取 Loop 自己的记录,不解析评论:Blocked 列且 Loop 有该工单 `blocked` 的 run 时为 `{kind: "blocked", text: <原因>, session: {kind,id}|null}`;In Review 列且 `notices` 表里有 `review` 类 Notice(同上文的寿命规则)时为 `{kind: "review", text, prUrl: string|null}`。Loop 没有记录的(例如人手动移到 Blocked 的)不给 `attention`。
+  - 标签和列按名字、stateType 每次从 `get_project` 解析。工单不存在返回 `-32602`,`data.reason` 为 `not_found`;读不到 itsaplan 返回 `-32603`,`data.reason` 为 `tracker_unreachable`。
+- **`to_backlog`、`to_todo`(CYC-493)**:`loop/tickets/act` 的两个新 `verb`,都不要求确认。每张**重读**,按上面的 `actions` 判断仍可用才写,否则该张 `skipped`(`reason: not_allowed`,工单不存在为 `not_found`)。`to_backlog` 移到 `backlog` 类里看板顺序最前的列,同时摘掉 `auto`;`to_todo` 移到 `unstarted` 类里看板顺序最前的列(Paused 也是 unstarted,但不是 Todo),不动标签。先写标签、再移列,移列失败尽量还原标签。有 `reason` 时发评论,末尾是「由 <actor> 在桌面端退回 Backlog/放回 Todo」(`operator` 写「经运营 agent」)。每张写一条 `actions`(`ticket_to_backlog`/`ticket_to_todo`)。直接写,不走对账。`approve`、`return` 的 `skipped` 原因仍是上面几个;`not_allowed` 只出现在这两个新 verb。
+- **对账的重试与 `loop/intents/retry`(CYC-497)**:Loop 写给 tracker 的评论、移列、标签和阶段字段是 intent,由对账按工单依次执行。失败按种类处理:网络错误、超时、5xx **不计入** `attempts`,intent 留在 `pending`,按它自己的 `next_at` 退避重试(30 秒、1、2、4 分钟,上限 10 分钟),所以 tracker 断网多久都不会让它 `stuck`;其他错误照旧计数,超过 10 次标 `stuck`;`tracker.get` 明确返回找不到(工单被删),直接标 `stuck`,原因 `not_found`,不重试。**同一张工单**里,前面有 `stuck` 的评论或移列时,后面的评论和移列不执行、保持 `pending`(先评论再移列);标签照旧,阶段字段是另一条 lane,不受影响。卡住时只有一条 Notice(`intent_stuck`,来自 `intents` 里卡住的那条);重新排队后它随之消失。
+  - `loop/intents/retry`:把 `stuck` 的 intent 改回 `pending`、`attempts` 和退避清零、`next_at` 清空,下一次对账就执行。`id` 指一条,`key` 指这张工单(如 `CYC-390`)的全部卡住的 intent;两者必须给且只给一个,否则 `-32602`(`invalid_params`)。`id` 不存在返回 `-32602`(`not_found`);不是 `stuck` 的什么都不改。需要 `actor` 和 `actorKind`(缺则 `actor_required`,什么都不写)。每条重新排队的 intent 写一条 `actions`(`intent_retry`,带 `intentId`、`actor`、`actorKind`)。返回 `{retried}`。
+- **`actor` 和 `actorKind`**:写方法必须带,`actorKind` 只认 `desktop`、`operator`;缺或不合法返回 `-32602`,`data.reason` 为 `actor_required`,什么都不写。**这不是认证**:能连上 `loop.sock` 的就是本机同一用户,`actor` 是自报的;写入用 Loop 自己的 itsaplan key,所以 itsaplan 的审计里是 Loop,评论和 `actions` 才是谁做的记录。剩余风险见决定笔记。
+- **`loop/status`**:`version`(Loop 所在发行版本)、`restartedAt`(本进程启动时间)、每个 Project 的 `workers` 数和未结束且不在 Blocked 的 run(`key`、`kind`、`phase`)。
+- **socket**:仍是 `<dataDir>/loop.sock`,`0600`;一行最多 1 MB(1,048,576 字节),超过不等换行就断开连接。
+- **埋点**:只记行为,不含工单内容:每次调用写一行日志 `loop api <方法名> <结果计数>`(如 `ok=2 skipped=1 failed=0`),没有工单号、标题、原因或 actor。不向 PostHog 发(Loop 服务不在 Electron 主进程里,桌面端改用这组方法时再在主进程埋点)。
 
 ### 错误
 

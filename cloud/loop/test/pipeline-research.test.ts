@@ -4,7 +4,8 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Deps, Pipeline } from "../src/pipeline.ts";
+import { SqliteStore } from "../src/db/store.ts";
+import { type DepsInput as Deps, Pipeline } from "../src/pipeline.ts";
 import { RunStore } from "../src/store.ts";
 import { type Issue, SessionLost } from "../src/types.ts";
 import {
@@ -107,7 +108,7 @@ const setup = (script: Partial<Script>, over = {}, issues: Issue[] = [researchIs
   const sessions = new FakeSessions({ dev: [], qa: [], ...script });
   const w = world();
   const clock = { now: () => new Date("2026-11-25T00:00:00Z") };
-  const store = new RunStore(cfg.stateDir, () => clock.now());
+  const store = SqliteStore.open(cfg.stateDir, () => clock.now());
   const deps = (more: Partial<Deps> = {}): Deps => ({
     config: cfg,
     tracker,
@@ -125,7 +126,7 @@ const setup = (script: Partial<Script>, over = {}, issues: Issue[] = [researchIs
   return { pipeline: new Pipeline(deps()), tracker, sessions, world: w, store, restart };
 };
 
-const kinds = async (store: RunStore) => (await store.events()).map((e) => e.kind);
+const kinds = async (store: SqliteStore) => (await store.events()).map((e) => e.kind);
 
 /** Calls that would build, push or open a pull request: a research run makes none. */
 const forbidden = (calls: string[]) =>
@@ -211,7 +212,7 @@ test("happy path: claim, research, QA, publish, Done; nothing installed, pushed 
   expect(run?.phase).toBe("done");
   expect(run?.devSessionId).toBe("research-1");
   expect(run?.qaSessionId).toBe("research_qa-2");
-  expect(run?.prUrl).toBeNull();
+  expect(run?.kind === "dev" ? run.dev.prUrl : null).toBeNull();
   const events = await s.store.events();
   expect(events.find((e) => e.kind === "claimed")).toMatchObject({
     runKind: "research",
@@ -496,21 +497,38 @@ test("a restart between making the report and attaching it attaches it once and 
   expect(s.tracker.docLinks).toEqual(["CYC-1:1000"]);
 });
 
-test("a restart after the closing comment, before Done, does not comment again", async () => {
+test("a move to Done that fails is made up later: the run is done, one closing comment", async () => {
   const s = setup({ research: [done(reply())], research_qa: [done(PASS)] });
   const move = s.tracker.move.bind(s.tracker);
+  let failing = true;
   s.tracker.move = async (i, stage) => {
-    if (stage === "done") throw new Error("killed");
+    if (failing && stage === "done") throw new Error("tracker down");
     return move(i, stage);
   };
-  await expect(s.pipeline.step()).rejects.toThrow("killed");
+  expect((await s.pipeline.step()).status).toBe("researched");
   expect(s.tracker.comments).toHaveLength(1);
-  s.tracker.move = move;
-  expect((await s.restart().step()).status).toBe("researched");
+  expect((await s.store.load("CYC-1"))?.phase).toBe("done");
+  failing = false;
+  await s.restart().step();
+  expect(s.tracker.moves.at(-1)).toBe("CYC-1:done");
+  expect(s.tracker.comments).toHaveLength(1);
+  expect(s.tracker.issues).toHaveLength(3);
+});
+
+test("a closing comment that fails is made up later: one comment, then Done", async () => {
+  const s = setup({ research: [done(reply())], research_qa: [done(PASS)] });
+  const comment = s.tracker.comment.bind(s.tracker);
+  let failing = true;
+  s.tracker.comment = async (i, text) => {
+    if (failing) throw new Error("tracker down");
+    return comment(i, text);
+  };
+  expect((await s.pipeline.step()).status).toBe("researched");
+  expect(s.tracker.comments).toHaveLength(0);
+  failing = false;
+  await s.restart().step();
   expect(s.tracker.comments).toHaveLength(1);
   expect(s.tracker.moves.at(-1)).toBe("CYC-1:done");
-  expect(s.tracker.issues).toHaveLength(3);
-  expect((await s.store.load("CYC-1"))?.phase).toBe("done");
 });
 
 test("a block whose reason quotes a credential from QA names its kind only", async () => {
@@ -621,7 +639,30 @@ test("a run.json from before research runs reads as a dev run", async () => {
   await writeFile(join(dir, "runs", "CYC-9", "run.json"), JSON.stringify(old));
   const loaded = await store.load("CYC-9");
   expect(loaded?.kind).toBe("dev");
-  expect(loaded?.research).toBeNull();
+  expect(loaded?.kind === "research" ? loaded.research : null).toBeNull();
   // A dev run's stats are unchanged by the new field: the claimed event of a dev run carries no runKind.
   expect(await store.unfinished()).toHaveLength(1);
+});
+
+test("a restart after the report was made, before its id was noted: the report is found by title and used", async () => {
+  const s = setup({ research: [done(reply())], research_qa: [done(PASS)] });
+  const create = s.tracker.createDocument.bind(s.tracker);
+  s.tracker.createDocument = async (...args) => {
+    await create(...args);
+    throw new Error("killed");
+  };
+  await expect(s.pipeline.step()).rejects.toThrow("killed");
+  s.tracker.createDocument = create;
+  expect((await s.restart().step()).status).toBe("researched");
+  expect(s.tracker.written).toHaveLength(1);
+  expect(s.tracker.docLinks).toEqual(["CYC-1:1000"]);
+});
+
+test("a same-titled report with other text is not taken for this run's", async () => {
+  const s = setup({ research: [done(reply())], research_qa: [done(PASS)] });
+  s.tracker.documents.push({ id: 555, title: "CYC-1 调研题目", parentId: 10 });
+  s.tracker.docContent[555] = "an earlier run's report";
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("researched");
+  expect(s.tracker.written.length).toBe(1);
 });

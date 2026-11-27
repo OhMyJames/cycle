@@ -27,6 +27,10 @@ const bridgeFor = (scenario: Scenario) => {
     ...(scenario.plugins ? { plugins: scenario.plugins } : {}),
     ...(scenario.account ? { account: scenario.account } : {}),
     ...(scenario.environments ? { environments: structuredClone(scenario.environments) } : {}),
+    ...(scenario.loop?.projects ? { loopProjects: scenario.loop.projects } : {}),
+    ...(scenario.loop?.boards ? { loopBoards: scenario.loop.boards } : {}),
+    ...(scenario.loop?.tickets ? { loopTickets: scenario.loop.tickets } : {}),
+    ...(scenario.loop?.notices ? { loopNotices: scenario.loop.notices } : {}),
   });
   const locations = scenario.locations ?? [LOCAL];
   const status =

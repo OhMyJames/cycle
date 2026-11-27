@@ -3,6 +3,7 @@
 // colours of code, the locations and each agent's defaults (the menu beside the workspace switcher).
 import { Button } from "@ui-sdk/react/button";
 import { Field, FieldLabel } from "@ui-sdk/react/field";
+import { Input } from "@ui-sdk/react/input";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@ui-sdk/react/menu";
 import {
   SegmentedControl,
@@ -202,6 +203,11 @@ function GeneralSection() {
   const store = useAppStore();
   const { t } = useI18n();
   const update = useAppState((s) => s.update);
+  const pageVersion = useAppState((s) =>
+    s.interface !== undefined && s.interface.running !== s.interface.bundled
+      ? s.interface.running
+      : undefined,
+  );
   const analytics = useAppState((s) => s.analytics);
   const [confirming, setConfirming] = useState(false);
   const analyticsLabel = useId();
@@ -222,12 +228,18 @@ function GeneralSection() {
       <AccountGroup />
       <LanguageGroup />
       <SuggestionsGroup />
+      <LoopActorGroup />
       <WorktreeGroup />
       {update !== undefined ? (
         <PageGroup title={t("settings.updates")}>
           <PageRows>
             <PageRow
-              label={t("update.current", { version: update.current })}
+              label={[
+                t("update.current", { version: update.current }),
+                ...(pageVersion !== undefined
+                  ? [t("interface.version", { version: pageVersion })]
+                  : []),
+              ].join(" · ")}
               description={
                 line !== "" ? (
                   <span data-update={update.kind} role="status">
@@ -360,6 +372,43 @@ function SuggestionsGroup() {
           >
             <SwitchThumb />
           </Switch>
+        </PageRow>
+      </PageRows>
+    </PageGroup>
+  );
+}
+
+/** The person's name in itsaplan: sent as `actor` when they approve or return tickets on the Loop page. May be empty. */
+function LoopActorGroup() {
+  const store = useAppStore();
+  const { t } = useI18n();
+  const preferences = useAppState((s) => s.preferences);
+  const label = useId();
+  const [draft, setDraft] = useState<string | undefined>();
+  if (preferences === undefined) return null;
+  const commit = () => {
+    if (draft !== undefined && draft.trim() !== preferences.loopActor)
+      void store.setPreferences({ loopActor: draft });
+    setDraft(undefined);
+  };
+  return (
+    <PageGroup>
+      <PageRows>
+        <PageRow
+          label={t("settings.loopActor")}
+          labelId={label}
+          description={t("settings.loopActor.description")}
+        >
+          <Input
+            aria-labelledby={label}
+            maxLength={100}
+            value={draft ?? preferences.loopActor}
+            onChange={(event) => setDraft(event.currentTarget.value)}
+            onBlur={commit}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") commit();
+            }}
+          />
         </PageRow>
       </PageRows>
     </PageGroup>

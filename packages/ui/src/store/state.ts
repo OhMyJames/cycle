@@ -6,6 +6,7 @@ import type {
   ConnectorInfo,
   EnvironmentsState,
   GitBranches,
+  InterfaceState,
   LocationConfig,
   LocationStatus,
   PermissionRequest,
@@ -151,6 +152,8 @@ export type AppState = {
   error: string | { key: MessageKey; params?: Params } | undefined;
   /** The app's own updating. Undefined until main has said. */
   update: UpdateState | undefined;
+  /** Which page shows and whether a newer one is waiting. Undefined until main has said. */
+  interface: InterfaceState | undefined;
   /** Whether the app reports how it is used (docs/analytics.md). Undefined until main has said. */
   analytics: AnalyticsStatus | undefined;
   /** How the app looks and reads, as the person chose (main keeps it). Undefined until main has said. */
@@ -191,6 +194,7 @@ export const initialState = (): AppState => ({
   terminals: {},
   error: undefined,
   update: undefined,
+  interface: undefined,
   analytics: undefined,
   preferences: undefined,
   focusRequests: 0,

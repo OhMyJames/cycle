@@ -8,7 +8,7 @@ import {
   parseResearch,
   type ResearchOutput,
   replaceConclusion,
-} from "../src/research.ts";
+} from "../src/flows/research/output.ts";
 import { findSecrets } from "../src/secrets.ts";
 import { config, fullBug, readyDescription } from "./helpers.ts";
 

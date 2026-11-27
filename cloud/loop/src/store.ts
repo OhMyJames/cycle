@@ -1,3 +1,6 @@
+// (CYC-475: `db/store.ts` keeps the same in `<stateDir>/loop.db`, and is used where that file exists; `LoopStore` is
+// what both implement.)
+//
 // What the loop remembers between turns, restarts and crashes: one directory per work item under the state directory,
 // and one event log. Nothing here is inside a worktree, so a session cannot edit it (CYC-318).
 //
@@ -18,6 +21,7 @@ import { appendFile, mkdir, readdir, readFile, rename, writeFile } from "node:fs
 import { join } from "node:path";
 import { z } from "zod";
 import { CriteriaBook } from "./criteria.ts";
+import type { StoreOps } from "./db/store.ts";
 
 export const PHASES = [
   "claimed",
@@ -68,16 +72,8 @@ const ResearchStateSchema = z.object({
 });
 export type ResearchState = z.infer<typeof ResearchStateSchema>;
 
-export const RunRecordSchema = z.object({
-  key: z.string(),
-  /** What kind of work item. A record from before research runs is a dev run. */
-  kind: z.enum(["dev", "research"]).default("dev"),
-  issueId: z.number().int(),
-  issueNumber: z.number().int(),
-  title: z.string(),
-  phase: z.enum(PHASES),
-  /** Fix rounds used so far: Dev turns after the first. */
-  round: z.number().int().min(0),
+/** What a dev run holds that a research run does not: the pull request, CI, the conflict merge and `node_modules`. */
+export const DevStateSchema = z.object({
   /** CI retry rounds used so far after a red CI run sent the ticket back to Dev. */
   ciRound: z.number().int().min(0).default(0),
   /** The HEAD commit whose CI run last came back red; the same commit again means no new CI run unless the failed jobs are rerun. */
@@ -101,6 +97,27 @@ export const RunRecordSchema = z.object({
     .default(null),
   /** The files a Dev conflict turn resolved: QA is told to look at them. */
   resolvedFiles: z.array(z.string()).default([]),
+  reviewSessionId: z.string().nullable().default(null),
+  /** `<headSha>:<decision>` of the review comment last posted on the pull request: the same one is not posted twice. */
+  reviewCommented: z.string().optional(),
+  /** The pull request; `runs.pr_url` keeps a copy as a column. */
+  prUrl: z.string().nullable().default(null),
+  /** 大档 (CYC-328): the Intent / Spec / Design / Plan documents and the versions the run started on; empty for a small one. */
+  fullFlowDocs: z
+    .array(z.object({ id: z.number().int(), title: z.string(), version: z.number().int() }))
+    .default([]),
+});
+export type DevState = z.infer<typeof DevStateSchema>;
+
+/** What every kind of run holds. */
+const RunCommonSchema = z.object({
+  key: z.string(),
+  issueId: z.number().int(),
+  issueNumber: z.number().int(),
+  title: z.string(),
+  phase: z.enum(PHASES),
+  /** Fix rounds used so far: Dev turns after the first. */
+  round: z.number().int().min(0),
   worktree: z.string().nullable(),
   /** The branch the daemon made: `worktree-auto/cyc-318`. */
   localBranch: z.string().nullable(),
@@ -108,19 +125,11 @@ export const RunRecordSchema = z.object({
   remoteBranch: z.string(),
   devSessionId: z.string().nullable(),
   qaSessionId: z.string().nullable(),
-  reviewSessionId: z.string().nullable().default(null),
   /** Sessions that could not be continued and were replaced, oldest first. */
   replacedSessions: z.array(z.string()),
   blockedReason: z.string().nullable(),
   /** The phase to go on from when a person puts a blocked work item back. */
   resumeFrom: z.enum(PHASES).nullable(),
-  prUrl: z.string().nullable(),
-  /** Research runs only; null for a dev run. */
-  research: ResearchStateSchema.nullable().default(null),
-  /** 大档 (CYC-328): the Intent / Spec / Design / Plan documents and the versions the run started on; empty for a small one. */
-  fullFlowDocs: z
-    .array(z.object({ id: z.number().int(), title: z.string(), version: z.number().int() }))
-    .default([]),
   /** What QA and the checks said last, for the Dev turn that follows. */
   findings: z.string().nullable(),
   /** When the worktree and local branch were removed after Done and merged; null while they are still there. */
@@ -130,7 +139,78 @@ export const RunRecordSchema = z.object({
   startedAt: z.string(),
   updatedAt: z.string(),
 });
-export type RunRecord = z.infer<typeof RunRecordSchema>;
+export type RunCommon = z.infer<typeof RunCommonSchema>;
+
+const DEV_FLAT = [
+  "ciRound",
+  "ciFailedSha",
+  "nodeModulesReleased",
+  "conflictRound",
+  "conflict",
+  "resolvedFiles",
+  "reviewSessionId",
+  "prUrl",
+  "fullFlowDocs",
+] as const;
+
+/** A record from before the union kept the dev fields beside the common ones: they move into `dev`. */
+const nestDevState = (input: unknown): unknown => {
+  if (typeof input !== "object" || input === null) return input;
+  const row = input as Record<string, unknown>;
+  const kind = row.kind ?? "dev";
+  if (kind !== "dev") {
+    const rest = { ...row };
+    for (const name of DEV_FLAT) delete rest[name];
+    return rest;
+  }
+  const rest: Record<string, unknown> = { ...row, kind };
+  const dev: Record<string, unknown> =
+    typeof row.dev === "object" && row.dev !== null ? { ...row.dev } : {};
+  for (const name of DEV_FLAT) {
+    if (name in rest && !(name in dev)) dev[name] = rest[name];
+    delete rest[name];
+  }
+  delete rest.research;
+  return { ...rest, dev };
+};
+
+/** A dev run's record (a Feature or a Bug), or a research run's: `kind` says which state it carries. */
+export const RunRecordSchema = z.preprocess(
+  nestDevState,
+  z.discriminatedUnion("kind", [
+    RunCommonSchema.extend({ kind: z.literal("dev"), dev: DevStateSchema }),
+    RunCommonSchema.extend({ kind: z.literal("research"), research: ResearchStateSchema }),
+  ]),
+) as unknown as z.ZodType<RunRecord>;
+export type RunRecord =
+  | (RunCommon & { kind: "dev"; dev: DevState })
+  | (RunCommon & { kind: "research"; research: ResearchState });
+
+/** A change to a run: the common fields as they are; `dev` is merged into the dev state, `research` replaces it. */
+export type RunPatch = Partial<RunCommon> & { dev?: Partial<DevState>; research?: ResearchState };
+
+export const applyPatch = (run: RunRecord, patch: RunPatch): RunRecord => {
+  const { dev, research, ...common } = patch;
+  if (run.kind === "dev") return { ...run, ...common, dev: { ...run.dev, ...dev } };
+  return { ...run, ...common, research: research ?? run.research };
+};
+
+/** The dev state of a dev run; a research run has none, and asking is a fault. */
+export const devOf = (run: RunRecord): DevState => {
+  if (run.kind !== "dev") throw new Error(`${run.key} is a ${run.kind} run, not a dev run`);
+  return run.dev;
+};
+
+/** The research state of a research run. */
+export const researchOf = (run: RunRecord): ResearchState => {
+  if (run.kind !== "research")
+    throw new Error(`${run.key} is a ${run.kind} run, not a research run`);
+  return run.research;
+};
+
+/** The pull request of a run: none for a kind that has no PR. */
+export const prUrlOf = (run: RunRecord): string | null =>
+  run.kind === "dev" ? run.dev.prUrl : null;
 
 /**
  * One planning round's id (CYC-322): its start time with `:` and `.` replaced, so it can name a directory, a worktree
@@ -138,7 +218,7 @@ export type RunRecord = z.infer<typeof RunRecordSchema>;
  */
 export const planRoundId = (startedAt: Date): string =>
   startedAt.toISOString().replace(/[:.]/g, "-");
-const PLAN_ROUND_ID = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/;
+export const PLAN_ROUND_ID = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/;
 
 export const PLAN_PHASES = ["triage", "shaping", "finished", "abandoned"] as const;
 
@@ -191,6 +271,8 @@ const ShapeItemSchema = z.object({
   stoppedReason: z.string().nullable(),
   originalCommented: z.boolean(),
   rewritten: z.boolean(),
+  /** The text as it was, kept before the first write of the new one: a restart between the two writes is told by it. */
+  before: z.object({ title: z.string(), description: z.string() }).nullable().default(null),
   /** Numbers of the issues split off so far, in order. */
   created: z.array(z.number().int()),
   pendingCreate: z.object({ index: z.number().int().min(0), title: z.string() }).nullable(),
@@ -258,7 +340,7 @@ const PlanMemoryEntrySchema = z.object({
   /** Shaping stopped on it; it is not tried again until its body or comments change. */
   stopped: z.boolean(),
 });
-const PlanMemorySchema = z.record(z.string(), PlanMemoryEntrySchema);
+export const PlanMemorySchema = z.record(z.string(), PlanMemoryEntrySchema);
 export type PlanMemory = z.infer<typeof PlanMemorySchema>;
 
 /** The Backlog as the planner last saw it (`takeSnapshot`): a signature per row, the latest comment of the watched ones. */
@@ -271,7 +353,7 @@ const BacklogSnapshotSchema = z.object({
  * `plans/index.json`: what the planning intake needs on an idle step, so it reads no past round (CYC-322). One per
  * Project, shared by its workers.
  */
-const PlanIndexSchema = z.object({
+export const PlanIndexSchema = z.object({
   /** The round started and not ended, if any. */
   open: z.string().nullable().default(null),
   /** When the Backlog was last looked at for a change: at most once every `checkMinutes`. */
@@ -290,19 +372,63 @@ export type LoopEvent = { ts: string; run: string; kind: string } & Record<
   string | number | boolean
 >;
 
-const writeAtomic = async (path: string, text: string): Promise<void> => {
+export const writeAtomic = async (path: string, text: string): Promise<void> => {
   const temp = `${path}.${process.pid}.tmp`;
   await writeFile(temp, text, { mode: 0o600 });
   await rename(temp, path);
 };
 
-export class RunStore {
+/** What the loop reads and writes of its state, whichever way it is kept: files (`RunStore`) or `loop.db` (`SqliteStore`). */
+/**
+ * What a dev run's later phases need to know about CI and the checks, kept so a restart does not lose it: the commit
+ * the required checks last passed on (null when none, or after the review sent the run back), and what the last
+ * verification ran.
+ */
+export type CiState = { greenSha: string | null; checks: { command: string; passed: boolean }[] };
+export const NO_CI: CiState = { greenSha: null, checks: [] };
+
+export interface LoopStore {
+  loadCi(key: string): Promise<CiState>;
+  /** Changes the named parts of the run's CI state; the others stay as they are. */
+  saveCi(key: string, patch: Partial<CiState>): Promise<void>;
+  load(key: string): Promise<RunRecord | undefined>;
+  save(record: RunRecord): Promise<RunRecord>;
+  all(): Promise<RunRecord[]>;
+  unfinished(): Promise<RunRecord[]>;
+  planBodiesDir(id: string): string;
+  loadPlan(id: string): Promise<PlanRound | undefined>;
+  savePlan(round: PlanRoundInput): Promise<PlanRound>;
+  unfinishedPlans(): Promise<PlanRound[]>;
+  writePlanBody(id: string, key: string, text: string): Promise<void>;
+  plans(): Promise<PlanRound[]>;
+  loadPlanIndex(): Promise<PlanIndex>;
+  savePlanIndex(index: PlanIndex): Promise<void>;
+  loadPlanMemory(): Promise<PlanMemory>;
+  savePlanMemory(memory: PlanMemory): Promise<void>;
+  saveCriteria(key: string, book: CriteriaBook): Promise<void>;
+  loadCriteria(key: string): Promise<CriteriaBook>;
+  appendProgress(key: string, round: number, text: string): Promise<void>;
+  readProgress(key: string): Promise<string>;
+  event(run: string, kind: string, data?: Record<string, string | number | boolean>): Promise<void>;
+  events(): Promise<LoopEvent[]>;
+  /**
+   * One SQLite transaction: a run and the intents it calls for are written together or not at all (CYC-480). Only
+   * `loop.db` has it; the file store throws, and is used only where nothing is written.
+   */
+  transaction<T>(fn: (tx: StoreOps) => T): T;
+}
+
+export class RunStore implements LoopStore {
   readonly #dir: string;
   readonly #now: () => Date;
 
   constructor(dir: string, now: () => Date) {
     this.#dir = dir;
     this.#now = now;
+  }
+
+  transaction<T>(_fn: (tx: StoreOps) => T): T {
+    throw new Error("the file store has no transactions: intents need loop.db");
   }
 
   #run(key: string): string {
@@ -328,6 +454,24 @@ export class RunStore {
       `${JSON.stringify(next, null, 2)}\n`,
     );
     return next;
+  }
+
+  async loadCi(key: string): Promise<CiState> {
+    try {
+      const parsed = JSON.parse(
+        await readFile(join(this.#run(key), "ci.json"), "utf8"),
+      ) as Partial<CiState>;
+      return { ...NO_CI, ...parsed };
+    } catch (error) {
+      if ((error as { code?: string }).code === "ENOENT") return NO_CI;
+      throw error;
+    }
+  }
+
+  async saveCi(key: string, patch: Partial<CiState>): Promise<void> {
+    const next = { ...(await this.loadCi(key)), ...patch };
+    await mkdir(this.#run(key), { recursive: true, mode: 0o700 });
+    await writeAtomic(join(this.#run(key), "ci.json"), `${JSON.stringify(next, null, 2)}\n`);
   }
 
   async all(): Promise<RunRecord[]> {
@@ -498,10 +642,10 @@ export class RunStore {
       if ((error as { code?: string }).code === "ENOENT") return [];
       throw error;
     }
-    return text
-      .split("\n")
-      .filter((line) => line !== "")
-      .map((line) => JSON.parse(line) as LoopEvent);
+    // A last line with no newline after it was cut off by a kill: it is not an event yet.
+    const lines = text.split("\n");
+    lines.pop();
+    return lines.filter((line) => line !== "").map((line) => JSON.parse(line) as LoopEvent);
   }
 }
 

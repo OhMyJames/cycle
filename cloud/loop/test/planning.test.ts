@@ -28,7 +28,7 @@ import {
   shapeQaBrief,
   triageBrief,
   triageFixBrief,
-} from "../src/prompts.ts";
+} from "../src/prompts/index.ts";
 import type { PlanMemory } from "../src/store.ts";
 import type { Issue, IssueComment, PlanningConfig } from "../src/types.ts";
 import { config, fullBug, issue } from "./helpers.ts";
