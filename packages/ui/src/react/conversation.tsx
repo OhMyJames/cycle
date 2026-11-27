@@ -32,7 +32,7 @@ import {
   textOf,
 } from "../model/index.ts";
 import { blockHolds, heldIds, reveal } from "../reveal.ts";
-import { filesRootOf } from "../store/index.ts";
+import { BLANK_KEY, filesRootOf } from "../store/index.ts";
 import { CopyButton } from "./copy-button.tsx";
 import { useI18n } from "./i18n.tsx";
 import {
@@ -474,10 +474,19 @@ const BlockView = memo(function BlockView({
  * "bottom", and how tall each block was, which that offset was counted in. Kept in the page's memory, newest last, and only
  * the most recent few are kept.
  */
-type Reading = { top: number | "bottom"; heights: Map<string, number> };
+type Reading = {
+  top: number | "bottom";
+  heights: Map<string, number>;
+  /** The blocks kept drawn for what the reader opened in them. */
+  pinned: Set<string>;
+  /** How wide the column was: heights are only good for that width. */
+  width: number;
+};
 const readings = new Map<string, Reading>();
 const MAX_READINGS = 50;
 const remember = (key: string, reading: Reading) => {
+  // The blank page is one place for every conversation started there: nothing of one is the next one's.
+  if (key === BLANK_KEY) return;
   readings.delete(key);
   readings.set(key, reading);
   const oldest = readings.keys().next();
@@ -581,7 +590,7 @@ export function ConversationView({
 
   // Only the blocks near the view are drawn, and a gap as tall as the rest stands in for them (CYC-464). How tall a block
   // is, is learned as it is drawn; until then it is taken to be as tall as the others have been.
-  const saved = useRef(readings.get(sessionKey)).current;
+  const saved = useRef(sessionKey === BLANK_KEY ? undefined : readings.get(sessionKey)).current;
   const ref = useRef<HTMLDivElement>(null);
   const heights = useRef(saved?.heights ?? new Map<string, number>()).current;
   const [, redraw] = useReducer((n: number) => n + 1, 0);
@@ -593,7 +602,17 @@ export function ConversationView({
     gap: 12,
   });
   // Blocks the reader pressed a control in are kept drawn: what they opened would be lost, and their height with it.
-  const pinned = useRef(new Set<string>()).current;
+  const pinned = useRef(saved?.pinned ?? new Set<string>()).current;
+  const width = useRef(saved?.width ?? 0);
+  // A conversation put in the place of another (the blank page's): what was measured of the other is not of this one.
+  const firstKey = useRef(blocks[0]?.key);
+  if (blocks[0] !== undefined && firstKey.current !== blocks[0].key) {
+    if (firstKey.current !== undefined) {
+      heights.clear();
+      pinned.clear();
+    }
+    firstKey.current = blocks[0].key;
+  }
   const plan = planOf(blocks, heights, pinned, view.current, stuck.current);
   const { sizes } = plan;
   // The view's height and place when last seen. A scroll that comes with a change of height and does not go up (a line
@@ -614,6 +633,7 @@ export function ConversationView({
       if (el === null) return;
       view.current.top = el.scrollTop;
       view.current.height = el.clientHeight > 0 ? el.clientHeight : VIEW_PX;
+      if (el.clientWidth > 0) width.current = el.clientWidth;
       const now = laid.current.plan;
       const next = planOf(laid.current.blocks, heights, pinned, view.current, stuck.current);
       if (
@@ -641,8 +661,11 @@ export function ConversationView({
         for (const entry of entries) {
           const key = (entry.target as HTMLElement).dataset.blockKey;
           if (key === undefined) continue;
+          // Not what a hidden or collapsed view makes of it: zero is nothing measured.
+          const box = entry.target.getBoundingClientRect();
+          if (box.height === 0 || ref.current === null || ref.current.clientHeight === 0) continue;
           const margin = Number.parseFloat(getComputedStyle(entry.target).marginTop) || 0;
-          const height = entry.target.getBoundingClientRect().height + margin;
+          const height = box.height + margin;
           if (Math.abs((heights.get(key) ?? -1) - height) > 0.5) changed = true;
           heights.set(key, height);
         }
@@ -656,13 +679,15 @@ export function ConversationView({
               remember(keyOf.current, {
                 top: stuck.current ? "bottom" : el.scrollTop,
                 heights,
+                pinned,
+                width: width.current,
               });
           });
       });
       measure.current.observe(node);
       return () => measure.current?.unobserve(node);
     },
-    [heights, refit],
+    [heights, refit, pinned],
   );
   useLayoutEffect(() => {
     const el = ref.current;
@@ -679,9 +704,14 @@ export function ConversationView({
       cancelAnimationFrame(measured.current);
       measured.current = 0;
       // Back to this session, the reader finds the blocks as tall as they were.
-      remember(keyOf.current, { top: stuck.current ? "bottom" : view.current.top, heights });
+      remember(keyOf.current, {
+        top: stuck.current ? "bottom" : view.current.top,
+        heights,
+        pinned,
+        width: width.current,
+      });
     };
-  }, [refit, heights]);
+  }, [refit, heights, pinned]);
 
   // Asked to show an item (from the Overview): if its block is not drawn, the view goes to where it is, and once it is
   // drawn (its card opened) it is scrolled to the middle and marked for a moment.
@@ -717,6 +747,7 @@ export function ConversationView({
     const { id, serial } = asked;
     revealing.current = undefined;
     let settling = 0;
+    let frames = 0;
     // Not undone by the next render: a streamed chunk must not stop the search, nor leave the mark on. It goes on until the
     // item is drawn (its block was found, so it will be), or the view is gone or another item is asked for.
     const find = () => {
@@ -730,10 +761,12 @@ export function ConversationView({
         const { blocks, plan } = laid.current;
         const at = blocks.findIndex((block) => blockHolds(block as never, id));
         if (at === -1) return reveal.done(serial);
-        if (at < plan.slice.start || at >= plan.slice.end) {
+        if (frames === 0 && (at < plan.slice.start || at >= plan.slice.end)) {
           const middle = offsetOf(plan.sizes, view.current.gap, at) + (plan.sizes[at] ?? 0) / 2;
           el.scrollTop = Math.max(0, middle - el.clientHeight / 2);
         }
+        // The block is there to be drawn, so it is within a few frames; if not, it is given up, not looked for for ever.
+        if (++frames >= 30) return reveal.done(serial);
         requestAnimationFrame(find);
         return;
       }
@@ -752,11 +785,17 @@ export function ConversationView({
     const el = ref.current;
     if (el === null || loading || restored.current) return;
     restored.current = true;
-    if (saved !== undefined && saved.top !== "bottom") {
+    if (saved !== undefined && saved.width !== el.clientWidth) {
+      // Wider or narrower than when it was read: the heights, and the place counted in them, are not this column's. The
+      // end is shown, and the blocks are measured again as they are drawn.
+      heights.clear();
+      stuck.current = true;
+      redraw();
+    } else if (saved !== undefined && saved.top !== "bottom") {
       stuck.current = false;
       el.scrollTop = saved.top;
     }
-  }, [loading, saved]);
+  }, [loading, saved, heights]);
 
   // What the person has just sent is shown, wherever they were reading.
   useEffect(() => {
@@ -814,12 +853,25 @@ export function ConversationView({
       if (
         event.target instanceof Element &&
         event.target.closest("button, summary, [role='button']")
-      ) {
+      )
         acted.current = performance.now();
-        const key = event.target.closest<HTMLElement>('[data-slot="block"]')?.dataset.blockKey;
-        if (key !== undefined) pinned.add(key);
-      }
     };
+    // A block with something open in it is kept drawn, so that what was opened is there when the reader comes back; one
+    // closed again is let go.
+    const pin = (event: Event) => {
+      const block =
+        event.target instanceof Element
+          ? event.target.closest<HTMLElement>('[data-slot="block"]')
+          : null;
+      const key = block?.dataset.blockKey;
+      if (block === null || key === undefined) return;
+      // After the card has taken the press.
+      requestAnimationFrame(() => {
+        if (block.querySelector('[aria-expanded="true"]') !== null) pinned.add(key);
+        else pinned.delete(key);
+      });
+    };
+    el.addEventListener("click", pin);
     el.addEventListener("pointerdown", act, true);
     el.addEventListener("keydown", act, true);
     return () => {
@@ -827,6 +879,7 @@ export function ConversationView({
       children.disconnect();
       el.removeEventListener("pointerdown", act, true);
       el.removeEventListener("keydown", act, true);
+      el.removeEventListener("click", pin);
     };
   }, [refit, pinned]);
 
@@ -890,7 +943,12 @@ export function ConversationView({
     setAway(fromEnd > AWAY_PX);
     if (fromEnd < NEAR_END_PX) setFresh(false);
     stuck.current = fromEnd < NEAR_END_PX;
-    remember(sessionKey, { top: stuck.current ? "bottom" : el.scrollTop, heights });
+    remember(sessionKey, {
+      top: stuck.current ? "bottom" : el.scrollTop,
+      heights,
+      pinned,
+      width: width.current,
+    });
     refit(!stuck.current);
   };
 
