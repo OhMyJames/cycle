@@ -139,6 +139,11 @@ export const LoopCardSchema = z.object({
   labels: z.array(z.string()),
   /** For a card marked 待批准: a short summary of why; null otherwise or when none could be read. */
   pendingReason: z.string().nullable(),
+  /** The parent issue (an Epic, say); null for a top-level card. Older servers leave it out. */
+  parent: z
+    .object({ key: z.string().min(1), title: z.string() })
+    .nullable()
+    .optional(),
   /** The Loop phase of a card the Loop is working on (from the run record), and when that phase began. */
   phase: z.object({ name: z.string().min(1), since: z.string().min(1) }).nullable(),
 });

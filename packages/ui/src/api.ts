@@ -1370,6 +1370,10 @@ export type LoopTicket = {
   identifier: string;
   title: string;
   priority: string | null;
+  /** The issue type's name (Epic, Feature…), or null when unset. */
+  type?: string | null;
+  /** The parent ticket, for showing a child under its Epic; null for a top-level ticket. */
+  parent?: { identifier: string; title: string } | null;
   /** The name of the board column it is in. */
   column: string;
   /**

@@ -275,6 +275,17 @@ test("a create whose reply has no id fails rather than returning a made-up one",
   ).rejects.toThrow("no sequenceNumber");
 });
 
+test("toIssue reads the parent's key and title from a list_issues row", () => {
+  const base = { id: 827, sequenceNumber: 445, columnId: 22, subtasks: [], links: [] };
+  const withParent = toIssue(
+    { ...base, parentId: 5, parent: { id: 5, identifier: "CYC-5", title: "Epic" } },
+    "CYC",
+  );
+  expect(withParent.parent).toEqual({ number: 5, key: "CYC-5", title: "Epic" });
+  expect(toIssue({ ...base, parent: null }, "CYC").parent).toBeUndefined();
+  expect(toIssue({ ...base, parent: { id: 6 } }, "CYC").parent).toBeUndefined();
+});
+
 test("toIssue reads parentId, from the field or from the parent object", () => {
   const base = { id: 827, sequenceNumber: 445, columnId: 22, subtasks: [], links: [] };
   expect(toIssue({ ...base, parentId: 5, parent: { id: 5 } }, "CYC").parentId).toBe(5);
