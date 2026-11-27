@@ -387,4 +387,4 @@ bun packages/ui/gallery/shoot.ts permission --crop "[role=dialog]" --format webp
 
 ## 附录 E：当前实现状态与已知待办
 
-这里不再维护清单：未完成的设计待办在追踪器(itsaplan)里按工单跟踪；已完成的条目见 git 历史。
+这里不再维护清单：未完成的设计待办在追踪器(itsaplan)里按工单跟踪(原清单里未完成的见 CYC-519、CYC-522～529,全文搜索见 CYC-111);已完成的条目见 git 历史。
