@@ -13,6 +13,7 @@
 :is(
   [data-slot="location-name"],
   [data-slot="session-title"],
+  [data-slot="page-heading"],
   [data-slot="panel-tab-label"],
   [data-slot="workspace-name"],
   [data-slot="search-title"],
@@ -339,7 +340,6 @@ html[data-platform="darwin"] [data-slot="page-header"] {
   letter-spacing: var(--cycle-tracking-display);
   line-height: var(--cycle-leading-ui);
   white-space: nowrap;
-  text-overflow: ellipsis;
 }
 
 [data-slot="page-body"] {

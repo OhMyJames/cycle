@@ -410,7 +410,11 @@ export function LoopMain({
           />
         </div>
       ) : null}
-      <div data-slot="page-body" data-full={chosen !== undefined ? "" : undefined}>
+      <div
+        data-slot="page-body"
+        data-kind="loop-body"
+        data-full={chosen !== undefined ? "" : undefined}
+      >
         {chosen !== undefined ? (
           <Board
             projectKey={chosen.projectKey}

@@ -997,7 +997,10 @@
   gap: 0.5rem;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 1px;
+  /* What scrolls up under the column head fades out instead of being cut; the first card sits in the padding. */
+  padding: 0.75rem 1px 1px;
+  scroll-padding-block: 0.75rem 0;
+  mask-image: linear-gradient(to bottom, transparent, black 0.75rem);
 }
 
 /* Leave room below the last card when the floating batch selection dock is visible. */
@@ -1812,6 +1815,23 @@ button[data-slot="loop-ticket-title"] {
   width: 65%;
 }
 
+/* The overview scrolls in PageLayout's body: content passing under the title bar fades (16px top, 24px bottom); at
+   either end the fade lies in the column's padding, so nothing is under it when still. */
+[data-slot="page-body"][data-kind="loop-body"] {
+  scroll-padding-block: 1rem 1.5rem;
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    black 1rem,
+    black calc(100% - 1.5rem),
+    transparent
+  );
+}
+
+[data-slot="page-body"][data-kind="loop-body"][data-full] {
+  mask-image: none;
+}
+
 /* ---- Overview page (centered inside PageLayout's page-column, zero double padding) ---- */
 [data-kind="loop-overview"] {
   display: flex;
@@ -2033,8 +2053,9 @@ button[data-slot="loop-ticket-title"] {
   display: block;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
+  animation: cycle-fade linear both;
+  animation-timeline: scroll(self inline);
 }
 
 [data-slot="loop-crumbs"] > [aria-hidden="true"] {
@@ -2103,7 +2124,8 @@ html[data-platform="darwin"] [data-slot="loop-crumb"] {
   letter-spacing: var(--cycle-tracking-display);
   line-height: var(--cycle-leading-ui);
   white-space: nowrap;
-  text-overflow: ellipsis;
+  animation: cycle-fade linear both;
+  animation-timeline: scroll(self inline);
 }
 
 /* Parent/child (CYC-503): the parent id on a child card, and the foldable sub-ticket list on a parent card.
