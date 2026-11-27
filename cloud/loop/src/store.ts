@@ -106,6 +106,10 @@ export const DevStateSchema = z.object({
   fullFlowDocs: z
     .array(z.object({ id: z.number().int(), title: z.string(), version: z.number().int() }))
     .default([]),
+  /** CYC-467: a hash of the work item body the criteria were read from; null for a run begun before it was kept. */
+  bodyHash: z.string().nullable().optional(),
+  /** CYC-467: a person changed the body while the run was blocked; Dev's next turn says so, once. */
+  bodyChanged: z.boolean().optional(),
 });
 export type DevState = z.infer<typeof DevStateSchema>;
 

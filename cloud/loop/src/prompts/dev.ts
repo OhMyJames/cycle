@@ -51,6 +51,20 @@ ${findings}
 
 ${PROGRESS_RULE}`;
 
+/** CYC-467: a person edited the work item while it was blocked; said before whatever the turn is about. */
+export const bodyChangedNotice = (
+  issue: Issue,
+  criteria: Criterion[],
+): string => `A person edited ${issue.key} after it was blocked. What you concluded before may no longer hold: judge the work by the work item as it is now, not by what it said then. The work item now:
+---
+${issue.description}
+---
+
+The acceptance criteria, read again from it:
+${criteriaTable(criteria, false)}
+
+`;
+
 export const conflictBrief = (
   issue: Issue,
   baseRef: string,

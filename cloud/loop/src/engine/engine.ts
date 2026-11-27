@@ -28,6 +28,7 @@ import {
 } from "./flow.ts";
 import { stopIfMoved, waitingForBlockers } from "./person.ts";
 import { Reconciler, writeIntent } from "./reconcile.ts";
+import { putBackRun } from "./reread.ts";
 
 /** What the engine runs with beyond `Deps`: the flows and intakes, made with the host they may use. */
 export type Wiring = {
@@ -228,7 +229,7 @@ export class Engine {
         return { result: { status: "rejected", key: want.reject.key, reasons: want.reasons } };
       }
       const kind = want.accepted.kind;
-      return this.#open(want.take, this.#flows[kind].open(want.accepted));
+      return this.#open(want.take, this.#flows[kind].open(want.accepted, want.take));
     }
     return { result: { status: "idle" } };
   }
@@ -401,31 +402,14 @@ export class Engine {
 
   async #resume(run: RunRecord, issue: Issue, byPerson: boolean): Promise<StepResult> {
     const { store } = this.#d;
-    const book = await store.loadCriteria(run.key);
+    let book = await store.loadCriteria(run.key);
     let current = run;
     if (byPerson) {
-      // A person has been at it: the budget of fix rounds starts again, from where it stopped. The flow resets its own.
-      const putBack = await this.#flowOf(run).putBack({
-        ...run,
-        phase: run.resumeFrom ?? this.#flowOf(run).firstPhase,
-        round: 0,
-        blockedReason: null,
-        resumeFrom: null,
-        cleanupNote: null,
-      });
-      current = store.transaction((tx) => {
-        const saved = tx.save(putBack);
-        writeIntent(tx, {
-          run: run.key,
-          issue,
-          kind: "move",
-          dedupe: `move:${run.key}:resumed:${tx.countEvents(run.key, "resumed") + 1}`,
-          payload: { to: "inProgress", from: "todo" },
-        });
-        tx.event(run.key, "resumed", { phase: saved.phase });
-        return saved;
-      });
-      await this.#reconcile.flush(issue.id, { capMs: this.#d.mirrorCapMs ?? 10_000 });
+      const back = await putBackRun(this.#d, this.#flowOf(run), run, issue, book, () =>
+        this.#reconcile.flush(issue.id, { capMs: this.#d.mirrorCapMs ?? 10_000 }),
+      );
+      if ("rejected" in back) return { status: "rejected", key: run.key, reasons: back.rejected };
+      ({ run: current, book } = back);
     } else {
       await store.event(run.key, "recovered", { phase: run.phase });
     }

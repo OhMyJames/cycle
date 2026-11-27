@@ -233,7 +233,7 @@ export interface Flow {
   /** Whether runs of this kind are taken up now. A run of a kind that is off waits in the state directory. */
   enabled(config: Config): boolean;
   /** The kind's part of a new run, from the preflight that accepted it. */
-  open(accepted: Accepted): Opening;
+  open(accepted: Accepted, issue: Issue): Opening;
   /** `--dry-run`: what would be taken, said and returned. */
   wouldTake(issue: Issue, accepted: Accepted): StepResult;
   /**
@@ -258,6 +258,15 @@ export interface Flow {
    * Gets the run with the common part already reset, and returns it with its own part reset.
    */
   putBack(run: RunRecord): Promise<RunRecord>;
+  /**
+   * A person put a blocked run back (CYC-467): reads the work item again. When its body changed since the run last
+   * read it, the criteria are read from the new body and the run says so to the next session turn. `undefined` when
+   * nothing changed; `rejected` when the new body no longer passes the preflight (the work item is sent back).
+   */
+  reread?(
+    run: RunRecord,
+    issue: Issue,
+  ): Promise<{ run: RunRecord; book?: CriteriaBook } | { rejected: string[] } | undefined>;
   /** The kind's part of a run whose worktree was removed while it was blocked: what no longer points at anything. */
   afterRemoved?(): RunPatch;
   /** A run ended or stopped: what the flow held in memory for it can go. */
