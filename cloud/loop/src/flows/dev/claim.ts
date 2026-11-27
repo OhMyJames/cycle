@@ -71,5 +71,10 @@ export async function claim(h: FlowHost, run: DevRun, issue: Issue, save: Save):
     );
     return;
   }
-  await save({ phase: "dev", dev: { nodeModulesReleased: false } });
+  // A small item with no graph yet is sized in `graph_plan`: one node, or 2–4 from the read-only planner (CYC-509).
+  const sizing = graph === undefined && run.dev.fullFlowDocs.length === 0;
+  await save({
+    phase: sizing ? "graph_plan" : "dev",
+    dev: { nodeModulesReleased: false },
+  });
 }

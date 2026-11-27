@@ -4,6 +4,7 @@
 
 export * from "../parse/blocks.ts";
 export * from "./dev.ts";
+export * from "./graph.ts";
 export * from "./plan.ts";
 export * from "./qa.ts";
 export * from "./research.ts";

@@ -55,7 +55,7 @@ PR 与 main 冲突时，Loop 自己处理，每个工单最多处理 1 次：
 | 字段                                                     | 默认       | 范围   |
 | -------------------------------------------------------- | ---------- | ------ |
 | `intervalSeconds`（空闲时查 Todo 的间隔）                | 60         | 1–3600 |
-| `maxCriteria`                                            | 8          | 1–20   |
+| `maxCriteria`                                            | 12         | 1–20   |
 | `maxFixRounds`                                           | 3          | 1–10   |
 | `maxCiRetries`                                           | 2          | 0–10   |
 | `maxReviewRetries`                                       | 2          | 0–10   |

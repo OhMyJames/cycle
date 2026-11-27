@@ -145,9 +145,9 @@ test("review role is strictly read-only like QA", () => {
 
 const ROOT = "/repo";
 // The planning node's roles (CYC-322) are under exactly the research rules: every `research:` test runs them too.
-const researchers = (["research", "research_qa", "triage", "shape", "shape_qa"] as const).map(
-  (role) => ({ role, worktree: W, readRoots: [ROOT, "/data/runs/"] }),
-);
+const researchers = (
+  ["research", "research_qa", "triage", "shape", "shape_qa", "graph_planner"] as const
+).map((role) => ({ role, worktree: W, readRoots: [ROOT, "/data/runs/"] }));
 type ResearchCtx = (typeof researchers)[number];
 const each = (check: (ctx: ResearchCtx) => void) => {
   for (const ctx of researchers) check(ctx);
@@ -383,4 +383,22 @@ test("planning: a round's bodies directory given as an extra read root can be re
   // The other roles ignore read roots, as before.
   expect(decide(read(`${bodies}/CYC-5.md`), { ...qa, readRoots: [bodies] }).decision).toBe("deny");
   expect(decide(read(`${bodies}/CYC-5.md`), { ...dev, readRoots: [bodies] }).decision).toBe("ask");
+});
+
+test("graph_planner is read-only: worktree reads are allowed, writes and mutating commands are denied (CYC-509)", () => {
+  const ctx = { role: "graph_planner" as const, worktree: W };
+  expect(decide(read(`${W}/src/a.ts`), ctx).decision).toBe("allow");
+  expect(decide(read(W), ctx).decision).toBe("allow");
+  expect(decide(edit(`${W}/a.ts`), ctx).decision).toBe("deny");
+  expect(
+    decide(request({ kind: "delete", locations: [{ path: `${W}/a.ts` }] }), ctx).decision,
+  ).toBe("deny");
+  expect(decide(request({ kind: "move", locations: [{ path: `${W}/a.ts` }] }), ctx).decision).toBe(
+    "deny",
+  );
+  expect(decide(run("git commit -am x"), ctx).decision).toBe("deny");
+  expect(decide(run("rm -rf ."), ctx).decision).toBe("deny");
+  expect(decide(run("bun run check"), ctx).decision).toBe("deny");
+  expect(decide(request({ kind: "fetch" }), ctx).decision).toBe("deny");
+  expect(decide(read("/etc/passwd"), ctx).decision).toBe("deny");
 });
