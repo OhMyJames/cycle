@@ -1716,31 +1716,11 @@ button[data-slot="review-file"]:focus-visible {
   color: var(--cycle-ink-muted);
 }
 
-/* Earlier blocks are added above the reader and the view is moved by hand (conversation.tsx): for that frame only, the
-   browser's own scroll anchoring must not move it too. At other times it keeps what is read in place as images and code
-   above it finish loading. */
-[data-slot="conversation"][data-prepending] {
+/* The blocks not drawn (CYC-464): a gap as tall as they were, so the scrollbar and the blocks that are drawn lie where they
+   would with all of them. Not what the browser keeps in place when others above the reader change height. */
+[data-slot="spacer"] {
+  flex: none;
   overflow-anchor: none;
-}
-
-[data-slot="earlier"] {
-  align-self: center;
-  padding: 0.25rem 0.875rem;
-  border: 1px solid var(--ui-border);
-  border-radius: var(--cycle-radius-pill);
-  background: var(--cycle-surface-raised);
-  box-shadow: var(--cycle-edge-hardware);
-  font-family: var(--cycle-font-display);
-  font-size: var(--cycle-text-meta);
-  color: var(--ui-muted-foreground);
-  transition:
-    background-color var(--cycle-motion-state) var(--cycle-ease),
-    color var(--cycle-motion-state) var(--cycle-ease);
-}
-
-[data-slot="earlier"]:hover {
-  background: var(--cycle-surface-hover);
-  color: var(--cycle-ink);
 }
 
 /* Back to bottom: held to the bottom of the view (sticky) while the end is below it, just above the input box. Its holder
@@ -1808,7 +1788,7 @@ button[data-slot="review-file"]:focus-visible {
   flex-direction: column;
 }
 
-[data-slot="block"][data-turn-start]:not(:first-child) {
+[data-slot="block"][data-turn-start] {
   margin-top: calc(var(--cycle-gap-turn) - var(--cycle-gap));
 }
 

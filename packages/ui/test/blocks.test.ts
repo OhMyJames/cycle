@@ -9,16 +9,16 @@ import {
   type Conversation,
   commandLabelOf,
   commandOf,
-  earlierAnchor,
   type FoldCache,
   foldedBlocks,
   type LaidBlock,
-  PAGE,
+  offsetOf,
   reduce,
   shownBlocks,
+  sliceOf,
+  spaceOf,
   stepOf,
   type ToolItem,
-  windowStart,
 } from "../src/model/index.ts";
 
 const u = (update: object) => update as SessionUpdate;
@@ -306,37 +306,62 @@ test("a code review on its way is said on the line, since its call shows nothing
   expect(stepOf(reduce([you("u"), running, report([found])]))).toEqual({ kind: "working" });
 });
 
-const many = (turns: number) =>
-  blocksOf(
-    reduce(
-      Array.from({ length: turns }, (_, n) => [
-        you(`u${n}`),
-        say(`m${n}`),
-        idle("end_turn"),
-      ]).flat(),
-    ),
-  );
+const sizesOf = (n: number, size = 100) => Array.from({ length: n }, () => size);
 
-test("a long conversation shows its last page, and nothing is hidden in a short one", () => {
-  const blocks = many(PAGE); // twice as many blocks as a page
-  expect(blocks.length).toBe(PAGE * 2);
-  expect(windowStart(blocks, undefined)).toBe(PAGE);
-  expect(windowStart(many(10), undefined)).toBe(0);
+test("a long list draws the blocks near the view, and a gap stands for the rest", () => {
+  const sizes = sizesOf(1000);
+  const slice = sliceOf(sizes, 10, 5_000, 600, 400);
+  // The view holds blocks 45 to 51 (110px each); 400px more on each side.
+  expect(slice.start).toBeGreaterThan(30);
+  expect(slice.end).toBeLessThan(70);
+  expect(slice.start).toBeLessThan(46);
+  expect(slice.end).toBeGreaterThan(52);
+  // The gaps and the blocks drawn add up to the whole list.
+  const drawn = (slice.end - slice.start) * 100 + (slice.end - slice.start - 1) * 10;
+  const whole = 1000 * 100 + 999 * 10;
+  const above = spaceOf(sizes, 10, 0, slice.start);
+  const below = spaceOf(sizes, 10, slice.end, 1000);
+  // Each gap is followed (or preceded) by one more gap between it and what is drawn.
+  expect(above + below + drawn + 2 * 10).toBe(whole);
+  expect(offsetOf(sizes, 10, slice.start)).toBe(above + 10);
 });
 
-test("the window begins at its anchor, so what arrives at the end does not move the top", () => {
-  const blocks = many(PAGE);
-  const anchor = blocks[PAGE]?.key;
-  expect(windowStart(blocks, anchor)).toBe(PAGE);
-  const more = many(PAGE + 5);
-  expect(windowStart(more, anchor)).toBe(PAGE);
+test("slices of lists of different heights, with no gap, a huge lead, or a view past the end", () => {
+  const sizes = [50, 300, 20, 20, 500, 10, 80];
+  // No gap: the blocks lie one after another, 0-50, 50-350, 350-370, ...
+  expect(sliceOf(sizes, 0, 360, 5, 0)).toEqual({ start: 2, end: 3 });
+  expect(sliceOf(sizes, 0, 0, 40, 0)).toEqual({ start: 0, end: 1 });
+  // A lead that covers everything draws everything.
+  expect(sliceOf(sizes, 5, 400, 100, 1_000_000)).toEqual({ start: 0, end: 7 });
+  // A top past the end is the end; a negative one is the start.
+  const end = sliceOf(sizes, 0, 1e9, 100, 0);
+  expect(end.end).toBe(7);
+  expect(end.start).toBe(4);
+  expect(sliceOf(sizes, 0, -50, 100, 0).start).toBe(0);
+  // A view taller than the list draws all of it.
+  expect(sliceOf(sizes, 0, 500, 10_000, 0)).toEqual({ start: 0, end: 7 });
+  // One block is always drawn, even in a view of no height.
+  expect(sliceOf(sizes, 0, 100, 0, 0).end - sliceOf(sizes, 0, 100, 0, 0).start).toBeGreaterThan(0);
 });
 
-test("an anchor that is gone falls back to the last page, and earlier moves it up by a page", () => {
-  const blocks = many(PAGE);
-  expect(windowStart(blocks, "nobody")).toBe(PAGE);
-  expect(earlierAnchor(blocks, PAGE)).toBe(blocks[0]?.key);
-  expect(earlierAnchor(blocks, 10)).toBe(blocks[0]?.key);
+test("offsets and rooms add up, whatever the sizes", () => {
+  const sizes = [50, 300, 20, 20, 500, 10, 80];
+  expect(offsetOf(sizes, 0, 0)).toBe(0);
+  expect(offsetOf(sizes, 10, 2)).toBe(50 + 10 + 300 + 10);
+  expect(offsetOf(sizes, 10, 99)).toBe(980 + 70);
+  // A room stands for blocks and the gaps between them, not the gaps at its ends.
+  expect(spaceOf(sizes, 10, 1, 3)).toBe(300 + 10 + 20);
+  expect(spaceOf(sizes, 0, 0, 7)).toBe(980);
+  expect(spaceOf(sizes, 10, 5, 2)).toBe(0);
+});
+
+test("at the end the last blocks are drawn, at the top the first, and a short list whole", () => {
+  const sizes = sizesOf(1000);
+  expect(sliceOf(sizes, 10, Number.POSITIVE_INFINITY, 600, 400).end).toBe(1000);
+  expect(sliceOf(sizes, 10, 0, 600, 400).start).toBe(0);
+  expect(sliceOf(sizesOf(5), 10, 0, 600, 400)).toEqual({ start: 0, end: 5 });
+  expect(sliceOf([], 10, 0, 600, 400)).toEqual({ start: 0, end: 0 });
+  expect(spaceOf(sizes, 10, 3, 3)).toBe(0);
 });
 
 const folds = (c: Conversation) =>
