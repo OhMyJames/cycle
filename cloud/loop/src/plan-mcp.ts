@@ -106,6 +106,7 @@ export const toIssue = (raw: unknown, projectKey: string): Issue => {
     parentId: parseOptionalInt(r.parentId ?? asRecord(r.parent).id),
     ...parentOf(r.parent, projectKey),
     ...linksOf(r.links, projectKey),
+    ...(r.development === undefined ? {} : { development: r.development }),
   };
 };
 

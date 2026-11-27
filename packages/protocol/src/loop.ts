@@ -100,6 +100,7 @@ export const LOOP_BOARD_GET = "loop/board/get";
 export const LOOP_API_RUNS_LIST = "loop/runs/list";
 export const LOOP_RUN_GET = "loop/run/get";
 export const LOOP_NOTICES_LIST = "loop/notices/list";
+export const LOOP_TICKET_GET = "loop/ticket/get";
 export const LOOP_TICKETS_ACT = "loop/tickets/act";
 export const LOOP_STATUS = "loop/status";
 
@@ -235,7 +236,7 @@ export type LoopActorKind = z.infer<typeof LoopActorKindSchema>;
 
 export const LoopTicketsActParamsSchema = z.object({
   project: z.string().min(1),
-  verb: z.enum(["approve", "return"]),
+  verb: z.enum(["approve", "return", "to_backlog", "to_todo"]),
   keys: z.array(z.string().min(1)).min(1).max(50),
   reason: z.string().max(2000).optional(),
   /** Approve writes nothing unless this is true. */
@@ -246,7 +247,12 @@ export const LoopTicketsActParamsSchema = z.object({
 export type LoopTicketsActParams = z.infer<typeof LoopTicketsActParamsSchema>;
 
 /** Why a ticket was skipped: it is not where the verb expects it. */
-export const LoopSkipReasonSchema = z.enum(["not_found", "not_in_backlog", "not_pending"]);
+export const LoopSkipReasonSchema = z.enum([
+  "not_found",
+  "not_in_backlog",
+  "not_pending",
+  "not_allowed",
+]);
 /** Why a ticket failed: a fixed word, never the tracker's text. */
 export const LoopFailReasonSchema = z.enum([
   "offline",
@@ -263,6 +269,51 @@ export const LoopTicketResultSchema = z.discriminatedUnion("status", [
 export type LoopTicketResult = z.infer<typeof LoopTicketResultSchema>;
 export const LoopTicketsActResultSchema = z.object({ results: z.array(LoopTicketResultSchema) });
 export type LoopTicketsActResult = z.infer<typeof LoopTicketsActResultSchema>;
+
+export const LoopTicketGetParamsSchema = z.object({
+  project: z.string().min(1),
+  key: z.string().min(1),
+});
+export type LoopTicketGetParams = z.infer<typeof LoopTicketGetParamsSchema>;
+
+export const LoopTicketActionSchema = z.enum(["approve", "to_backlog", "to_todo"]);
+export type LoopTicketAction = z.infer<typeof LoopTicketActionSchema>;
+/** Whether a conversation may be opened: `new` a fresh one, `watch` look only, `none` nothing. */
+export const LoopTicketChatSchema = z.enum(["new", "watch", "none"]);
+export type LoopTicketChat = z.infer<typeof LoopTicketChatSchema>;
+
+/** Why a Blocked or escalated ticket needs a person, from the Loop's own run and Notice records. */
+export const LoopTicketAttentionSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("blocked"),
+    text: z.string(),
+    session: LoopSessionRefSchema.nullable(),
+  }),
+  z.object({
+    kind: z.literal("review"),
+    text: z.string(),
+    prUrl: z.string().nullable(),
+  }),
+]);
+export type LoopTicketAttention = z.infer<typeof LoopTicketAttentionSchema>;
+
+export const LoopTicketDetailSchema = z.object({
+  identifier: z.string().min(1),
+  title: z.string(),
+  priority: z.string().nullable(),
+  /** The column's name. */
+  column: z.string(),
+  actions: z.array(LoopTicketActionSchema),
+  chat: LoopTicketChatSchema,
+  /** The ticket's text as written (Markdown). */
+  body: z.string(),
+  attention: LoopTicketAttentionSchema.optional(),
+  /** The items of its acceptance criteria section. */
+  acceptance: z.array(z.string()),
+  /** Pull or merge request addresses (https only). */
+  links: z.array(z.string()),
+});
+export type LoopTicketDetail = z.infer<typeof LoopTicketDetailSchema>;
 
 export const LoopStatusResultSchema = z.object({
   version: z.string().min(1),

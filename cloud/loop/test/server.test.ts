@@ -11,6 +11,9 @@ import {
   LoopProjectsListResultSchema,
   LoopRunDetailSchema,
   LoopStatusResultSchema,
+  type LoopTicketAction,
+  type LoopTicketChat,
+  LoopTicketDetailSchema,
   LoopTicketsActResultSchema,
 } from "@cycle/protocol";
 import { type ApiTracker, sessionOfId } from "../src/api.ts";
@@ -489,6 +492,145 @@ describe("loop/tickets/act", () => {
     expect(unconfirmed.error?.data?.reason).toBe("unconfirmed");
     expect(tracker.writes).toEqual([]);
     expect(store.actions().length).toBe(before);
+  });
+});
+
+describe("loop/ticket/get and the move verbs", () => {
+  const baseColumns = [...tracker.columns];
+  const get = (key: string) => call("loop/ticket/get", { project: "CYC", key });
+  const detail = async (key: string) => LoopTicketDetailSchema.parse((await get(key)).result);
+  const act = (verb: string, keys: string[], over: Record<string, unknown> = {}) =>
+    call("loop/tickets/act", {
+      project: "CYC",
+      verb,
+      keys,
+      confirmed: false,
+      actor: "james",
+      actorKind: "desktop",
+      ...over,
+    });
+  const set = (n: number, over: Record<string, unknown>) => {
+    tracker.issues.set(n, { ...tracker.issues.get(n), ...over });
+  };
+
+  beforeAll(() => {
+    tracker.labels = [
+      { id: 11, name: "auto" },
+      { id: 12, name: "待批准" },
+      { id: 13, name: "Loop 跳过" },
+    ];
+    tracker.columns = [
+      // Paused is unstarted too, listed first but later on the board.
+      { id: 8, name: "Paused", stateType: "unstarted", position: 2 },
+      ...baseColumns,
+      { id: 5, name: "Review", stateType: "started", position: 3 },
+      { id: 6, name: "Blocked", stateType: "started", position: 4 },
+    ];
+  });
+  afterAll(() => {
+    tracker.columns = baseColumns;
+  });
+
+  test("actions and chat by column, with and without auto", async () => {
+    const cases: [number, number, number[], LoopTicketAction[], LoopTicketChat][] = [
+      [70, 1, [], ["approve"], "new"],
+      [71, 2, [], ["to_backlog"], "new"],
+      [72, 2, [11], ["to_backlog"], "none"],
+      [73, 3, [], ["to_backlog", "to_todo"], "watch"],
+      [74, 3, [11], [], "watch"],
+      [75, 5, [11], [], "none"],
+      [76, 6, [11], ["to_backlog", "to_todo"], "none"],
+      [77, 4, [], [], "none"],
+    ];
+    for (const [n, column, labels, actions, chat] of cases) {
+      tracker.seed(n, column, labels);
+      const ticket = await detail(`CYC-${n}`);
+      expect([n, ticket.actions, ticket.chat]).toEqual([n, actions, chat]);
+    }
+    expect((await detail("CYC-71")).column).toBe("Todo");
+    expect((await get("CYC-9999")).error).toMatchObject({
+      code: -32602,
+      data: { reason: "not_found" },
+    });
+  });
+
+  test("acceptance and links come out of the body", async () => {
+    tracker.seed(78, 1, []);
+    set(78, {
+      description:
+        "说明 https://github.com/a/b/pull/3 和 http://x.test/pull/4\n\n## 验收标准\n1. 第一条\n   续行\n- 第二条\n\n## 其他\n- 不算",
+      development: [{ url: "https://gitlab.com/g/p/-/merge_requests/9" }],
+    });
+    const ticket = await detail("CYC-78");
+    expect(ticket.acceptance).toEqual(["第一条 续行", "第二条"]);
+    expect(ticket.links.sort()).toEqual([
+      "https://github.com/a/b/pull/3",
+      "https://gitlab.com/g/p/-/merge_requests/9",
+    ]);
+    expect(ticket.body).toContain("说明");
+    expect(ticket.attention).toBeUndefined();
+  });
+
+  test("attention comes from the Loop's run, not comments; a hand-moved Blocked ticket has none", async () => {
+    tracker.seed(79, 6, [11]);
+    tracker.seed(80, 6, []);
+    await store.save(
+      run("CYC-79", {
+        phase: "blocked",
+        blockedReason: "tests fail",
+        resumeFrom: "dev",
+        devSessionId: "s-dev",
+      }),
+    );
+    expect((await detail("CYC-79")).attention).toEqual({
+      kind: "blocked",
+      text: "tests fail",
+      session: { kind: "dev", id: "s-dev" },
+    });
+    expect((await detail("CYC-80")).attention).toBeUndefined();
+  });
+
+  test("to_backlog drops auto, to_todo goes to the first unstarted column, a moved one is skipped", async () => {
+    tracker.writes.length = 0;
+    tracker.comments.length = 0;
+    tracker.seed(81, 6, [11, 5]);
+    tracker.seed(82, 3, [5]);
+    tracker.seed(83, 3, [11]);
+    tracker.seed(84, 4, []);
+    const before = store.actions().length;
+    const back = LoopTicketsActResultSchema.parse(
+      (await act("to_backlog", ["CYC-81", "CYC-84", "CYC-98"], { reason: "先细化" })).result,
+    );
+    expect(back.results).toEqual([
+      { key: "CYC-81", status: "ok" },
+      { key: "CYC-84", status: "skipped", reason: "not_allowed" },
+      { key: "CYC-98", status: "skipped", reason: "not_found" },
+    ]);
+    expect(tracker.issues.get(81)).toMatchObject({ columnId: 1, labelIds: [5] });
+    expect(tracker.comments).toEqual([
+      { number: 81, text: "先细化\n\n由 james 在桌面端退回 Backlog" },
+    ]);
+
+    const todo = LoopTicketsActResultSchema.parse(
+      (await act("to_todo", ["CYC-82", "CYC-83"], { actorKind: "operator" })).result,
+    );
+    expect(todo.results).toEqual([
+      { key: "CYC-82", status: "ok" },
+      { key: "CYC-83", status: "skipped", reason: "not_allowed" },
+    ]);
+    expect(tracker.issues.get(82)).toMatchObject({ columnId: 2, labelIds: [5] });
+    expect(tracker.issues.get(83)).toMatchObject({ columnId: 3 });
+    expect(tracker.comments).toHaveLength(1);
+
+    const actions = store.actions().slice(before);
+    expect(actions.map((a) => [a.runKey, a.kind, (a.data as { status: string }).status])).toEqual([
+      ["CYC-81", "ticket_to_backlog", "ok"],
+      ["CYC-84", "ticket_to_backlog", "skipped"],
+      ["CYC-98", "ticket_to_backlog", "skipped"],
+      ["CYC-82", "ticket_to_todo", "ok"],
+      ["CYC-83", "ticket_to_todo", "skipped"],
+    ]);
+    expect(actions[0]?.data).toMatchObject({ actor: "james", actorKind: "desktop" });
   });
 });
 

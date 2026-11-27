@@ -8,6 +8,7 @@ import {
   LOOP_NOTICES_LIST,
   LOOP_RUN_GET,
   LOOP_STATUS,
+  LOOP_TICKET_GET,
   LOOP_TICKETS_ACT,
   LoopApiRunsListParamsSchema,
   type LoopBoard,
@@ -23,6 +24,11 @@ import {
   type LoopSessionKind,
   type LoopSessionRef,
   type LoopStatusResult,
+  type LoopTicketAction,
+  type LoopTicketAttention,
+  type LoopTicketChat,
+  type LoopTicketDetail,
+  LoopTicketGetParamsSchema,
   type LoopTicketResult,
   LoopTicketsActParamsSchema,
 } from "@cycle/protocol";
@@ -196,6 +202,74 @@ const failWord = (error: unknown): "offline" | "forbidden" | "conflict" | "refus
   return "refused";
 };
 
+/** What a started column is for, by Loop's convention (project.ts): the 1st is In Progress, the 2nd In Review, the 3rd Blocked. */
+type Role = "progress" | "review" | "blocked";
+const roleOf = (setup: Setup, column: Column): Role | undefined => {
+  const nth = setup.columns
+    .filter((c) => c.stateType === "started")
+    .findIndex((c) => c.id === column.id);
+  return nth === 0 ? "progress" : nth === 1 ? "review" : nth === 2 ? "blocked" : undefined;
+};
+
+/**
+ * The buttons a ticket gets: Done has none, and in Doing a ticket with `auto` is Loop's, so it has none either. The
+ * exception is Blocked: Loop has stopped there and waits for a person.
+ */
+export const actionsOf = (stateType: string, auto: boolean, role?: Role): LoopTicketAction[] => {
+  if (stateType === "backlog") return ["approve"];
+  if (stateType === "unstarted") return ["to_backlog"];
+  if (stateType === "started") return auto && role !== "blocked" ? [] : ["to_backlog", "to_todo"];
+  return [];
+};
+
+/**
+ * What an agent may do with a ticket: Backlog and Todo, a new conversation; a Todo ticket with `auto` is queued for
+ * Loop, so none. In Progress: only to look. The rest: nothing.
+ */
+export const chatOf = (stateType: string, role?: Role, auto = false): LoopTicketChat =>
+  stateType === "backlog"
+    ? "new"
+    : stateType === "unstarted"
+      ? auto
+        ? "none"
+        : "new"
+      : stateType === "started" && role === "progress"
+        ? "watch"
+        : "none";
+
+/** The `## 验收标准` (or `## Acceptance criteria`) section as its items. */
+export const acceptanceOf = (body: string): string[] => {
+  const lines = body.split("\n");
+  const start = lines.findIndex((l) => /^##\s+(验收标准|acceptance criteria)\s*$/i.test(l.trim()));
+  if (start === -1) return [];
+  const items: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (/^#{1,6}\s/.test(line)) break;
+    const item = /^\s*(?:\d+[.)]|[-*])\s+(.*\S)/.exec(line);
+    if (item?.[1] !== undefined) items.push(item[1]);
+    else if (items.length > 0 && /^\s+\S/.test(line)) items[items.length - 1] += ` ${line.trim()}`;
+  }
+  return items;
+};
+
+const PR_URL = /https:\/\/[^\s)<>\]"'`]+\/(?:pull|merge_requests)\/\d+/g;
+
+/** Pull or merge request addresses: those in the ticket's development links, and in its text. https only. */
+export const linksOf = (development: unknown, body: string): string[] => {
+  const found = new Set<string>(body.match(PR_URL) ?? []);
+  const walk = (v: unknown, depth: number) => {
+    if (depth > 4) return;
+    if (typeof v === "string") for (const u of v.match(PR_URL) ?? []) found.add(u);
+    else if (Array.isArray(v)) for (const x of v) walk(x, depth + 1);
+    else if (typeof v === "object" && v !== null)
+      for (const x of Object.values(v)) walk(x, depth + 1);
+  };
+  walk(development, 0);
+  return [...found];
+};
+
+type LoopVerb = "approve" | "return" | "to_backlog" | "to_todo";
+
 type Cached = { board: LoopBoard; at: number };
 
 /** The board cache and the write lock live as long as the server. */
@@ -222,6 +296,7 @@ export class LoopApiHandler {
       LOOP_API_RUNS_LIST,
       LOOP_RUN_GET,
       LOOP_NOTICES_LIST,
+      LOOP_TICKET_GET,
       LOOP_TICKETS_ACT,
       LOOP_STATUS,
     ].includes(method);
@@ -264,6 +339,11 @@ export class LoopApiHandler {
         const notices = (await Promise.all(projects.map((x) => this.#notices(x)))).flat();
         notices.sort((a, b) => b.at.localeCompare(a.at));
         return { notices };
+      }
+      case LOOP_TICKET_GET: {
+        const p = LoopTicketGetParamsSchema.safeParse(params);
+        if (!p.success) throw invalid("invalid_params");
+        return this.#ticket(this.#project(p.data.project), p.data.key);
       }
       case LOOP_TICKETS_ACT:
         return this.#act(params);
@@ -345,6 +425,72 @@ export class LoopApiHandler {
       columns,
       stale: false,
       readAt: this.#api.now().toISOString(),
+    };
+  }
+
+  // ---- ticket/get ----
+
+  async #ticket(project: ProjectApi, key: string): Promise<LoopTicketDetail> {
+    const match = /^(.+)-(\d+)$/.exec(key);
+    const prefix = prefixOf(project.projectKey);
+    if (match === null || match[1]?.toLowerCase() !== prefix.toLowerCase())
+      throw invalid("not_found");
+    let setup: Setup;
+    let issue: Issue;
+    try {
+      setup = setupOf(await project.tracker.getProject());
+      issue = await project.tracker.get(Number(match[2]));
+    } catch (error) {
+      if (/not found|\b404\b/i.test(error instanceof Error ? error.message : ""))
+        throw invalid("not_found");
+      throw new ApiError(-32603, "Internal error", "tracker_unreachable");
+    }
+    const column = setup.columns.find((c) => c.id === issue.columnId);
+    if (column === undefined) throw new ApiError(-32603, "Internal error", "tracker_unreachable");
+    const autoId = setup.labelIds.get(project.labels.auto.toLowerCase());
+    const auto = autoId !== undefined && issue.labelIds.includes(autoId);
+    const role = roleOf(setup, column);
+    const attention =
+      role === "blocked" || role === "review"
+        ? await this.#attention(project, issue.key, role).catch(() => undefined)
+        : undefined;
+    return {
+      identifier: issue.key,
+      title: issue.title,
+      priority: issue.priority,
+      column: column.name,
+      actions: actionsOf(column.stateType, auto, role),
+      chat: chatOf(column.stateType, role, auto),
+      body: issue.description,
+      ...(attention === undefined ? {} : { attention }),
+      acceptance: acceptanceOf(issue.description),
+      links: linksOf(issue.development, issue.description),
+    };
+  }
+
+  /** Why a Blocked or In Review ticket needs a person, from the Loop's own run and Notice records only. */
+  async #attention(
+    project: ProjectApi,
+    key: string,
+    role: "blocked" | "review",
+  ): Promise<LoopTicketAttention | undefined> {
+    const run = await project.store.load(key);
+    if (role === "blocked") {
+      if (run === undefined || run.phase !== "blocked") return undefined;
+      return {
+        kind: "blocked",
+        text: run.blockedReason ?? "",
+        session: sessionOfPhase(run, run.resumeFrom),
+      };
+    }
+    const notice = (await this.#notices(project))
+      .filter((n) => n.key === key && n.kind === "review")
+      .sort((a, b) => b.at.localeCompare(a.at))[0];
+    if (notice === undefined) return undefined;
+    return {
+      kind: "review",
+      text: notice.text,
+      prUrl: run !== undefined && run.kind === "dev" ? run.dev.prUrl : null,
     };
   }
 
@@ -474,7 +620,7 @@ export class LoopApiHandler {
 
   async #actAll(
     project: ProjectApi,
-    verb: "approve" | "return",
+    verb: LoopVerb,
     keys: string[],
     reason: string | undefined,
     actor: string,
@@ -518,7 +664,7 @@ export class LoopApiHandler {
     project: ProjectApi,
     setup: Setup,
     prefix: string,
-    verb: "approve" | "return",
+    verb: LoopVerb,
     key: string,
     reason: string | undefined,
     actor: string,
@@ -527,6 +673,8 @@ export class LoopApiHandler {
     const match = /^(.+)-(\d+)$/.exec(key);
     if (match === null || match[1]?.toLowerCase() !== prefix.toLowerCase())
       return { key, status: "skipped", reason: "not_found" };
+    if (verb === "to_backlog" || verb === "to_todo")
+      return this.#moveOne(project, setup, verb, key, Number(match[2]), reason, actor, actorKind);
     const backlog = setup.columns.find((c) => c.stateType === "backlog");
     const todo = setup.columns.find((c) => c.stateType === "unstarted");
     const label = (name: string) => setup.labelIds.get(name.toLowerCase());
@@ -575,6 +723,60 @@ export class LoopApiHandler {
           : null;
     // The write has happened; a comment that fails does not undo it.
     if (text !== null) await project.tracker.comment(issue, text).catch(() => {});
+    return { key, status: "ok" };
+  }
+
+  /** `to_backlog` / `to_todo`: read again, write only when the ticket still has that button. */
+  async #moveOne(
+    project: ProjectApi,
+    setup: Setup,
+    verb: "to_backlog" | "to_todo",
+    key: string,
+    number: number,
+    reason: string | undefined,
+    actor: string,
+    actorKind: string,
+  ): Promise<LoopTicketResult> {
+    let issue: Issue;
+    try {
+      issue = await project.tracker.get(number);
+    } catch (error) {
+      if (/not found|\b404\b/i.test(error instanceof Error ? error.message : ""))
+        return { key, status: "skipped", reason: "not_found" };
+      throw error;
+    }
+    const column = setup.columns.find((c) => c.id === issue.columnId);
+    const autoId = setup.labelIds.get(project.labels.auto.toLowerCase());
+    const auto = autoId !== undefined && issue.labelIds.includes(autoId);
+    if (
+      column === undefined ||
+      !actionsOf(column.stateType, auto, roleOf(setup, column)).includes(verb)
+    )
+      return { key, status: "skipped", reason: "not_allowed" };
+    // The first column of the kind in board order (`setup.columns` is sorted so): Paused is unstarted but not Todo.
+    const target = setup.columns.find(
+      (c) => c.stateType === (verb === "to_backlog" ? "backlog" : "unstarted"),
+    );
+    if (target === undefined) return { key, status: "failed", reason: "refused" };
+    const dropAuto = verb === "to_backlog" && autoId !== undefined && auto;
+    // Labels first: back in Backlog it must not be approved any more, even if the move then fails.
+    if (dropAuto)
+      await project.tracker.setLabelIds(
+        issue,
+        issue.labelIds.filter((id) => id !== autoId),
+      );
+    try {
+      await project.tracker.moveToColumn(issue, target.id);
+    } catch (error) {
+      if (dropAuto) await project.tracker.setLabelIds(issue, issue.labelIds).catch(() => {});
+      throw error;
+    }
+    if (reason !== undefined && reason !== "") {
+      const who = actor.replace(/\s+/g, " ").trim();
+      const via = actorKind === "desktop" ? "在桌面端" : "经运营 agent";
+      const word = verb === "to_backlog" ? "退回 Backlog" : "放回 Todo";
+      await project.tracker.comment(issue, `${reason}\n\n由 ${who} ${via}${word}`).catch(() => {});
+    }
     return { key, status: "ok" };
   }
 
@@ -646,6 +848,7 @@ const counts = (method: string, result: unknown): string => {
     return `ok=${n("ok")} skipped=${n("skipped")} failed=${n("failed")}`;
   }
   if (method === LOOP_NOTICES_LIST) return `notices=${list(r.notices).length}`;
+  if (method === LOOP_TICKET_GET) return "ok";
   if (method === LOOP_API_RUNS_LIST) return `runs=${list(r.runs).length}`;
   if (method === LOOP_BOARD_GET)
     return `cards=${list(r.columns).reduce((n, c) => n + list(c.cards).length, 0)} stale=${r.stale === true}`;
