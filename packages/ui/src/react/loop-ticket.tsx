@@ -8,6 +8,7 @@ import { AgentLink } from "./agent-link.tsx";
 import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import { CheckIcon, CloseIcon, ErrorCircleIcon, MessageIcon, WarningIcon } from "./icons.tsx";
+import { ExecutionGraph } from "./loop-graph.tsx";
 import { Markdown } from "./markdown.tsx";
 import { useNow } from "./now.ts";
 import { StateBlock } from "./state-block.tsx";
@@ -456,6 +457,16 @@ export function TicketDrawer({
                   <h4>{t("loop.pending.note")}</h4>
                   <p>{summary.pending.reason}</p>
                 </section>
+              ) : null}
+
+              {ticket.graph !== undefined ? (
+                <ExecutionGraph
+                  projectKey={projectKey}
+                  identifier={ticket.identifier}
+                  graph={ticket.graph}
+                  onChanged={() => setRetryCount((n) => n + 1)}
+                  onJoin={onChatStarted}
+                />
               ) : null}
 
               <section data-slot="loop-detail-section">

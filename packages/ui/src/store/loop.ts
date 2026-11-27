@@ -5,6 +5,7 @@ import type {
   LoopActResult,
   LoopBoardAnswer,
   LoopChatResult,
+  LoopGraphNodeAction,
   LoopManyAction,
   LoopManyItem,
   LoopManyResult,
@@ -170,6 +171,21 @@ export class LoopSlice {
   ): Promise<LoopActResult> => {
     const result = await this.#kit.bridge
       .loopAct(projectKey, identifier, action, confirmed)
+      .catch((): LoopActResult => ({ kind: "failed", reason: "offline" }));
+    if (result.kind === "ok")
+      await Promise.all([this.loadBoard(projectKey), this.loadNotices(projectKey)]);
+    return result;
+  };
+
+  /** Retries or skips one graph node. A write that went through reads the board again. */
+  actOnGraph = async (
+    projectKey: string,
+    identifier: string,
+    nodeId: string,
+    action: LoopGraphNodeAction,
+  ): Promise<LoopActResult> => {
+    const result = await this.#kit.bridge
+      .loopGraphAct(projectKey, identifier, nodeId, action)
       .catch((): LoopActResult => ({ kind: "failed", reason: "offline" }));
     if (result.kind === "ok")
       await Promise.all([this.loadBoard(projectKey), this.loadNotices(projectKey)]);

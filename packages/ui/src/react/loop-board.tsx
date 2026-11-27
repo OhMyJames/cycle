@@ -30,6 +30,7 @@ import {
   SearchIcon,
 } from "./icons.tsx";
 import { BatchBar } from "./loop-batch-bar.tsx";
+import { GraphProgress } from "./loop-graph.tsx";
 import {
   type Act,
   PRIORITIES,
@@ -159,7 +160,7 @@ function TicketCard({
 }) {
   const { t } = useI18n();
   const isPending = ticket.pending !== undefined;
-  const hasFooter = ticket.phase !== undefined || isPending;
+  const hasFooter = ticket.phase !== undefined || isPending || ticket.graph !== undefined;
   // The title button stretches over the whole card (CSS), so clicking anywhere on the card opens the drawer;
   // the checkbox and action buttons sit above it, so pressing them does not open it.
   return (
@@ -221,6 +222,7 @@ function TicketCard({
           <span data-slot="loop-ticket-foot-meta">
             {isPending ? <PriorityBadge priority={ticket.priority} /> : null}
             {ticket.phase ? <TicketStage phase={ticket.phase} /> : null}
+            {ticket.graph ? <GraphProgress graph={ticket.graph} /> : null}
           </span>
           {isPending ? (
             // A ticket the server lists as waiting can be approved: the board does not ask for the other buttons.

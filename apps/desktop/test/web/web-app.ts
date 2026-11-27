@@ -172,6 +172,7 @@ export const startWebApp = async (options: WebAppOptions): Promise<WebApp> => {
     loopBoard: () => ({ kind: "no_server" }),
     loopTicket: () => ({ kind: "no_server" }),
     loopAct: () => ({ kind: "failed", reason: "no_server" }),
+    loopGraphAct: () => ({ kind: "failed", reason: "no_server" }),
     loopChat: () => ({ kind: "failed", reason: "no_server" }),
     loopActMany: () => ({ kind: "failed", reason: "no_server" }),
     loopNotices: () => ({ kind: "no_server" }),

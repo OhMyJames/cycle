@@ -193,6 +193,29 @@ describe("the dictionary", () => {
     expect(EVENTS.mention_picked.safeParse({ kind: "session", title: "Fix" }).success).toBe(false);
   });
 
+  test("the graph events take words and numbers only, and drop text that rides along", () => {
+    expect(isUiEvent("loop_graph_viewed")).toBe(true);
+    expect(isUiEvent("loop_graph_node_opened")).toBe(true);
+    expect(isUiEvent("loop_graph_acted")).toBe(false);
+    expect(EVENTS.loop_graph_viewed.safeParse({ node_count: 3, source: "single" }).success).toBe(
+      true,
+    );
+    expect(
+      EVENTS.loop_graph_viewed.safeParse({ node_count: 3, source: "single", goal: "secret" })
+        .success,
+    ).toBe(false);
+    expect(
+      EVENTS.loop_graph_node_opened.safeParse({ status: "blocked", origin: "fix" }).success,
+    ).toBe(true);
+    expect(
+      EVENTS.loop_graph_node_opened.safeParse({ status: "blocked", origin: "n1" }).success,
+    ).toBe(false);
+    expect(
+      EVENTS.loop_graph_acted.safeParse({ action: "retry_node", result: "ok", lastError: "x" })
+        .success,
+    ).toBe(false);
+  });
+
   test("no event takes free text: every property is a number, a boolean or one of a list", () => {
     for (const [name, schema] of Object.entries(EVENTS)) {
       for (const [key, field] of Object.entries(schema.shape)) {

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LoopActFailure, LoopAction } from "@cycle/ui/api";
 import {
+  actOnGraph,
   actOnMany,
   actOnTicket,
   answerBoard,
@@ -954,5 +955,101 @@ describe("where Loop is running (CYC-458)", () => {
     } finally {
       server.close();
     }
+  });
+});
+
+describe("graph nodes (loop/graph/act)", () => {
+  const graph = {
+    runKey: "CYC-9",
+    source: "plan_doc",
+    revision: 2,
+    currentNodeId: "n1",
+    nodes: [
+      {
+        id: "n1",
+        position: 0,
+        origin: "planned",
+        title: "Secret title",
+        goal: "Secret goal",
+        dependsOn: [],
+        filesHint: [],
+        verify: ["bun test"],
+        status: "pending",
+        sessionId: null,
+        commitSha: null,
+        rounds: 0,
+        lastError: null,
+        summary: null,
+        startedAt: null,
+        finishedAt: null,
+      },
+    ],
+    createdAt: "2026-11-26T00:00:00Z",
+    updatedAt: "2026-11-26T00:00:00Z",
+  };
+  const ok = (asked: Asked): Answer =>
+    asked.method === "loop/graph/act"
+      ? { result: { key: "CYC-9", nodeId: "n1", action: "retry_node", phase: "graph_plan", graph } }
+      : { error: { code: -32601 } };
+
+  test("a retry is one act with the node and the person; the event is the action and result only", async () => {
+    const socket = sock();
+    const server = await fakeLoop(socket, ok);
+    const events: unknown[] = [];
+    const result = await actOnGraph(
+      { socket, actor: () => "小明" },
+      "CYC",
+      "CYC-9",
+      "n1",
+      "retry_node",
+      (e, p) => events.push([e, p]),
+    );
+    await server.close();
+    expect(result).toEqual({ kind: "ok" });
+    expect(server.asked).toEqual([
+      {
+        method: "loop/graph/act",
+        params: {
+          project: "CYC",
+          key: "CYC-9",
+          nodeId: "n1",
+          action: "retry_node",
+          actor: "小明",
+          actorKind: "desktop",
+        },
+      },
+    ]);
+    expect(events).toEqual([["loop_graph_acted", { action: "retry_node", result: "ok" }]]);
+  });
+
+  test("a node that may not be acted on, no server, and bad input come out as words", async () => {
+    const socket = sock();
+    const server = await fakeLoop(socket, () => ({
+      error: { code: -32602, data: { reason: "node_not_allowed" } },
+    }));
+    const events: unknown[] = [];
+    const track = (e: string, p: unknown) => events.push([e, p]);
+    expect(await actOnGraph({ socket }, "CYC", "CYC-9", "n1", "skip_node", track)).toEqual({
+      kind: "failed",
+      reason: "not_allowed",
+    });
+    await server.close();
+    expect(await actOnGraph({ socket: sock() }, "CYC", "CYC-9", "n1", "skip_node", track)).toEqual({
+      kind: "failed",
+      reason: "no_server",
+    });
+    // Not sent, not reported.
+    expect(await actOnGraph({ socket }, "CYC", "CYC-9", "n1", "edit_node", track)).toEqual({
+      kind: "failed",
+      reason: "refused",
+    });
+    expect(await actOnGraph({ socket }, "CYC", "OTHER-9", "n1", "retry_node", track)).toEqual({
+      kind: "failed",
+      reason: "refused",
+    });
+    expect(events).toEqual([
+      ["loop_graph_acted", { action: "skip_node", result: "not_allowed" }],
+      ["loop_graph_acted", { action: "skip_node", result: "no_server" }],
+    ]);
   });
 });

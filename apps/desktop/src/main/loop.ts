@@ -10,12 +10,14 @@ import {
   LOOP_API_PROJECTS_LIST,
   LOOP_BOARD_GET,
   LOOP_EVENTS_LIST,
+  LOOP_GRAPH_ACT,
   LOOP_NOTICES_LIST,
   LOOP_RUNS_LIST,
   LOOP_TICKET_GET,
   LOOP_TICKETS_ACT,
   LoopBoardSchema,
   LoopEventsListResultSchema,
+  LoopGraphActResultSchema,
   LoopNoticesListResultSchema,
   LoopProjectsListResultSchema,
   LoopRunsListResultSchema,
@@ -29,6 +31,7 @@ import type {
   LoopBoardAnswer,
   LoopChatFailure,
   LoopChatResult,
+  LoopGraphNodeAction,
   LoopManyItem,
   LoopManyResult,
   LoopNoticesAnswer,
@@ -352,6 +355,7 @@ export const answerBoard = async (
                   : null,
                 ...(card.pendingReason !== null ? { pending: { reason: card.pendingReason } } : {}),
                 ...(card.phase !== null ? { phase: card.phase } : {}),
+                ...(card.graph !== undefined ? { graph: card.graph } : {}),
               })),
             })),
           }
@@ -454,7 +458,9 @@ const identifierOf = (projectKey: unknown, identifier: unknown): string | undefi
     ? identifier
     : undefined;
 
-export type Track = <N extends "loop_ticket_opened" | "loop_ticket_acted" | "loop_ticket_chat">(
+export type Track = <
+  N extends "loop_ticket_opened" | "loop_ticket_acted" | "loop_ticket_chat" | "loop_graph_acted",
+>(
   event: N,
   props: EventProps<N>,
 ) => void;
@@ -482,6 +488,7 @@ const readTicket = async (
       acceptance: d.acceptance,
       links: d.links,
       ...(d.attention ? { attention: d.attention } : {}),
+      ...(d.graph !== undefined ? { graph: d.graph } : {}),
     },
   };
 };
@@ -545,6 +552,58 @@ export const actOnTicket = async (
     kind: "failed",
     reason: one.status === "failed" ? failureOf(one.reason) : "not_allowed",
   });
+};
+
+const NODE_ID_MAX = 200;
+
+/**
+ * Retries or skips one graph node of a work item's run (`loop/graph/act`, CYC-512). The Loop server checks the node's
+ * status again (`node_not_allowed` otherwise). Only the action and how it came out are reported, never the node.
+ */
+export const actOnGraph = async (
+  loop: LoopOptions | undefined,
+  projectKey: unknown,
+  identifier: unknown,
+  nodeId: unknown,
+  action: unknown,
+  track: Track,
+): Promise<LoopActResult> => {
+  if (action !== "retry_node" && action !== "skip_node")
+    return { kind: "failed", reason: "refused" };
+  const done = (result: LoopActResult): LoopActResult => {
+    track("loop_graph_acted", {
+      action: action as LoopGraphNodeAction,
+      result:
+        result.kind === "ok" ? "ok" : (result.reason as Exclude<LoopActFailure, "unconfirmed">),
+    });
+    return result;
+  };
+  const key = identifierOf(projectKey, identifier);
+  if (
+    key === undefined ||
+    typeof nodeId !== "string" ||
+    nodeId === "" ||
+    nodeId.length > NODE_ID_MAX
+  )
+    return { kind: "failed", reason: "refused" };
+  if (!loop) return done({ kind: "failed", reason: "no_server" });
+  const called = await callLoop(loop.socket, LOOP_GRAPH_ACT, {
+    project: projectKey,
+    key,
+    nodeId,
+    action,
+    actor: actorOf(loop),
+    actorKind: "desktop",
+  });
+  if (called.kind === "no_server") return done({ kind: "failed", reason: "no_server" });
+  if (called.kind === "error")
+    return done({
+      kind: "failed",
+      reason: called.reason === "node_not_allowed" ? "not_allowed" : failureOf(called.reason),
+    });
+  return LoopGraphActResultSchema.safeParse(called.result).success
+    ? done({ kind: "ok" })
+    : done({ kind: "failed", reason: "refused" });
 };
 
 /** What the chat needs of the app: the local daemon's calls, so this file does not know the manager. */
