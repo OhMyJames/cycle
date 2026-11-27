@@ -4,7 +4,7 @@
 
 import type { Flow, FlowHost, StepResult } from "../../engine/flow.ts";
 import { DevStateSchema } from "../../store.ts";
-import { blockTicket, ticketStillWanted } from "../ticket.ts";
+import { blockTicket, ticketStillMine, ticketStillWanted } from "../ticket.ts";
 import { ci } from "./ci.ts";
 import { claim } from "./claim.ts";
 import { rollbackMerge } from "./conflict.ts";
@@ -87,6 +87,8 @@ export const devFlow = (host: FlowHost): Flow => {
     },
 
     stillWanted: (run) => ticketStillWanted(host, run),
+
+    stillMine: (run) => ticketStillMine(host, run),
 
     // What the checks said is kept in `ci_state`, but a run going on from QA or the delivery runs them again. A human
     // resume from `ci` or `review` also re-runs verify/QA/push in case they committed a fix locally; a crash recovery

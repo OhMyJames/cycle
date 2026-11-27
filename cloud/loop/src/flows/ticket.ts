@@ -6,11 +6,13 @@ import {
   type BlockArgs,
   type FlowHost,
   type Intake,
+  NetworkWait,
   PHASE_NAMES,
   type Phase,
 } from "../engine/flow.ts";
 import { writeIntent } from "../engine/reconcile.ts";
 import { fullFlowPreflight, isFullFlow } from "../full-flow.ts";
+import { isNetworkError } from "../network.ts";
 import { preflight, sendBackComment } from "../preflight.ts";
 import { pickNext } from "../select.ts";
 import { applyPatch, type RunRecord } from "../store.ts";
@@ -95,6 +97,37 @@ export const ticketStillWanted = async (
   if (run.phase === "blocked" && !putBack) return undefined;
   // Not blocked and not done: the loop that was on it is gone (no step holds it).
   return { issue, byPerson: run.phase === "blocked" };
+};
+
+/** The state type a column stands for, for the event that says where a person moved a work item. */
+const stateTypeOf = (columnId: number, config: FlowHost["d"]["config"]): string => {
+  const { columns } = config;
+  if (columnId === columns.todo) return "unstarted";
+  if (columnId === columns.inProgress || columnId === columns.inReview) return "started";
+  if (columnId === columns.done) return "completed";
+  if (columnId === columns.canceled) return "canceled";
+  if (columnId === columns.blocked) return "blocked";
+  if (columnId === config.research?.backlogColumn) return "backlog";
+  return "other";
+};
+
+/** Still the loop's: in Todo or In Progress and carrying `auto`. Anything else is a person's move, to be respected. */
+export const ticketStillMine = async (
+  host: FlowHost,
+  run: RunRecord,
+): Promise<true | { stateType: string }> => {
+  const { config, tracker } = host.d;
+  let issue: Issue;
+  try {
+    issue = await tracker.get(run.issueNumber);
+  } catch (error) {
+    if (error instanceof Error && isNetworkError(error.message)) throw new NetworkWait("tracker");
+    throw error;
+  }
+  const inColumn =
+    issue.columnId === config.columns.todo || issue.columnId === config.columns.inProgress;
+  if (inColumn && issue.labelIds.includes(config.autoLabelId)) return true;
+  return { stateType: stateTypeOf(issue.columnId, config) };
 };
 
 /**
