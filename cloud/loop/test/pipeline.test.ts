@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Tuning } from "../src/config-file.ts";
 import { CriteriaBook } from "../src/criteria.ts";
 import { SqliteStore } from "../src/db/store.ts";
+import { runHomeDir } from "../src/env.ts";
 import { type DepsInput as Deps, Pipeline } from "../src/pipeline.ts";
 import { applyPatch, devOf } from "../src/store.ts";
 import {
@@ -1352,9 +1354,11 @@ const doneRun = async (s: ReturnType<typeof setup>) => {
 const removals = (s: ReturnType<typeof setup>) =>
   s.world.calls.filter((c) => c.includes("worktree remove") || c.includes("branch -D"));
 
-test("a Done work item with a merged PR loses its worktree and local branches", async () => {
+test("a Done work item with a merged PR loses its worktree, local branches, and temporary HOME", async () => {
   const s = setup([ready({ columnId: 24 })], { dev: [], qa: [] });
   s.world.prState = "MERGED";
+  const tempHome = runHomeDir(dir, "CYC-1");
+  await mkdir(tempHome, { recursive: true });
   await doneRun(s);
   expect((await s.pipeline.step()).status).toBe("idle");
   expect(removals(s)).toEqual([
@@ -1362,6 +1366,7 @@ test("a Done work item with a merged PR loses its worktree and local branches", 
     "git branch -D worktree-auto/cyc-1",
     "git branch -D auto/cyc-1",
   ]);
+  expect(existsSync(tempHome)).toBe(false);
   expect((await s.store.load("CYC-1"))?.cleanedAt).not.toBeNull();
   expect((await s.store.events()).map((e) => e.kind)).toContain("cleaned");
   // Not again on the next round.

@@ -10,6 +10,7 @@ import { isNetworkError } from "../network.ts";
 import type { At } from "../ports/forge.ts";
 import { applyPatch, type RunRecord } from "../store.ts";
 import type { Config, ExecResult, Issue, LoopPhase, SessionRole, TurnResult } from "../types.ts";
+import { runCleanup } from "./cleanup.ts";
 import {
   Blocked,
   branchOf,
@@ -26,6 +27,7 @@ import {
   type StepResult,
   saveWith,
 } from "./flow.ts";
+import { deadlineFor, recordHeartbeat, WORKER_BEAT_KEY } from "./heartbeat.ts";
 import { stopIfMoved, waitingForBlockers } from "./person.ts";
 import { Reconciler, writeIntent } from "./reconcile.ts";
 import { putBackRun } from "./reread.ts";
@@ -51,6 +53,8 @@ export class Engine {
   readonly #stepConfig = new AsyncLocalStorage<Config>();
   /** Keys of the runs some step is working on now. */
   readonly #active = new Set<string>();
+  /** In-flight session id per run key, for supervisor `loop/run/cancel` (CYC-484). */
+  readonly #activeSessions = new Map<string, string>();
   #lock: Promise<void> = Promise.resolve();
   readonly #reconcile = new Reconciler(() => this.#d);
 
@@ -128,6 +132,14 @@ export class Engine {
     }
   }
 
+  /** Cancels the active session turn of `key`, if one is currently running (CYC-484). */
+  async cancelRun(key: string): Promise<boolean> {
+    const sid = this.#activeSessions.get(key);
+    return sid !== undefined && this.#deps.sessions.cancel !== undefined
+      ? this.#deps.sessions.cancel(sid)
+      : false;
+  }
+
   /** Takes up one thing: a run to go on with, or else the next work item. Several steps may run at once. */
   async step(): Promise<StepResult> {
     await this.#reloadTuning();
@@ -140,7 +152,14 @@ export class Engine {
     await this.#reconcile.flush(undefined, { capMs: this.#d.mirrorCapMs ?? 10_000 });
 
     const chosen = await this.#exclusive(() => this.#choose());
-    if ("result" in chosen) return chosen.result;
+    if ("result" in chosen) {
+      recordHeartbeat(this.#d.store, WORKER_BEAT_KEY, {
+        phase: "idle",
+        waitingOn: "idle",
+        deadline: null,
+      });
+      return chosen.result;
+    }
     try {
       if ("own" in chosen) return await this.#goOwn(chosen.own);
       if (chosen.resume !== undefined) {
@@ -286,103 +305,13 @@ export class Engine {
     return { key: issue.key, run, issue, book };
   }
 
-  /**
-   * Before choosing, tidies the worktrees of runs that are over or stuck (CYC-379, CYC-449):
-   * - a work item in Done whose PR is merged, or one in Canceled: the worktree and local branch are removed. Never
-   *   forced; a worktree with uncommitted changes is left for a person, with one event;
-   * - Done but the PR closed without merging: one `cleanup_skipped_unmerged` event, nothing removed;
-   * - Blocked for longer than `blockedReminderDays`: one `blocked_stale` event, nothing removed.
-   * A run another step is on is not touched. A failure here never stops the loop from taking work.
-   */
   async #cleanup(): Promise<void> {
-    const { config, store, log } = this.#d;
-    if (config.planning !== null) {
-      try {
-        await this.#plan.cleanup(this.#active);
-      } catch (error) {
-        log(
-          `cleanup of planning worktrees failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-    }
-    for (const run of await store.all()) {
-      if (run.cleanedAt !== null || run.worktree === null) continue;
-      if (run.phase !== "done" && run.phase !== "blocked") continue;
-      if (this.#active.has(run.key)) continue;
-      try {
-        await this.#cleanupRun(run, run.worktree);
-      } catch (error) {
-        log(
-          `cleanup of ${run.key} failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-    }
-  }
-
-  async #cleanupRun(run: RunRecord, worktree: string): Promise<void> {
-    const { config, tracker, store } = this.#d;
-    const note = async (kind: string, data: Record<string, string | number | boolean> = {}) => {
-      if (run.cleanupNote === kind) return;
-      await store.event(run.key, kind, data);
-      await store.save({ ...run, cleanupNote: kind });
-    };
-    // Only the work item's own worktree: `.../auto/cyc-<n>`.
-    const own = `/${branchOf(run.issueNumber)}`;
-    if (!worktree.replace(/\/+$/, "").endsWith(own)) return;
-
-    const issue = await tracker.get(run.issueNumber);
-    if (issue.columnId === config.columns.canceled)
-      return this.#removeWorktree(run, worktree, note);
-
-    if (run.phase === "blocked") {
-      const days = config.blockedReminderDays;
-      if (days <= 0) return;
-      const since = Date.parse(run.updatedAt);
-      const waited = Math.floor((this.#d.clock.now().getTime() - since) / 86_400_000);
-      if (Number.isNaN(since) || waited < days) return;
-      return note("blocked_stale", { days: waited });
-    }
-
-    if (issue.columnId !== config.columns.done) return;
-    const done = await this.#flowOf(run).whenDone(run);
-    if (done === "keep") return;
-    if (done !== "remove") return note(done.note);
-    return this.#removeWorktree(run, worktree, note);
-  }
-
-  /** The safe removal shared by Done and Canceled: no --force, dirty means an event for a person. */
-  async #removeWorktree(
-    run: RunRecord,
-    worktree: string,
-    note: (kind: string) => Promise<void>,
-  ): Promise<void> {
-    const { config, store, clock, workspace } = this.#d;
-    const branches = [...new Set([run.localBranch, branchOf(run.issueNumber)])].filter(
-      (b): b is string => b !== null,
-    );
-    const removal = await workspace.remove(this.#at(config.repoRoot), worktree, branches);
-    if (removal === "failed") return note("cleanup_failed");
-    if (removal === "dirty") return note("cleanup_skipped_dirty");
-    await store.event(run.key, "cleaned");
-    if (run.phase !== "done") {
-      // Blocked, then Canceled: the run is not over. If a person puts the work item back, it starts again from the
-      // claim with a new worktree and sessions, so nothing points at what was just removed and it is cleaned later.
-      await store.save(
-        applyPatch(run, {
-          worktree: null,
-          localBranch: null,
-          devSessionId: null,
-          qaSessionId: null,
-          findings: null,
-          resumeFrom: "claimed",
-          cleanedAt: null,
-          cleanupNote: null,
-          ...this.#flowOf(run).afterRemoved?.(),
-        }),
-      );
-      return;
-    }
-    await store.save({ ...run, cleanedAt: clock.now().toISOString(), cleanupNote: null });
+    await runCleanup({
+      deps: this.#d,
+      flows: this.#flows,
+      plan: this.#plan,
+      active: this.#active,
+    });
   }
 
   /** `--dry-run`: pick and check, and say what would happen. Writes nothing anywhere. */
@@ -482,6 +411,12 @@ export class Engine {
         }
         this.#mirror(run.key, issue, this.#fieldOf(run));
         if (run.phase === "blocked" || run.phase === "done") return { status: "idle" };
+        const wait = run.phase === "ci" ? "ci" : run.phase === "verify" ? "command" : "session";
+        recordHeartbeat(this.#d.store, run.key, {
+          phase: run.phase,
+          waitingOn: wait,
+          deadline: deadlineFor(wait, this.#d.clock.now(), this.#d.config),
+        });
         const phase = flow.phases[run.phase];
         if (phase === undefined) throw new Error(`a ${flow.kind} run has no phase ${run.phase}`);
         const result = await phase.step({ run, issue, book, announce, save });
@@ -517,7 +452,15 @@ export class Engine {
   ): Promise<TurnResult> {
     const { config, store } = this.#d;
     for (let resend = 0; ; resend++) {
-      const result = await this.#d.sessions.turn(sessionId, prompt, { ...context, run: key });
+      this.#activeSessions.set(key, sessionId);
+      recordHeartbeat(store, key, {
+        phase: context.role,
+        waitingOn: "session",
+        deadline: deadlineFor("session", this.#d.clock.now(), config),
+      });
+      const result = await this.#d.sessions
+        .turn(sessionId, prompt, { ...context, run: key })
+        .finally(() => this.#activeSessions.delete(key));
       if (result.interrupted !== true || result.timedOut) return result;
       if (resend >= config.maxInterruptRetries)
         throw new Blocked(

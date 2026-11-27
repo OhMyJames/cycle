@@ -61,12 +61,23 @@ test("dev: edits in the worktree are allowed; outside it or in .git they are not
 test("dev: allowlisted commands run; others wait for a person", () => {
   for (const ok of [
     "bun run check",
-    "bun test tools/a.test.ts",
+    "bun run format",
+    "bun run lint",
+    "bun run typecheck",
+    "bun run test:browser",
+    "bun run test:integration",
+    "bun run test:integration web",
+    "bun test",
+    "bun test ./tools/a.test.ts",
+    "bun test ./cloud/loop/test/policy.test.ts -t allowlisted",
     "git status",
     "git diff origin/main...HEAD",
     "git add -A && git commit -m 'fix a'",
+    "git add src/a.ts src/b.ts && git commit -F msg.txt",
+    "git branch --show-current",
     "ls -la src | head",
     "bun install",
+    "bun install --frozen-lockfile",
   ]) {
     expect(d(run(ok))).toBe("allow");
   }
@@ -74,17 +85,40 @@ test("dev: allowlisted commands run; others wait for a person", () => {
     "git push origin HEAD",
     "git reset --hard",
     "git branch -D x",
+    "git branch --show-current --no-show-current -D other",
+    "git branch --show-current -f master HEAD",
+    "git add -f .env",
+    "git add -f src/a.ts",
+    "git add .git/config",
+    "git commit --template=/tmp/x -m hi",
+    "git commit --template=./x -m hi",
+    "git commit -F /etc/passwd",
+    "git commit --no-verify -m hi",
+    "git commit -am hi",
+    "bun install -g evil-pkg",
+    "bun install --global evil-pkg",
+    "bun test --preload ./x.ts",
+    "bun test tools/a.test.ts",
+    "bun test ./a.test.ts --bail",
+    "bun run check --extra",
+    "bun run test:integration --strict",
+    "bun run build",
     "rm -rf node_modules",
     "curl https://example.com",
-    "bun run build",
     "cat ~/.ssh/id_rsa",
     "cat /etc/passwd",
+    "cat .?/.?/.?/.cycle/loop.json",
+    "ls src/*.ts",
     "ls ../..",
     "bun run check && curl x",
     "echo $HOME",
   ]) {
     expect(d(run(ask))).toBe("ask");
   }
+  // QA and review also refuse unquoted globs (CYC-472).
+  expect(d(run("cat .?/.?/.?/.cycle/loop.json"), qa)).toBe("deny");
+  expect(d(run("cat .?/.?/.?/.cycle/loop.json"), review)).toBe("deny");
+  expect(d(run("ls src/*.ts"), qa)).toBe("deny");
 });
 
 test("a request it cannot read is never allowed", () => {

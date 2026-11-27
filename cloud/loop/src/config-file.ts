@@ -138,6 +138,13 @@ export const ConfigFileSchema = z.object({
   reviewEffort: text.optional(),
   /** Workers for this Project (CYC-433); `--workers` overrides it. */
   workers: z.number().int().positive().optional(),
+  /** Optional repository metadata from loop.json (used for delivery.git and `gh --repo`, CYC-478). */
+  repo: z
+    .object({
+      url: text,
+      forge: z.enum(["github", "gitlab"]).optional(),
+    })
+    .optional(),
   /** Counts, timeouts and the idle interval (CYC-441). Read again before every step while the loop runs. */
   tuning: TuningSchema.optional(),
   research: ResearchSchema.optional(),

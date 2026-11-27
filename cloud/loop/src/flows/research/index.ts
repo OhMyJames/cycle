@@ -18,8 +18,6 @@ import {
   tail,
 } from "../../engine/flow.ts";
 import { writeIntent } from "../../engine/reconcile.ts";
-import { deliverEnv, GIT_SAFE } from "../../env.ts";
-import { withRepoLock } from "../../git-lock.ts";
 import { conclusionIsEmpty } from "../../preflight.ts";
 import {
   formatFindings,
@@ -178,13 +176,10 @@ export class ResearchFlow implements Flow {
     if (run.devSessionId === null) {
       // A fresh `origin/main` to read: the worktree is made from it.
       const fetched = await this.#host.netExec(run.key, "git fetch", () =>
-        withRepoLock(config.repoRoot, () =>
-          this.#host.d.exec(["git", ...GIT_SAFE, "fetch", config.remote], {
-            cwd: config.repoRoot,
-            env: deliverEnv(this.#host.d.env),
-            timeoutMs: config.commandTimeoutMs,
-          }),
-        ),
+        this.#host.d.workspace.fetchMain({
+          cwd: config.repoRoot,
+          timeoutMs: config.commandTimeoutMs,
+        }),
       );
       if (fetched.code !== 0) throw new Blocked(`git fetch 失败：${tail(fetched.output)}`);
       const created = await this.#newSession(run, issue);

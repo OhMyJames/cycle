@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { GIT_SAFE, gitDeliverAuthArgs } from "../src/env.ts";
 import { gitWorkspace } from "../src/ports/git.ts";
 import { githubForge } from "../src/ports/github.ts";
 import type { Exec } from "../src/types.ts";
@@ -53,10 +54,8 @@ test("the workspace runs git with GIT_SAFE and keeps credentials for the remote 
   await ws.diff(at, "origin/main");
   expect(r.calls[0]?.argv).toEqual([
     "git",
-    "-c",
-    "core.hooksPath=/dev/null",
-    "-c",
-    "core.fsmonitor=false",
+    ...GIT_SAFE,
+    ...gitDeliverAuthArgs({ PATH: "/bin", GH_TOKEN: "t" }),
     "push",
     "origin",
     "HEAD:refs/heads/br",

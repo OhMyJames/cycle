@@ -15,6 +15,9 @@ export async function deliver(
   const worktree = h.need(run.worktree ?? undefined);
   const at = where(h, worktree);
 
+  const clean = await h.d.workspace.configClean(at);
+  if (!clean.ok) throw new Blocked(clean.error);
+
   const pushed = await h.netExec(run.key, "git push", () =>
     h.d.workspace.push(at, run.remoteBranch),
   );

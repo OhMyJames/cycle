@@ -1,19 +1,30 @@
 // Everything one Project owns: tracker, store, lock, daemon connection, pipeline. Shared by the CLI and the server.
 
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { type ProjectApi, sessionOfId } from "./api.ts";
 import { type ConfigFile, readTuning } from "./config-file.ts";
 import { type ImportResult, importLegacyState, needsImport } from "./db/import.ts";
 import { openLoopStore, SqliteStore } from "./db/store.ts";
+import { deadlineFor, recordHeartbeat, WORKER_BEAT_KEY } from "./engine/heartbeat.ts";
 import { effectiveWorkers } from "./loop.ts";
 import { Pipeline } from "./pipeline.ts";
 import { DEFAULT_TIMEOUT_MS, PlanTracker } from "./plan-mcp.ts";
-import { gitWorkspace } from "./ports/git.ts";
+import {
+  type DeliveryConfig,
+  gitWorkspace,
+  initDeliveryRepo,
+  inspectGitConfig,
+  originUrlFromGitConfig,
+  repoGitConfigPath,
+} from "./ports/git.ts";
 import { githubForge } from "./ports/github.ts";
 import { DaemonSessions } from "./ports/sessions.ts";
 import { docsBaseOf } from "./pr.ts";
 import { type LoopFields, resolveLoopFields, resolveProject } from "./project.ts";
+import { repoDisplayName } from "./projects.ts";
 import { runCommand } from "./runner.ts";
+import type { SecretKind } from "./secrets.ts";
 import { acquireLock } from "./store.ts";
 import { DEFAULT_CHECK_MINUTES, DEFAULT_MAX_ASK, defaultConfig } from "./types.ts";
 
@@ -33,6 +44,8 @@ export type ProjectUnit = {
   release: () => Promise<void>;
   close: () => Promise<void>;
   workers: number;
+  /** Emits a liveness heartbeat so the supervisor knows the Work loop is responsive even during long turns (CYC-484). */
+  beat?: () => void;
   /** What the `loop/` methods use of this Project (CYC-482). */
   api?: ProjectApi;
 };
@@ -149,12 +162,16 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
       plans: imported.plans,
     });
   }
-  // A session waits for a person: the run's event, and a Notice that names the session (any kind: Dev, QA, review,
-  // research, the planning node's).
+  // A session waits for a person: the run's event, a `person` heartbeat (never stuck), and a Notice naming the session.
   const waiting = async (sessionId: string, title: string): Promise<void> => {
     const runs = await store.unfinished();
     const run = runs.find((r) => sessionOfId(r, sessionId) !== undefined);
     if (run !== undefined) {
+      recordHeartbeat(store, run.key, {
+        phase: run.phase,
+        waitingOn: "person",
+        deadline: null,
+      });
       await store.event(run.key, "permission_pending");
       const session = sessionOfId(run, sessionId);
       if (store instanceof SqliteStore && session !== undefined)
@@ -177,6 +194,17 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
         { kind: "triage", id: sessionId },
       );
   };
+  const answered = async (sessionId: string): Promise<void> => {
+    const runs = await store.unfinished();
+    const run = runs.find((r) => sessionOfId(r, sessionId) !== undefined);
+    if (run !== undefined && run.phase !== "blocked" && run.phase !== "done") {
+      recordHeartbeat(store, run.key, {
+        phase: run.phase,
+        waitingOn: "session",
+        deadline: deadlineFor("session", clock.now(), config),
+      });
+    }
+  };
   const sessions = new DaemonSessions(
     process.env.CYCLE_SOCKET ?? join(dataDir, "daemon.sock"),
     (sessionId, title) => {
@@ -184,19 +212,80 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
       void waiting(sessionId, title);
     },
     (run, kind, data) => store.event(run, kind, data),
+    (sessionId) => {
+      void answered(sessionId);
+    },
   );
-  if (!dryRun) await sessions.start();
+  // CYC-478: verify shared repo `.git/config` is clean at startup, initialize `<stateDir>/delivery.git`, and redact
+  // any credential-shaped text leaving via GitHub or tracker comments.
+  const onRedact = (kinds: SecretKind[], runKey = "outbound") => {
+    void store.event(runKey, "secrets_redacted", { kinds: kinds.join(",") });
+  };
+  tracker.setOnRedact((kinds, issueKey) => onRedact(kinds, issueKey));
+
+  let delivery: DeliveryConfig | undefined;
+  let effectiveRepoUrl = file.repo?.url;
+  try {
+    if (!dryRun) {
+      const cfgPath = repoGitConfigPath(config.repoRoot);
+      if (cfgPath !== undefined) {
+        const cfgText = readFileSync(cfgPath, "utf8");
+        const inspected = inspectGitConfig(cfgText);
+        if (!inspected.ok) {
+          throw new Error(`refusing to start: ${config.repoRoot} ${inspected.reason}`);
+        }
+        effectiveRepoUrl ??= originUrlFromGitConfig(cfgText);
+        if (effectiveRepoUrl !== undefined) {
+          const deliveryRepo = await initDeliveryRepo(
+            stateDir,
+            effectiveRepoUrl,
+            runCommand,
+            process.env,
+          );
+          delivery = {
+            repo: deliveryRepo,
+            repoConfigHash: inspected.hash,
+            onTamper: (reason) => {
+              plog(`security notice: ${reason}`);
+              if (store instanceof SqliteStore) {
+                store.notice(
+                  file.projectKey,
+                  "supervisor",
+                  reason,
+                  `git-tamper:${file.projectKey}:${clock.now().toISOString()}`,
+                );
+              }
+            },
+          };
+        }
+      }
+      await sessions.start();
+    }
+  } catch (error) {
+    await sessions.close().catch(() => {});
+    await release();
+    throw error;
+  }
+  const repoSlug = effectiveRepoUrl !== undefined ? repoDisplayName(effectiveRepoUrl) : undefined;
   const pipeline = new Pipeline({
     config,
     tracker,
     sessions,
     exec: runCommand,
-    forge: githubForge({ exec: runCommand, env: process.env }),
+    forge: githubForge({
+      exec: runCommand,
+      env: process.env,
+      ...(repoSlug !== undefined && repoSlug !== "repository" ? { repo: repoSlug } : {}),
+      ...(!dryRun ? { stateDir } : {}),
+      onRedact: (kinds) => onRedact(kinds, "forge"),
+    }),
     workspace: gitWorkspace({
       exec: runCommand,
       env: process.env,
       repoRoot: config.repoRoot,
       remote: config.remote,
+      stateDir: config.stateDir,
+      ...(delivery !== undefined ? { delivery } : {}),
     }),
     store,
     clock,
@@ -222,6 +311,13 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
       skip: file.planning?.skip ?? "Loop 跳过",
     },
     workers,
+    cancelRun: (key) => pipeline.cancelRun(key),
   };
-  return { name, pipeline, release, close, workers, api };
+  const beat = () =>
+    recordHeartbeat(store, WORKER_BEAT_KEY, {
+      phase: "alive",
+      waitingOn: "idle",
+      deadline: null,
+    });
+  return { name, pipeline, release, close, workers, beat, api };
 };

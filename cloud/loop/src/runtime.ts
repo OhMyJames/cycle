@@ -36,6 +36,12 @@ export const startPipelines = async (
     await Promise.allSettled(projects.map((p) => p.close()));
     throw error;
   }
+  const pulse = () => {
+    for (const p of projects) p.beat?.();
+  };
+  pulse();
+  const heartbeatTimer = setInterval(pulse, 60_000);
+  heartbeatTimer.unref?.();
   const done = runLoops(
     projects.flatMap((p) =>
       workerSpecs(
@@ -51,6 +57,7 @@ export const startPipelines = async (
       ),
     ),
   ).finally(async () => {
+    clearInterval(heartbeatTimer);
     await Promise.allSettled(projects.map((p) => p.close()));
   });
   return {

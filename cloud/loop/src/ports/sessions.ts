@@ -99,15 +99,19 @@ export class DaemonSessions implements Sessions {
   readonly #watched = new Set<string>();
   readonly #onWaiting: (sessionId: string, title: string) => void;
   readonly #record: RecordEvent;
+  readonly #onPermissionResolved: ((sessionId: string) => void) | undefined;
   readonly #left = new LeftRequests();
+  readonly #cancelledBySupervisor = new Set<string>();
 
   constructor(
     socketPath: string,
     onWaiting: (sessionId: string, title: string) => void,
     record: RecordEvent = () => {},
+    onPermissionResolved?: (sessionId: string) => void,
   ) {
     this.#onWaiting = onWaiting;
     this.#record = record;
+    this.#onPermissionResolved = onPermissionResolved;
     this.#client = new CycleClient({
       name: "auto-loop",
       connect: () => connectUnix(socketPath),
@@ -115,7 +119,7 @@ export class DaemonSessions implements Sessions {
         update: (sessionId, update) => this.#update(sessionId, update as Record<string, unknown>),
         permission: (sessionId, request, requestId) =>
           this.#permission(sessionId, request, requestId),
-        resolved: (_sessionId, requestId, outcome) => {
+        resolved: (sessionId, requestId, outcome) => {
           const settled = this.#left.settle(String(requestId), outcome);
           if (settled !== undefined)
             this.#emit(settled.left.run, "permission_answered", {
@@ -124,6 +128,10 @@ export class DaemonSessions implements Sessions {
             });
           const waiter = this.#waiters.get(String(requestId));
           waiter?.({ outcome: "cancelled" });
+          const turn = this.#turns.get(sessionId);
+          if (turn !== undefined && turn.waiting === 0) {
+            this.#onPermissionResolved?.(sessionId);
+          }
         },
       },
     });
@@ -133,6 +141,13 @@ export class DaemonSessions implements Sessions {
 
   async start(): Promise<void> {
     await this.#client.start();
+  }
+
+  async cancel(sessionId: string): Promise<boolean> {
+    if (!this.#turns.has(sessionId)) return false;
+    this.#cancelledBySupervisor.add(sessionId);
+    await this.#client.cancel(sessionId).catch(() => {});
+    return true;
   }
 
   async close(): Promise<void> {
@@ -161,7 +176,9 @@ export class DaemonSessions implements Sessions {
       if (update.state === "idle" && typeof update.stopReason === "string") {
         turn.stop = update.stopReason;
         const error = update.error as { code?: unknown } | undefined;
-        turn.interrupted = error?.code === CycleErrorCode.DaemonStopped;
+        turn.interrupted =
+          error?.code === CycleErrorCode.DaemonStopped ||
+          this.#cancelledBySupervisor.delete(sessionId);
         turn.finish();
       }
     }
@@ -363,6 +380,7 @@ export class DaemonSessions implements Sessions {
     } finally {
       clearInterval(timer);
       this.#turns.delete(sessionId);
+      this.#cancelledBySupervisor.delete(sessionId);
     }
   }
 }

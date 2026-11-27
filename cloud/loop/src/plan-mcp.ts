@@ -7,6 +7,7 @@
 
 import type { Tracker } from "./ports/tracker.ts";
 import type { LoopFields } from "./project.ts";
+import { redactPreservingMarker, type SecretKind } from "./secrets.ts";
 import type {
   BacklogRow,
   Config,
@@ -198,6 +199,7 @@ export class PlanTracker implements Tracker {
   #loopFields: LoopFields | null = null;
   #timeoutMs: number;
   readonly #retryDelaysMs: number[];
+  #onRedact: ((kinds: SecretKind[], issueKey: string) => void) | undefined;
 
   /** `columns` may be left out until `setColumns` is called with what `get_project` resolved. */
   constructor(options: {
@@ -209,6 +211,7 @@ export class PlanTracker implements Tracker {
     timeoutMs?: number;
     /** Waits before each retry of a read; default 1 s, 3 s. */
     retryDelaysMs?: number[];
+    onRedact?: (kinds: SecretKind[], issueKey: string) => void;
   }) {
     this.#timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.#retryDelaysMs = options.retryDelaysMs ?? READ_RETRY_DELAYS_MS;
@@ -216,6 +219,11 @@ export class PlanTracker implements Tracker {
     this.#key = options.key;
     this.#project = options.projectKey;
     this.#columns = options.columns;
+    this.#onRedact = options.onRedact;
+  }
+
+  setOnRedact(fn: (kinds: SecretKind[], issueKey: string) => void): void {
+    this.#onRedact = fn;
   }
 
   /** `tuning.trackerTimeoutSeconds`, read again each step. */
@@ -508,7 +516,9 @@ export class PlanTracker implements Tracker {
   }
 
   async comment(issue: Issue, text: string): Promise<void> {
-    await this.#call("add_comment", { issueId: issue.id, body: text });
+    const clean = redactPreservingMarker(text);
+    if (clean.kinds.length > 0) this.#onRedact?.(clean.kinds, issue.key);
+    await this.#call("add_comment", { issueId: issue.id, body: clean.text });
   }
 
   async listDocuments(): Promise<DocumentEntry[]> {

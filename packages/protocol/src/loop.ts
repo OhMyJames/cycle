@@ -105,6 +105,7 @@ export const LOOP_TICKETS_ACT = "loop/tickets/act";
 export const LOOP_INTENTS_RETRY = "loop/intents/retry";
 export const LOOP_STATUS = "loop/status";
 export const LOOP_GRAPH_ACT = "loop/graph/act";
+export const LOOP_RUN_CANCEL = "loop/run/cancel";
 
 /** The most bytes of one request line; a connection that sends more without a newline is closed. */
 export const LOOP_MAX_LINE_BYTES = 1_048_576;
@@ -437,6 +438,16 @@ export const LoopTicketDetailSchema = z.object({
   graph: LoopGraphSchema.optional(),
 });
 export type LoopTicketDetail = z.infer<typeof LoopTicketDetailSchema>;
+
+export const LoopRunCancelParamsSchema = z.object({
+  project: z.string().min(1),
+  key: z.string().min(1),
+  actor: z.string().min(1).max(100),
+  actorKind: z.enum(["desktop", "operator", "supervisor"]),
+});
+export type LoopRunCancelParams = z.infer<typeof LoopRunCancelParamsSchema>;
+export const LoopRunCancelResultSchema = z.object({ cancelled: z.boolean() });
+export type LoopRunCancelResult = z.infer<typeof LoopRunCancelResultSchema>;
 
 export const LoopStatusResultSchema = z.object({
   version: z.string().min(1),

@@ -1,5 +1,7 @@
 import type { CriteriaBook } from "../../criteria.ts";
 import { branchOf, tail } from "../../engine/flow.ts";
+import { deadlineFor, recordHeartbeat } from "../../engine/heartbeat.ts";
+import { floorHits } from "../../guard/floor.ts";
 import { renderReviewComment } from "../../pr.ts";
 import {
   formatReviewFindings,
@@ -242,8 +244,50 @@ export async function review(
     return undefined;
   }
 
-  // Merge: enable squash auto-merge only when CI is green and the PR review comment succeeded.
+  // Merge: check the hard path floor before enabling auto-merge (CYC-481). Touching any floor path, or failing to
+  // read the changed path list, forces an escalate to a person regardless of the LLM verdict.
   if (verdict.decision === "merge") {
+    const changed = await h.net(
+      run.key,
+      "gh pr diff",
+      () => h.d.forge.changedPaths(where(h, worktree), prUrl),
+      (r) => (r.ok ? undefined : r.error),
+    );
+    const hits = changed.ok ? floorHits(changed.paths) : [];
+    if (!changed.ok || hits.length > 0) {
+      const floorReason = changed.ok
+        ? `改动涉及需要人合并的路径：${hits.join("、")}`
+        : `无法读取 PR 改动路径列表，按路径底线升级给人合并：${tail(changed.error)}`;
+      const escalatedVerdict: ReviewVerdict = {
+        ...verdict,
+        decision: "escalate",
+        reasons: [...verdict.reasons, floorReason],
+      };
+      const commented = await writeAndPostComment(
+        renderReviewComment({
+          issueKey: run.key,
+          ciChecks: config.ciChecks,
+          ciGreen,
+          sessionId: reviewSessionId,
+          verdict: escalatedVerdict,
+        }),
+        "floor_hit",
+      );
+      await store.event(run.key, "floor_hit", {
+        ...(changed.ok ? { paths: hits.join(",") } : { unreadable: true }),
+      });
+      await store.event(run.key, "review_decided", { decision: "escalate" });
+      const commentErrorLine = !commented.ok
+        ? `\n写入 PR 评审评论失败：${tail(commented.error)}`
+        : "";
+      return deliverWith(
+        "floor_hit",
+        `已开 PR：${prUrl}\n${floorReason}，未开启自动合并，已升级给人合并。${commentErrorLine}`,
+        { decision: "escalate", autoMerge: false },
+        true,
+      );
+    }
+
     const commented = await writeAndPostComment(
       renderReviewComment({
         issueKey: run.key,
@@ -264,6 +308,11 @@ export async function review(
       );
       if (merged.ok) {
         h.mirror(run.key, issue, "merge");
+        recordHeartbeat(h.d.store, run.key, {
+          phase: "review",
+          waitingOn: "merge",
+          deadline: deadlineFor("merge", h.d.clock.now(), h.d.config),
+        });
         const outcome = await confirmMerged(h, run, prUrl, worktree);
         if (outcome === "conflict") {
           // Not delivered: merge the base in (auto-merge is turned off first), then CI and review run again.

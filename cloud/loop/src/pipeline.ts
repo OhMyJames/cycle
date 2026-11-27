@@ -30,6 +30,7 @@ export class Pipeline extends Engine {
             env: input.env,
             repoRoot: input.config.repoRoot,
             remote: input.config.remote,
+            stateDir: input.config.stateDir,
           }),
       },
       (host) => ({

@@ -41,7 +41,7 @@ export async function claim(h: FlowHost, run: DevRun, issue: Issue, save: Save):
   // A worktree made now has no node_modules.
   worktree = h.need(worktree === "" ? undefined : worktree);
   const before = fresh ? await freeKb(h, worktree) : undefined;
-  await install(h, worktree);
+  await install(h, worktree, run.key);
   if (fresh) await recordInstall(h, run.key, worktree, before);
 
   if (graph !== undefined && firstNode !== undefined) {

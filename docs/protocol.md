@@ -1302,6 +1302,7 @@ Loop 页顶部的 Notice 区由桌面主进程从两处派生,不依赖 Loop 服
 | `loop/tickets/act`   | `{project, verb, keys[], reason?, confirmed, actor, actorKind}`            | `{results}`                                            |
 | `loop/intents/retry` | `{project, id?, key?, actor, actorKind}`                                   | `{retried}`(重新排队的 intent 数)                      |
 | `loop/graph/act`     | `{project, key, nodeId, action, title?, goal?, verify?, actor, actorKind}` | `{key, nodeId, action, phase, graph}`                  |
+| `loop/run/cancel`    | `{project, key, actor, actorKind}`                                         | `{cancelled}`                                          |
 | `loop/status`        | 无                                                                         | `{version, restartedAt, projects}`                     |
 
 - **看板**:server 用 `planKey` 读 itsaplan,列按 stateType(backlog、unstarted、started、completed、canceled)再按看板顺序;完成和取消的列只取最近 30 张。卡片有编号、标题、类型名、优先级、标签名、`parent`(父工单 `{key, title}`,取自 `list_issues` 的 `parent`,无父工单为 `null`,旧 server 可不带该字段)、`pendingReason`(带 `待批准` 的卡,取最新评论首行,最多 20 张、140 字,读不到为 `null`)、`phase`(只对 started 列里有未完成 run 的卡,`{name, since}` 取自 run 的 `phase` 和 `updatedAt`,不读 tracker 自定义字段;心跳在 `run/get` 和 `stuck` Notice 里用)。缓存 15 秒;读失败时返回上一次的结果并标 `stale: true`(`readAt` 仍是上次成功的时间);第一次就失败返回 `-32603`,`data.reason` 为 `tracker_unreachable`。
@@ -1327,6 +1328,7 @@ Loop 页顶部的 Notice 区由桌面主进程从两处派生,不依赖 Loop 服
 - **对账的重试与 `loop/intents/retry`(CYC-497)**:Loop 写给 tracker 的评论、移列、标签和阶段字段是 intent,由对账按工单依次执行。失败按种类处理:网络错误、超时、5xx **不计入** `attempts`,intent 留在 `pending`,按它自己的 `next_at` 退避重试(30 秒、1、2、4 分钟,上限 10 分钟),所以 tracker 断网多久都不会让它 `stuck`;其他错误照旧计数,超过 10 次标 `stuck`;`tracker.get` 明确返回找不到(工单被删),直接标 `stuck`,原因 `not_found`,不重试。**同一张工单**里,前面有 `stuck` 的评论或移列时,后面的评论和移列不执行、保持 `pending`(先评论再移列);标签照旧,阶段字段是另一条 lane,不受影响。卡住时只有一条 Notice(`intent_stuck`,来自 `intents` 里卡住的那条);重新排队后它随之消失。
   - `loop/intents/retry`:把 `stuck` 的 intent 改回 `pending`、`attempts` 和退避清零、`next_at` 清空,下一次对账就执行。`id` 指一条,`key` 指这张工单(如 `CYC-390`)的全部卡住的 intent;两者必须给且只给一个,否则 `-32602`(`invalid_params`)。`id` 不存在返回 `-32602`(`not_found`);不是 `stuck` 的什么都不改。需要 `actor` 和 `actorKind`(缺则 `actor_required`,什么都不写)。每条重新排队的 intent 写一条 `actions`(`intent_retry`,带 `intentId`、`actor`、`actorKind`)。返回 `{retried}`。
 - **`actor` 和 `actorKind`**:写方法必须带,`actorKind` 只认 `desktop`、`operator`;缺或不合法返回 `-32602`,`data.reason` 为 `actor_required`,什么都不写。**这不是认证**:能连上 `loop.sock` 的就是本机同一用户,`actor` 是自报的;写入用 Loop 自己的 itsaplan key,所以 itsaplan 的审计里是 Loop,评论和 `actions` 才是谁做的记录。剩余风险见决定笔记。
+- **`loop/run/cancel`(CYC-484)**:守护者或运营方取消某张正在运行的工单当前运行中的会话回合,使其按中断逻辑重试。`actorKind` 可为 `desktop`、`operator`、`supervisor`,写一条 `actions`(`run_cancel`)。返回 `{cancelled: boolean}`。
 - **`loop/status`**:`version`(Loop 所在发行版本)、`restartedAt`(本进程启动时间)、每个 Project 的 `workers` 数和未结束且不在 Blocked 的 run(`key`、`kind`、`phase`)。
 - **socket**:仍是 `<dataDir>/loop.sock`,`0600`;一行最多 1 MB(1,048,576 字节),超过不等换行就断开连接。
 - **埋点**:只记行为,不含工单内容:每次调用写一行日志 `loop api <方法名> <结果计数>`(如 `ok=2 skipped=1 failed=0`),没有工单号、标题、原因或 actor。不向 PostHog 发(Loop 服务不在 Electron 主进程里,桌面端改用这组方法时再在主进程埋点)。

@@ -1,7 +1,10 @@
-// The forge over `gh` (CYC-477). Every command carries `deliverEnv`: only the allowlisted GitHub credentials. The
-// readers below were `pr.ts`'s functions; they are internal now, and the loop reaches them through `Forge`.
+// The forge over `gh` (CYC-477, CYC-478). When `stateDir` and `repo` are configured, every `gh` runs in an empty
+// `<stateDir>/gh-cwd` directory with minimal `ghEnv` and explicit `--repo <owner/name>`. Outbound PR bodies and
+// comments pass through `redactSecrets`.
+import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { z } from "zod";
-import { deliverEnv } from "../env.ts";
+import { deliverEnv, ensureGhDirs, ghEnv } from "../env.ts";
+import { redactSecrets, type SecretKind } from "../secrets.ts";
 import type { Exec } from "../types.ts";
 import {
   type At,
@@ -503,15 +506,46 @@ const findUrl = (text: string): string | undefined =>
     .find((line) => /^https:\/\/\S+$/.test(line.trim()))
     ?.trim();
 
-/** The forge over `gh`: the same commands the loop ran itself before, with `deliverEnv`. */
+/** The forge over `gh`: isolated cwd/env and `--repo` when configured, with outbound secret redaction (CYC-478). */
 export const githubForge = (deps: {
   exec: Exec;
   env: Record<string, string | undefined>;
+  repo?: string;
+  stateDir?: string;
+  onRedact?: (kinds: SecretKind[]) => void;
 }): Forge => {
-  const { exec, env } = deps;
+  const { exec, env, repo, stateDir, onRedact } = deps;
+  const ghExec: Exec = (argv, options) => {
+    const withRepo =
+      repo !== undefined && argv[0] === "gh" && !argv.includes("--repo")
+        ? [...argv, "--repo", repo]
+        : argv;
+    // Only move `gh` out of the repo cwd when `--repo` is known; otherwise `gh` cannot resolve the repository.
+    const cwd =
+      stateDir !== undefined && repo !== undefined ? ensureGhDirs(stateDir).cwd : options.cwd;
+    const cmdEnv = stateDir !== undefined ? ghEnv(env, stateDir) : options.env;
+    return exec(withRepo, { cwd, env: cmdEnv, timeoutMs: options.timeoutMs });
+  };
   const run = (at: At, argv: string[]) =>
-    exec(argv, { cwd: at.cwd, env: deliverEnv(env), timeoutMs: at.timeoutMs });
+    ghExec(argv, { cwd: at.cwd, env: deliverEnv(env), timeoutMs: at.timeoutMs });
   const base = (at: At) => ({ cwd: at.cwd, env, timeoutMs: at.timeoutMs });
+  const sanitizeFile = (bodyPath: string): { path: string; temp: string | null } => {
+    if (!existsSync(bodyPath)) return { path: bodyPath, temp: null };
+    const raw = readFileSync(bodyPath, "utf8");
+    const redacted = redactSecrets(raw);
+    if (redacted.kinds.length === 0) return { path: bodyPath, temp: null };
+    onRedact?.(redacted.kinds);
+    const outPath = `${bodyPath}.redacted`;
+    writeFileSync(outPath, redacted.text, { mode: 0o600 });
+    chmodSync(outPath, 0o600);
+    return { path: outPath, temp: outPath };
+  };
+  const sanitizeText = (text: string): string => {
+    const redacted = redactSecrets(text);
+    if (redacted.kinds.length === 0) return text;
+    onRedact?.(redacted.kinds);
+    return redacted.text;
+  };
   return {
     async prFor(at, branch) {
       const done = await run(at, ["gh", "pr", "view", branch, "--json", "url", "--jq", ".url"]);
@@ -522,57 +556,77 @@ export const githubForge = (deps: {
       return { ok: true, url };
     },
     async createPr(at, input) {
-      const done = await run(at, [
-        "gh",
-        "pr",
-        "create",
-        "--base",
-        input.base,
-        "--head",
-        input.head,
-        "--title",
-        input.title,
-        "--body-file",
-        input.bodyPath,
-      ]);
-      const url = findUrl(done.output);
-      if (done.timedOut || done.code !== 0 || url === undefined) {
-        return rawFailed("gh pr create", done);
+      const body = sanitizeFile(input.bodyPath);
+      const title = sanitizeText(input.title);
+      try {
+        const done = await run(at, [
+          "gh",
+          "pr",
+          "create",
+          "--base",
+          input.base,
+          "--head",
+          input.head,
+          "--title",
+          title,
+          "--body-file",
+          body.path,
+        ]);
+        const url = findUrl(done.output);
+        if (done.timedOut || done.code !== 0 || url === undefined) {
+          return rawFailed("gh pr create", done);
+        }
+        return { ok: true, url };
+      } finally {
+        if (body.temp !== null) rmSync(body.temp, { force: true });
       }
-      return { ok: true, url };
     },
     async editPr(at, pr, input) {
-      const done = await run(at, [
-        "gh",
-        "pr",
-        "edit",
-        pr,
-        "--title",
-        input.title,
-        "--body-file",
-        input.bodyPath,
-      ]);
-      return done.timedOut || done.code !== 0 ? rawFailed("gh pr edit", done) : { ok: true };
+      const body = sanitizeFile(input.bodyPath);
+      const title = sanitizeText(input.title);
+      try {
+        const done = await run(at, [
+          "gh",
+          "pr",
+          "edit",
+          pr,
+          "--title",
+          title,
+          "--body-file",
+          body.path,
+        ]);
+        return done.timedOut || done.code !== 0 ? rawFailed("gh pr edit", done) : { ok: true };
+      } finally {
+        if (body.temp !== null) rmSync(body.temp, { force: true });
+      }
     },
-    prState: (at, pr) => readPrState({ prRef: pr, exec, ...base(at) }),
-    prMergeStatus: (at, pr) => readPrMergeStatus({ prRef: pr, exec, ...base(at) }),
+    prState: (at, pr) => readPrState({ prRef: pr, exec: ghExec, ...base(at) }),
+    prMergeStatus: (at, pr) => readPrMergeStatus({ prRef: pr, exec: ghExec, ...base(at) }),
     ciStatus: (at, pr, headSha, required) =>
       readCiStatus({
         prRef: pr,
         requiredChecks: required,
         expectedHeadSha: headSha,
-        exec,
+        exec: ghExec,
         ...base(at),
       }),
     failedLogs: (at, failed, maxLogChars) =>
-      readCiFailureLogs({ failed, exec, maxLogChars, ...base(at) }),
-    rerunFailed: (at, failed, budget) => rerunFailedCi({ failed, ...budget, exec, ...base(at) }),
-    comment: (at, pr, bodyPath) => postPrComment({ prRef: pr, bodyPath, exec, ...base(at) }),
+      readCiFailureLogs({ failed, exec: ghExec, maxLogChars, ...base(at) }),
+    rerunFailed: (at, failed, budget) =>
+      rerunFailedCi({ failed, ...budget, exec: ghExec, ...base(at) }),
+    comment: async (at, pr, bodyPath) => {
+      const body = sanitizeFile(bodyPath);
+      try {
+        return await postPrComment({ prRef: pr, bodyPath: body.path, exec: ghExec, ...base(at) });
+      } finally {
+        if (body.temp !== null) rmSync(body.temp, { force: true });
+      }
+    },
     autoMerge: (at, pr, on) =>
       on
-        ? enableAutoMerge({ prRef: pr, exec, ...base(at) })
-        : disableAutoMerge({ prRef: pr, exec, ...base(at) }),
-    autoMergeOn: (at, pr) => readAutoMerge({ prRef: pr, exec, ...base(at) }),
+        ? enableAutoMerge({ prRef: pr, exec: ghExec, ...base(at) })
+        : disableAutoMerge({ prRef: pr, exec: ghExec, ...base(at) }),
+    autoMergeOn: (at, pr) => readAutoMerge({ prRef: pr, exec: ghExec, ...base(at) }),
     async changedPaths(at, pr) {
       const done = await run(at, ["gh", "pr", "diff", pr, "--name-only"]);
       if (done.timedOut || done.code !== 0) return timedOutOrFailed("gh pr diff", done);

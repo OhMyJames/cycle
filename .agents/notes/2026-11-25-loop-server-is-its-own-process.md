@@ -23,3 +23,7 @@ No alternatives were recorded.
 
 - A second process to start, and a second socket. Agents running as the same user can still read a 0600 file; this note does not claim otherwise (see [2026-11-24-keep-agents-from-reading-secrets-env](2026-11-24-keep-agents-from-reading-secrets-env.md) for the same limit on `secrets.env`).
 - Verified by tests in `cloud/loop`; not verified against a remote machine.
+
+## Related
+
+- [2026-11-26-loop-api-is-the-only-way-in](2026-11-26-loop-api-is-the-only-way-in.md) — extends this process boundary from `projects/list` to the full `loop/*` API so desktop and operator clients never connect to itsaplan directly.

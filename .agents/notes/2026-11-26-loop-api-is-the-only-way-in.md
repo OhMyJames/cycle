@@ -20,3 +20,8 @@ The Loop server answers the board, runs, Notices, approve/return and status over
 ## Consequences
 
 `actor` is self-declared. Anyone who can open `loop.sock` (the same OS user) can write as any actor; this is attribution, not authentication. The writes go out under the Loop's own itsaplan key, so itsaplan's audit trail shows the Loop, not the person: the comment ("由 <actor> 在桌面端批准/退回") and the `actions` row are the record of who acted. Remote access, several users and authentication are out of scope; they need a different decision.
+
+## Related
+
+- [2026-11-25-loop-server-is-its-own-process](2026-11-25-loop-server-is-its-own-process.md) — establishes the standalone Loop server process and mode-0600 unix socket that hosts the `loop/*` API.
+- [2026-11-27-loop-is-three-layers-and-a-person](2026-11-27-loop-is-three-layers-and-a-person.md) — places the `loop/*` API as the single boundary between Work loop, desktop, and operator clients.
