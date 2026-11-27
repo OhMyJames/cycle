@@ -251,6 +251,8 @@ export function TicketDrawer({
   projectKey,
   identifier,
   summary,
+  closing = false,
+  onExited,
   act,
   busyAction,
   onClose,
@@ -262,6 +264,9 @@ export function TicketDrawer({
   identifier: string;
   /** The ticket card from the board (when available) so the drawer shows header info immediately while loading details. */
   summary?: LoopTicket | undefined;
+  /** Playing the slide-out: the drawer is unmounted by the parent once `onExited` is called. */
+  closing?: boolean;
+  onExited?: () => void;
   act: Act;
   busyAction?: string | undefined;
   onClose: () => void;
@@ -317,14 +322,29 @@ export function TicketDrawer({
     closeRef.current?.focus();
   }, []);
 
+  // No animation event comes with reduced motion (or if the animation never runs): do not wait for one.
+  useEffect(() => {
+    if (!closing) return;
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const timer = window.setTimeout(() => onExited?.(), reduced ? 0 : 800);
+    return () => window.clearTimeout(timer);
+  }, [closing, onExited]);
+
   const loaded = typeof ticket === "object" ? ticket : undefined;
   const headTicket = loaded ?? summary;
   const isPending = headTicket?.pending !== undefined;
 
   return (
-    <div data-slot="loop-drawer-layer">
+    <div data-slot="loop-drawer-layer" data-state={closing ? "closing" : "open"} inert={closing}>
       <div data-slot="loop-drawer-backdrop" aria-hidden="true" onClick={onClose} />
-      <aside data-slot="loop-drawer" data-kind="loop-ticket-drawer" aria-label={identifier}>
+      <aside
+        data-slot="loop-drawer"
+        data-kind="loop-ticket-drawer"
+        aria-label={identifier}
+        onAnimationEnd={(e) => {
+          if (closing && e.target === e.currentTarget) onExited?.();
+        }}
+      >
         <header data-slot="loop-drawer-head">
           <div data-slot="loop-drawer-meta">
             <span data-slot="loop-ticket-id">{identifier}</span>

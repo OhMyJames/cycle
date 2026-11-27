@@ -241,7 +241,7 @@ test("a failed Back to Backlog in the ticket drawer is said there, and gone afte
   await user.click(within(drawer).getByRole("button", { name: "Back to Backlog CYC-602" }));
   await within(drawer).findByText(/could not be reached/);
   await user.click(within(drawer).getByRole("button", { name: /Close ticket/ }));
-  expect(screen.queryByRole("complementary", { name: "CYC-602" })).toBeNull();
+  await waitFor(() => expect(screen.queryByRole("complementary", { name: "CYC-602" })).toBeNull());
   expect(screen.queryByText(/could not be reached/)).toBeNull();
 });
 
@@ -309,6 +309,32 @@ test("Escape on the ticket drawer closes the drawer, not the board", async () =>
   await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("complementary", { name: "CYC-700" })).toBeNull());
   expect(document.querySelector('[data-kind="loop-board"]')).not.toBeNull();
+});
+
+test("closing the ticket drawer plays the slide-out first, then removes it", async () => {
+  const { user } = await openTicketDrawer("new");
+  await screen.findByRole("complementary", { name: "CYC-700" });
+  const layer = document.querySelector('[data-slot="loop-drawer-layer"]');
+  expect(layer?.getAttribute("data-state")).toBe("open");
+  await user.keyboard("{Escape}");
+  expect(layer?.getAttribute("data-state")).toBe("closing");
+  expect(layer?.isConnected).toBe(true);
+  await waitFor(() => expect(document.querySelector('[data-slot="loop-drawer-layer"]')).toBeNull());
+});
+
+test("a card clicked while the drawer closes opens that ticket", async () => {
+  const { user } = await openTicketDrawer("new");
+  await screen.findByRole("complementary", { name: "CYC-700" });
+  await user.keyboard("{Escape}");
+  await user.click(await screen.findByRole("button", { name: "Ticket 700" }));
+  const layer = await waitFor(() => {
+    const el = document.querySelector('[data-slot="loop-drawer-layer"]');
+    expect(el?.getAttribute("data-state")).toBe("open");
+    return el;
+  });
+  await new Promise((r) => setTimeout(r, 500));
+  expect(layer?.isConnected).toBe(true);
+  expect(screen.getByRole("complementary", { name: "CYC-700" })).toBeTruthy();
 });
 
 test("leaving the Loop from a ticket drawer and coming back lands on the level it was left on", async () => {
