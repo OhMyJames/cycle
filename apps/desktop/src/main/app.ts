@@ -54,7 +54,7 @@ import { memoryPreferencesStore, type PreferencesStore, startPreferences } from 
 import { fileSettings } from "./settings.ts";
 import { createPageSwitch } from "./ui-page.ts";
 import type { UiStore } from "./ui-store.ts";
-import { UiUpdater, type UiUpdaterDeps } from "./ui-updater.ts";
+import { checkEverything, UiUpdater, type UiUpdaterDeps } from "./ui-updater.ts";
 import { cleanStale, Updater, type UpdaterDeps } from "./updater.ts";
 import { type FrameStore, keepFrame, MIN_SIZE, restoredFrame } from "./window-frame.ts";
 
@@ -358,7 +358,9 @@ export const startApp = async (options: AppOptions) => {
   const methods: Handlers = {
     updateState: () => updater.state,
     checkForUpdate: async () => {
-      const state = await updater.check(true);
+      const state = await checkEverything(updater, interfaceUpdater, (message) =>
+        console.warn(`[interface] ${message}`),
+      );
       const result = updateResult(state.kind);
       if (result !== undefined) analytics.track("update_checked", { result });
       return state;

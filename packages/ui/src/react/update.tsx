@@ -5,7 +5,7 @@ import type { Translator } from "../i18n.ts";
 import { AppNotice } from "./app-notice.tsx";
 import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
-import { DownloadIcon, ErrorCircleIcon, RefreshIcon, WarningIcon } from "./icons.tsx";
+import { CheckIcon, DownloadIcon, ErrorCircleIcon, RefreshIcon, WarningIcon } from "./icons.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
 
 /** Whole megabytes, and tenths while the whole is small (an update that changed a little). */
@@ -45,6 +45,34 @@ export function UpdateNotice() {
   const update = useAppState((s) => s.update);
   const [confirming, setConfirming] = useState(false);
   const deferred = useAppState((s) => s.updateDeferred);
+  const check = useAppState((s) => s.updateCheck);
+  if (check !== undefined && (update === undefined || !updateNoticed(update, deferred))) {
+    // A check the person asked for answers where they can see it, then goes: nothing to do, nothing kept.
+    return (
+      <AppNotice
+        tone={check === "failed" ? "error" : "info"}
+        busy={check === "checking"}
+        icon={
+          check === "checking" ? (
+            <RefreshIcon />
+          ) : check === "failed" ? (
+            <ErrorCircleIcon />
+          ) : (
+            <CheckIcon />
+          )
+        }
+        text={
+          check === "checking"
+            ? t("update.checking")
+            : check === "failed"
+              ? update?.kind === "error"
+                ? t("update.checkFailedReason", { reason: update.message })
+                : t("update.checkFailed")
+              : t("update.upToDateNow")
+        }
+      />
+    );
+  }
   if (update === undefined || !updateNoticed(update, deferred)) return null;
   const busy = update.kind === "downloading" || update.kind === "installing";
   const failedInstall = update.kind === "error";

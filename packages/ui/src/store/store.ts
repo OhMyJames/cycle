@@ -37,6 +37,9 @@ export { type BlankWorktree, blankWorktreeOf } from "./worktrees.ts";
 /** How long the Diff tab has to answer a request to show an edit before it lapses. */
 const REVEAL_IN_DIFF_MS = 3_000;
 
+/** How long the answer to a check the person asked for stays on screen. */
+const UPDATE_CHECK_MS = 4_000;
+
 /** Which view of its Diff tab each session shows (this session's edits, or the workspace), and who to tell of a change. */
 export class DiffModes {
   readonly #modes = new Map<string, "session" | "workspace">();
@@ -55,6 +58,10 @@ export class DiffModes {
 
 export class AppStore extends StoreBase {
   #stop: (() => void) | undefined;
+  #updateEpoch = 0;
+  #updateInflight = 0;
+  #updateAnswer: "up-to-date" | "failed" | undefined;
+  #updateCheckTimer: ReturnType<typeof setTimeout> | undefined;
   /** Which view each session's Diff tab shows: kept while the window is open, so a tab looked away from finds it again. */
   readonly diffModes = new DiffModes();
 
@@ -108,6 +115,9 @@ export class AppStore extends StoreBase {
   }
 
   stop(): void {
+    clearTimeout(this.#updateCheckTimer);
+    // A check still out is not waited for: whatever it brings is dropped.
+    this.#updateEpoch += 1;
     this.#stop?.();
   }
 
@@ -481,7 +491,43 @@ export class AppStore extends StoreBase {
   // ---- the app itself ----
 
   checkForUpdate = async (): Promise<void> => {
-    await this.attempt(async () => this.set({ update: await this.bridge.checkForUpdate() }));
+    const epoch = this.#updateEpoch;
+    clearTimeout(this.#updateCheckTimer);
+    this.#updateInflight += 1;
+    this.set({ updateCheck: "checking" });
+    try {
+      const update = await this.bridge.checkForUpdate();
+      if (epoch !== this.#updateEpoch) return;
+      // A check already under way answers "checking": that is not an answer, the one it belongs to will give it.
+      if (update.kind !== "checking") {
+        this.#updateAnswer =
+          update.kind === "up-to-date"
+            ? "up-to-date"
+            : update.kind === "error"
+              ? "failed"
+              : undefined;
+        // Asked for by the person: a version they put off before is said again.
+        this.set({
+          update,
+          ...(update.kind === "available" ? { updateDeferred: undefined } : {}),
+        });
+      }
+    } catch {
+      if (epoch !== this.#updateEpoch) return;
+      this.#updateAnswer = "failed";
+    } finally {
+      if (epoch === this.#updateEpoch) this.#updateInflight -= 1;
+    }
+    if (epoch !== this.#updateEpoch || this.#updateInflight > 0) return;
+    // The last check asked for has settled: its answer, for a few seconds, or nothing when there is nothing to say.
+    const answer = this.#updateAnswer;
+    this.#updateAnswer = undefined;
+    this.set({ updateCheck: answer });
+    if (answer !== undefined)
+      this.#updateCheckTimer = setTimeout(
+        () => this.set({ updateCheck: undefined }),
+        UPDATE_CHECK_MS,
+      );
   };
 
   /** The person's answer about usage statistics. */

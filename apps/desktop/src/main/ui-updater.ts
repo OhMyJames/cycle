@@ -187,3 +187,17 @@ export class UiUpdater {
     return this.#state;
   }
 }
+
+/**
+ * A check the person asked for: the whole app and the page are asked together, so a newer page does not wait for the
+ * next poll. The app's answer is returned as soon as it is known; the page's check may download an archive, so it is
+ * not waited for: what it finds reaches the page through the updater's own emit.
+ */
+export const checkEverything = async <S>(
+  app: { check: (manual: boolean) => Promise<S> },
+  page: { check: () => Promise<unknown> } | undefined,
+  log: (message: string) => void = () => {},
+): Promise<S> => {
+  page?.check().catch((error) => log(`Interface update check: ${String(error)}`));
+  return app.check(true);
+};

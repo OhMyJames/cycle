@@ -219,3 +219,34 @@ test("a network that is down is an error in words, and nothing else", async () =
   });
   expect(await failing.check()).toEqual({ error: "offline" });
 });
+
+test("a manual check asks the whole-app updater and the interface updater together", async () => {
+  const { checkEverything } = await import("../src/main/ui-updater.ts");
+  const { updater } = make();
+  publish(7);
+  const calls: string[] = [];
+  const app = {
+    check: async (manual: boolean) => {
+      calls.push(`app:${manual}`);
+      return { current: "0.1.0", kind: "up-to-date" as const, checkedAt: 0 };
+    },
+  };
+  const state = await checkEverything(app, updater);
+  expect(calls).toEqual(["app:true"]);
+  expect(state.kind).toBe("up-to-date");
+  // The page's check is not waited for: its own emit says what it found.
+  await Bun.sleep(50);
+  expect(requests.length).toBeGreaterThan(0);
+  expect(events.some((e) => e.installed === 7)).toBe(true);
+  // Without an interface updater only the app is asked.
+  expect((await checkEverything(app, undefined)).kind).toBe("up-to-date");
+});
+
+test("a slow or failing interface check does not hold back the app's answer", async () => {
+  const { checkEverything } = await import("../src/main/ui-updater.ts");
+  const never = { check: () => new Promise<never>(() => {}) };
+  const failing = { check: () => Promise.reject(new Error("boom")) };
+  const app = { check: async () => "done" };
+  expect(await checkEverything(app, never)).toBe("done");
+  expect(await checkEverything(app, failing)).toBe("done");
+});

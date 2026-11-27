@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
-import type { AppEvent, PermissionRequest, SessionSnapshot } from "../src/api.ts";
+import type { AppEvent, PermissionRequest, SessionSnapshot, UpdateState } from "../src/api.ts";
 import { DraftStore } from "../src/draft.ts";
 import { applyUpdate, emptyConversation, reduce } from "../src/model/index.ts";
 import { AppStore, BLANK_KEY, blankWorktreeOf, viewKey } from "../src/store/index.ts";
@@ -448,6 +448,35 @@ test("the update state is read at the start, follows main's events, and the user
   expect(store.getState().update?.kind).toBe("up-to-date");
   await store.installUpdate();
   expect(named("installUpdate")).toHaveLength(1);
+});
+
+test("overlapping checks end with one answer, and a stopped store keeps nothing", async () => {
+  const script = fakeBridge();
+  const answers: ((state: UpdateState) => void)[] = [];
+  script.bridge.checkForUpdate = () => new Promise<UpdateState>((r) => answers.push(r));
+  const store = new AppStore(script.bridge);
+  await store.start();
+  const first = store.checkForUpdate();
+  const second = store.checkForUpdate();
+  // The second is told one is under way; the first brings the answer.
+  answers[1]?.({ current: "0.1.0", kind: "checking" });
+  await second;
+  expect(store.getState().updateCheck).toBe("checking");
+  answers[0]?.({ current: "0.1.0", kind: "up-to-date", checkedAt: 0 });
+  await first;
+  expect(store.getState().update?.kind).toBe("up-to-date");
+  expect(store.getState().updateCheck).toBe("up-to-date");
+  // A check that throws says it failed.
+  script.bridge.checkForUpdate = () => Promise.reject(new Error("offline"));
+  await store.checkForUpdate();
+  expect(store.getState().updateCheck).toBe("failed");
+  // One still out when the store stops is dropped.
+  script.bridge.checkForUpdate = () => new Promise<UpdateState>((r) => answers.push(r));
+  const pending = store.checkForUpdate();
+  store.stop();
+  answers[2]?.({ current: "0.1.0", kind: "up-to-date", checkedAt: 0 });
+  await pending;
+  expect(store.getState().updateCheck).toBe("checking");
 });
 
 test("an install that main refuses shows its reason, in the words main used", async () => {
