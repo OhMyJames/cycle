@@ -129,7 +129,7 @@ export const packageApp = (outDir = BUILD_DIR): Packaged => {
   );
   writeFileSync(
     join(staging, BUILD_FILE),
-    `${JSON.stringify({ name: APP_NAME, identifier: BUNDLE_ID, version, baseVersion: version, ...(commit ? { commit } : {}), ...(subject ? { subject } : {}), platform, arch, electron: electron.version, shell, uiVersion, ...posthogProject() }, null, 2)}\n`,
+    `${JSON.stringify({ name: APP_NAME, identifier: BUNDLE_ID, version, ...(commit ? { commit } : {}), ...(subject ? { subject } : {}), platform, arch, electron: electron.version, shell, uiVersion, ...posthogProject() }, null, 2)}\n`,
   );
 
   const app = join(outDir, platform === "darwin" ? MAC_BUNDLE : "Cycle");

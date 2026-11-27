@@ -65,7 +65,7 @@ ACP 方法和类型已对照 `@agentclientprotocol/sdk` 2.7.0 的 v2 稳定版 J
 
 - **旧 daemon 的降级**:远程 daemon 可能比客户端旧。`sessionOps` 里没有 `markRead` 的 daemon,客户端不发 `_cycle/session/mark_read`;它的列表里没有 `updatedAt`、`cycle/unread`、`cycle/background`,客户端按"缺失"处理,不得报错,也不得把缺失当成 `false` 或 0 以外的意思(规则见 §6)。
 
-- 桌面端在 `initialize` 的 `_meta["cycle/appVersion"]` 里报自己的版本(alpha 报它基于的发行版 `baseVersion`),格式 `x.y.z`,其他格式不记。daemon 把最近一次报来的写进数据目录的 `app-version`,`cycle update` 默认装这个版本。别的客户端不发。
+- 桌面端在 `initialize` 的 `_meta["cycle/appVersion"]` 里报自己的版本,格式 `x.y.z`,其他格式不记。daemon 把最近一次报来的写进数据目录的 `app-version`,`cycle update` 默认装这个版本。别的客户端不发。
 - 客户端在 `initialize` 的 `capabilities.elicitation.form` 里声明自己能回答表单式的提问(见 §9)。不声明就不会收到 `elicitation/create`。
 - 每个 agent 能收什么样的 prompt 内容、能不能带 MCP 服务器等,不在这里:daemon 的 `initialize` 不依赖具体 agent,放在 `_cycle/agents/list`(§10)。
 - 客户端不认识的能力忽略。daemon 不认识的客户端能力同样忽略。

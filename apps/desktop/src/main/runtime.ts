@@ -28,8 +28,6 @@ export type ManagerOptions = {
   backoff?: { first: number; max: number };
   /** The version of this app: the one an update of a daemon puts there. Without it, nothing is said. */
   appVersion?: string;
-  /** The release an alpha app was cut from (build.json `baseVersion`): what a remote daemon is updated to then. */
-  appBaseVersion?: string;
   /** The Cycle protocol version asked of a daemon. Default: this build's. Another is for tests. */
   protocolVersion?: string;
   /**
@@ -284,10 +282,7 @@ export class Runtime {
       connect: this.options.channelFor(location),
       name: "cycle-desktop",
       ackReturns: true,
-      // An alpha says the release it was cut from: that is what `cycle update` on the daemon's machine installs.
-      ...((this.options.appBaseVersion ?? this.options.appVersion) !== undefined
-        ? { appVersion: (this.options.appBaseVersion ?? this.options.appVersion) as string }
-        : {}),
+      ...(this.options.appVersion !== undefined ? { appVersion: this.options.appVersion } : {}),
       ...(this.options.protocolVersion !== undefined
         ? { protocolVersion: this.options.protocolVersion }
         : {}),
@@ -418,12 +413,11 @@ export class Runtime {
   }
 
   /**
-   * The version a remote daemon is updated to: the app's, or for an alpha (which has no release) the release it was
-   * cut from. Undefined when an alpha does not say, rather than a guess at a release that may not exist.
+   * The version a remote daemon is updated to: the app's. An alpha (no longer built, CYC-468) has no release to
+   * install, so there is none rather than a guess at a release that may not exist.
    */
   #daemonTarget(appVersion: string): string | undefined {
-    if (parseVersion(appVersion)?.alpha === undefined) return appVersion;
-    return this.options.appBaseVersion;
+    return parseVersion(appVersion)?.alpha === undefined ? appVersion : undefined;
   }
 
   /** What a connected remote location's daemon is, and whether it is too old for this app to work with. */

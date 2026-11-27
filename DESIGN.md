@@ -125,9 +125,9 @@ Cycle 界面的设计系统：**这个应用长什么样、为什么**，作为�
 
 ### 2.3 硬件微高光、阴影、遮罩与动效令牌
 
-- **硬件微高光描边（参考 Rare UI `.border-apple`）**：
+- **硬件微高光描边（参考 Rare UI 的 border-apple）**：
   - `--cycle-edge-composer`：主输入框专用，只保留 1px 顶部受光，不叠全周内描边，免得与边框成两条线；`--cycle-focus-composer`：主输入框聚焦时比平时稍深的托起阴影，配合加深的边框，代替光晕和外圈线（负责人：只加深边框和一点阴影，不要两层边框）；高对比模式下边框用全强度 `input-border`（CYCL-75，负责人要求更精致）。
-  - `--cycle-edge-hardware`：1px 顶部受光内高光 + 极淡全周内描边（暗色下叠加底部暗边），赋予卡片、浮层、输入框与描边按钮阳极氧化铝般的立体触感；同时提供 `.border-apple` 兼容工具类供 Rare UI 组件复用。
+  - `--cycle-edge-hardware`：1px 顶部受光内高光 + 极淡全周内描边（暗色下叠加底部暗边），赋予卡片、浮层、输入框与描边按钮阳极氧化铝般的立体触感。
   - `--cycle-edge-accent`：安全橙实心按钮的顶部微高光与底部压边（`inset 0 1px 0 rgb(255 255 255 / 28%)`），让主操作自带按压实体感。
 - **阴影与遮罩**：`--cycle-shadow-composer`（主输入框轻量托起）、`--cycle-shadow-popover`（菜单、权限卡、候选列表）、`--cycle-shadow-dialog`（对话框、搜索面板）、`--cycle-scrim`（模态遮罩）、`--cycle-scrim-lightbox`（图片放大查看的遮罩，深浅色下都是 92% 黑：灯箱要深，图片的颜色才看得准，浅色的 12% 会透出底下的对话）。深色模式下阴影更深，配合 `--cycle-edge-hardware` 与更亮一档的 `surface-raised` 区分层次。
 - **长文末尾淡出**：`--cycle-fade-end`（末尾 `1.5rem` 线性透明遮罩），通过滚动驱动动画只在实际溢出时触发，`prefers-reduced-motion` 下仍保持静态显示。
@@ -155,13 +155,13 @@ Cycle 界面的设计系统：**这个应用长什么样、为什么**，作为�
 | `Surface/Dialog`   | `surface-raised`                      | `1px border-default` + `--cycle-edge-hardware`                                                                                                                                | 16px (`--cycle-radius-card`)     | `--cycle-shadow-dialog`   | 模态对话框、确认框、`⌘K` 搜索面板                       |
 | `Surface/Composer` | `surface-raised`                      | `1px border-default` + `--cycle-edge-composer`（只有顶部微光，无内描边）；聚焦时边框加深一档（`input-border` 60%），再托起一点阴影 `--cycle-focus-composer`；始终只有一层边框 | 16px (`--cycle-radius-composer`) | `--cycle-shadow-composer` | 主输入框整块                                            |
 
-### 2.5 Rare UI / shadcn 令牌桥接（Tailwind v4 `@theme inline`）
+### 2.5 Tailwind 令牌桥接（Tailwind v4 `@theme inline`）
 
-为兼容 Streamdown 与后续引入的 Rare UI 组件，`packages/ui/src/styles/base.css` 在 `@theme inline` 中将标准 shadcn/Rare UI 语义变量完整桥接到 Cycle 令牌：
+`packages/ui/src/styles/base.css` 在 `@theme inline` 里只桥接有人在用的 Tailwind 语义变量（我们自己的标记和 Streamdown 的），让它们跟随 Cycle 的深浅色；新的工具类用到哪个令牌再加哪个，不预先铺满 shadcn 全套：
 
-- **色彩**：`bg-background` / `bg-card` / `bg-popover` / `bg-muted` / `bg-secondary` / `bg-accent`（悬停柔化面）/ `bg-primary`（安全橙 `--cycle-accent`）/ `bg-destructive` / `bg-sidebar*` / `border-border` / `border-input` / `ring-ring`。
-- **字体**：`font-sans`（Inter Variable）、`font-runde` / `font-display`（Open Runde）、`font-mono`（Geist Mono Variable）。
-- **圆角与质感**：`rounded-sm`（6px）至 `rounded-2xl`（16px）对齐同心阶梯（`lg`、`xl`、`2xl` 现在都是 16px），并提供 `.border-apple` 工具类直连 `--cycle-edge-hardware`。
+- **色彩**：`bg-background` / `text-foreground` / `bg-muted` / `text-muted-foreground` / `bg-primary`、`text-primary-foreground`（安全橙 `--cycle-accent`）/ `bg-sidebar`、`border-sidebar` / `border-border`。
+- **字体**：`font-display`（Open Runde）、`font-mono`（Geist Mono Variable）。
+- **圆角**：`rounded-md`（`--ui-radius`）、`rounded-lg` 与 `rounded-xl`（都是 16px 的 `--cycle-radius-card`）。
 
 后续引入任何 Rare UI 组件时，只需清理其中的硬编码色值（改为引用上述语义类），即可自动跟随 Cycle 的系统明暗主题与无障碍对比度。
 

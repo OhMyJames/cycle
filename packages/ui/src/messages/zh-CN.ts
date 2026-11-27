@@ -1074,7 +1074,6 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "session.deleteConfirm": "删除会话",
   "session.awayCannotOpen": "{location} 未连接，所以无法打开这个会话。",
   "trust.changeFailed": "无法更改这个文件夹的信任：{reason}",
-  "defaults.agent": "Agent",
   "defaults.save": "保存",
   "rename.label": "会话名称",
   "rename.failed": "无法重命名这个会话：{reason}",

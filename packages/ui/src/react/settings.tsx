@@ -2,7 +2,6 @@
 // to be a menu item or a dialog somewhere else: usage statistics and updates (the menu at the sidebar's foot), the
 // colours of code, the locations and each agent's defaults (the menu beside the workspace switcher).
 import { Button } from "@ui-sdk/react/button";
-import { Field, FieldLabel } from "@ui-sdk/react/field";
 import { Input } from "@ui-sdk/react/input";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@ui-sdk/react/menu";
 import {
@@ -32,7 +31,6 @@ import { LANGUAGES, resolveLanguage } from "../languages.ts";
 import { SETTINGS_SECTIONS, type SettingsSection } from "../settings-sections.ts";
 import { AccountGroup } from "./account.tsx";
 import { AgentLogo } from "./agent-logos.tsx";
-import { ConfigForm } from "./config-form.tsx";
 import { ConfirmDialog } from "./dialogs.tsx";
 import { EnvironmentsSection } from "./environments.tsx";
 import { HarnessSection, harnessListOf } from "./harness-settings.tsx";
@@ -42,7 +40,6 @@ import { Markdown } from "./markdown.tsx";
 import { PageGroup, PageLayout, PageRow, PageRows, type PageSection } from "./page-layout.tsx";
 import { ApiKeysSection } from "./providers.tsx";
 import { MOD } from "./sidebar.tsx";
-import { StateBlock } from "./state-block.tsx";
 import { LOCATION_STATE, StatusDot } from "./status.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
 import { SubscriptionsSection } from "./subscriptions.tsx";
@@ -616,170 +613,6 @@ function LocationsSection(props: SettingsPageProps) {
         })}
       </PageRows>
     </PageGroup>
-  );
-}
-
-export type AgentDefaultsFormProps = {
-  /** For the words said when it has no agent. */
-  locationName: string;
-  agents: AgentInfo[];
-  read: (agent: string) => Promise<Record<string, string> | undefined>;
-  /** Answering `false` says it was not saved (what went wrong is shown elsewhere). */
-  onSave: (agent: string, config: Record<string, string>) => Promise<boolean | undefined>;
-  /**
-   * Counts the times the location said its defaults changed, here or elsewhere: each is read again, in place. A save
-   * made here comes back as one too, so the form must not start over for it.
-   */
-  revision?: number;
-};
-
-/** The defaults of one location's agents: which agent, when it has several, and that agent's settings. */
-export function AgentDefaultsForm({
-  locationName,
-  agents,
-  read,
-  onSave,
-  revision = 0,
-}: AgentDefaultsFormProps) {
-  const { t } = useI18n();
-  const [agentId, setAgentId] = useState<string | null>(null);
-  const [attempt, setAttempt] = useState(0);
-  const agent = agents.find((a) => a.id === agentId) ?? agents[0];
-  if (agent === undefined)
-    return (
-      <StateBlock
-        size="inline"
-        align="start"
-        tone="empty"
-        title={t("blank.noAgent", { location: locationName })}
-        body={t("blank.noAgentHint", { location: locationName })}
-      />
-    );
-  return (
-    <>
-      {agents.length > 1 ? (
-        <Field name="agent">
-          <FieldLabel>{t("defaults.agent")}</FieldLabel>
-          <Select
-            items={agents.map((a) => ({ value: a.id, label: a.name }))}
-            value={agent.id}
-            onValueChange={(next) => setAgentId(next as string | null)}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {agents.map((a) => (
-                <SelectItem key={a.id} value={a.id}>
-                  {a.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-      ) : null}
-      {/* Keyed by the agent and the attempt: another agent, or asking again, reads again and starts from what is read. */}
-      <AgentDefaultsFields
-        key={`${agent.id}:${attempt}`}
-        agent={agent}
-        read={read}
-        onSave={onSave}
-        revision={revision}
-        onRetry={() => setAttempt((n) => n + 1)}
-      />
-    </>
-  );
-}
-
-function AgentDefaultsFields({
-  agent,
-  read,
-  onSave,
-  revision,
-  onRetry,
-}: {
-  agent: AgentInfo;
-  read: AgentDefaultsFormProps["read"];
-  onSave: AgentDefaultsFormProps["onSave"];
-  revision: number;
-  onRetry: () => void;
-}) {
-  const { t } = useI18n();
-  // Saved only once it holds what was read: saving over a read that failed would replace what is saved with the near-empty form.
-  const [config, setConfig] = useState<Record<string, string> | undefined>(undefined);
-  const [unread, setUnread] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const agentId = agent.id;
-  // Read when shown, and again each time the location says its defaults changed. What is shown stays while the new
-  // is read; a read that fails then leaves it, since it is still what was last read.
-  const read0 = useRef(true);
-  useEffect(() => {
-    const first = read0.current;
-    read0.current = false;
-    // `revision` is what asks for the read again.
-    void revision;
-    let current = true;
-    read(agentId).then(
-      (defaults) => {
-        if (!current) return;
-        if (defaults !== undefined) setConfig(defaults);
-        else if (first) setUnread(true);
-      },
-      () => {
-        if (current && first) setUnread(true);
-      },
-    );
-    return () => {
-      current = false;
-    };
-  }, [read, agentId, revision]);
-  const save = async () => {
-    if (config === undefined || busy) return;
-    setBusy(true);
-    try {
-      setSaved((await onSave(agentId, config)) !== false);
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <form
-      data-slot="stack"
-      onSubmit={(event) => {
-        event.preventDefault();
-        void save();
-      }}
-    >
-      {config !== undefined ? (
-        <ConfigForm
-          schema={agent.configSchema}
-          value={config}
-          onChange={(next) => {
-            setConfig(next);
-            setSaved(false);
-          }}
-        />
-      ) : unread ? (
-        <StateBlock
-          size="inline"
-          align="start"
-          tone="error"
-          title={t("defaults.unreadable")}
-          action={{ label: t("blank.retry"), onAction: onRetry }}
-        />
-      ) : (
-        <StateBlock size="inline" align="start" tone="loading" title={t("defaults.reading")} />
-      )}
-      <div data-slot="row" data-page-actions="">
-        <Button type="submit" data-variant="solid" disabled={config === undefined || busy}>
-          {t("defaults.save")}
-        </Button>
-        <span data-slot="hint" role="status">
-          {saved ? t("settings.defaults.saved") : ""}
-        </span>
-      </div>
-    </form>
   );
 }
 

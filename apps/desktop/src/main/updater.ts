@@ -33,7 +33,6 @@ export type UpdaterDeps = {
   /** What is running: its version and where it was built for. */
   current: {
     version: string;
-    baseVersion?: string;
     platform: string;
     arch: string;
   };

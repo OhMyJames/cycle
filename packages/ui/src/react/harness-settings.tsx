@@ -668,8 +668,11 @@ const describeRuntimeField = (
   return undefined;
 };
 
-/** Single-agent Session defaults editor (migrated from the former flat `Defaults` tab). */
-function HarnessDefaultsFields({
+/**
+ * One agent's Session defaults. Saved only once it holds what was read: saving over a read that failed would replace
+ * what is saved with the near-empty form. Exported for its tests.
+ */
+export function HarnessDefaultsFields({
   agent,
   read,
   onSave,

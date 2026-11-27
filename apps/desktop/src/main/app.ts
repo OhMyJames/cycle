@@ -271,9 +271,6 @@ export const startApp = async (options: AppOptions) => {
   let handoff: ReturnType<typeof Promise.withResolvers<void>> | undefined;
   const manager = new ConnectionManager({
     ...(options.update !== undefined ? { appVersion: options.update.current.version } : {}),
-    ...(options.update?.current.baseVersion !== undefined
-      ? { appBaseVersion: options.update.current.baseVersion }
-      : {}),
     settings: fileSettings(join(app.getPath("userData"), "settings.json")),
     environments: fileEnvironments(join(app.getPath("userData"), "environments.json")),
     channelFor: channelFor(options, () => handoff?.promise),
