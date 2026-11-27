@@ -672,14 +672,18 @@ export function Board({
           const isBacklog = c.stateType === "backlog";
           // In Backlog, keep awaiting-approval tickets pinned at the top sorted by priority,
           // followed by ordinary Backlog tickets — marked by card badge, never wrapped in a box.
-          const ordered = isBacklog
-            ? [
-                ...c.tickets
-                  .filter((x) => x.pending !== undefined)
-                  .sort((a, b) => priorityRank(a.priority) - priorityRank(b.priority)),
-                ...c.tickets.filter((x) => x.pending === undefined),
-              ]
-            : c.tickets;
+          const byPriority = (list: LoopTicket[]) =>
+            [...list].sort((x, y) => priorityRank(x.priority) - priorityRank(y.priority));
+          // Done keeps the server's most-recent-first order; every open column sorts by priority (stable).
+          const ordered =
+            c.stateType === "completed"
+              ? c.tickets
+              : isBacklog
+                ? [
+                    ...byPriority(c.tickets.filter((x) => x.pending !== undefined)),
+                    ...byPriority(c.tickets.filter((x) => x.pending === undefined)),
+                  ]
+                : byPriority(c.tickets);
           const shownTickets = filtered ? ordered.filter(matches) : ordered;
           const colPending = isBacklog
             ? shownTickets.filter((x) => x.pending !== undefined).length
