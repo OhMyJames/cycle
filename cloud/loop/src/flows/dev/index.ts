@@ -4,6 +4,7 @@
 
 import { CriteriaBook } from "../../criteria.ts";
 import type { Flow, FlowHost, StepResult } from "../../engine/flow.ts";
+import { buildGraph } from "../../graph.ts";
 import { preflight } from "../../preflight.ts";
 import { DevStateSchema } from "../../store.ts";
 import type { Issue } from "../../types.ts";
@@ -15,6 +16,7 @@ import { asDev, type Dev } from "./context.ts";
 import { deliver } from "./deliver.ts";
 import { dev } from "./dev.ts";
 import { checkDocs } from "./docs.ts";
+import { graphPlan, resetBlockedNodeOnResume } from "./graph.ts";
 import { guardPr } from "./guard.ts";
 import { DEV_QA, qa } from "./qa.ts";
 import { review } from "./review.ts";
@@ -32,6 +34,10 @@ export const devFlow = (host: FlowHost): Flow => {
       claimed: {
         field: "dev",
         step: ({ run, issue, save }) => claim(host, asDev(run), issue, save),
+      },
+      graph_plan: {
+        field: "dev",
+        step: ({ run, issue, save }) => graphPlan(host, asDev(run), issue, save),
       },
       dev: {
         field: "dev",
@@ -74,6 +80,10 @@ export const devFlow = (host: FlowHost): Flow => {
 
     open(accepted, issue) {
       if (accepted.kind !== "dev") throw new Error(`a ${accepted.kind} work item is not a dev run`);
+      const graph =
+        accepted.graphSpecs !== undefined
+          ? buildGraph(issue.key, "plan_doc", accepted.graphSpecs, host.d.clock.now().toISOString())
+          : undefined;
       // A dev run's `claimed` event stays as it always was: no `runKind`, which `stats` reads as dev.
       return {
         specs: accepted.specs,
@@ -87,7 +97,9 @@ export const devFlow = (host: FlowHost): Flow => {
         claimed: {
           criteria: accepted.specs.length,
           ...(accepted.docs === undefined ? {} : { fullFlow: true }),
+          ...(graph === undefined ? {} : { graphNodes: graph.nodes.length }),
         },
+        ...(graph !== undefined ? { graph } : {}),
       };
     },
 
@@ -128,6 +140,7 @@ export const devFlow = (host: FlowHost): Flow => {
         const failed = await rollbackMerge(host, current.worktree, saved.preMergeSha);
         if (failed !== "") throw new Error(`conflict rollback on resume failed: ${failed}`);
       }
+      await resetBlockedNodeOnResume(host, current);
       return {
         ...current,
         dev: { ...current.dev, ciRound: 0, conflictRound: 0, conflict: null, resolvedFiles: [] },
@@ -170,7 +183,7 @@ export const devFlow = (host: FlowHost): Flow => {
       };
     },
 
-    afterRemoved: () => ({ dev: { reviewSessionId: null, prUrl: null } }),
+    afterRemoved: () => ({ dev: { reviewSessionId: null, prUrl: null, activeNodeId: null } }),
 
     forget(key) {
       x.greenSeen.delete(key);

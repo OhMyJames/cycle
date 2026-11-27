@@ -1,4 +1,5 @@
 import type { Criterion } from "./criteria.ts";
+import { formatGraphTable, type TaskGraph } from "./graph.ts";
 import type { CiStatus, Forge, ReadCiStatusResult } from "./ports/forge.ts";
 import type { ReviewVerdict } from "./prompts/index.ts";
 import type { Clock, Issue } from "./types.ts";
@@ -107,6 +108,8 @@ export const renderPr = (input: {
   /** 大档 (CYC-454): the Intent / Spec / Design / Plan documents; omitted or empty for a small one. */
   documents?: { id: number; title: string }[];
   docsBase?: string | null;
+  /** CYC-508: Level-2 Task Graph executed for this Level-1 work item, when present. */
+  graph?: TaskGraph;
 }): string => {
   const rows = input.criteria
     .map(
@@ -115,13 +118,21 @@ export const renderPr = (input: {
     )
     .join("\n");
   const checks = input.checks.map((c) => `- ${c.passed ? "✅" : "❌"} \`${c.command}\``).join("\n");
+  const graphSection =
+    input.graph === undefined
+      ? ""
+      : `## 执行图（Task Graph）
+
+${formatGraphTable(input.graph, { includeCommits: true })}
+
+`;
   return `Closes ${input.issue.key}
 
 ## 目的
 
 ${input.issue.key} ${input.issue.title}
 
-${renderDocuments(input.documents ?? [], input.docsBase ?? null)}## 这次改了什么
+${renderDocuments(input.documents ?? [], input.docsBase ?? null)}${graphSection}## 这次改了什么
 
 ${input.summary.trim() === "" ? "（Dev 没有给出摘要）" : input.summary.trim()}
 

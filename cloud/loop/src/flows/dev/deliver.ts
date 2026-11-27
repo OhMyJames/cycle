@@ -30,6 +30,7 @@ export async function deliver(
   const { mkdir, writeFile } = await import("node:fs/promises");
   const { join } = await import("node:path");
   const title = renderPrTitle(issue);
+  const graph = await h.d.store.loadGraph(run.key);
   const body = renderPr({
     issue,
     criteria: book.items,
@@ -39,6 +40,7 @@ export async function deliver(
     sessions: { dev: run.devSessionId, qa: run.qaSessionId },
     documents: run.dev.fullFlowDocs,
     docsBase: config.docsBase,
+    ...(graph !== undefined ? { graph } : {}),
   });
   const prCheck = validatePr(issue.key, title, body);
   if (!prCheck.ok) throw new Blocked(prCheck.reason);

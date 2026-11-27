@@ -117,6 +117,37 @@ export const MIGRATIONS: readonly string[] = [
   // CYC-497: when a pending intent may be tried again, and how many network waits it has had (they do not count as attempts).
   `ALTER TABLE intents ADD COLUMN next_at TEXT`,
   `ALTER TABLE intents ADD COLUMN waits INTEGER NOT NULL DEFAULT 0`,
+  // CYC-508: Level-2 Task Graph execution state for one Level-1 run (metadata + standardized task nodes).
+  `CREATE TABLE run_graphs (
+    run_key TEXT PRIMARY KEY,
+    source TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1,
+    current_node_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE graph_nodes (
+    run_key TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    origin TEXT NOT NULL,
+    title TEXT NOT NULL,
+    goal TEXT NOT NULL,
+    depends_on TEXT NOT NULL,
+    files_hint TEXT NOT NULL,
+    verify TEXT NOT NULL,
+    status TEXT NOT NULL,
+    session_id TEXT,
+    commit_sha TEXT,
+    rounds INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    summary TEXT,
+    started_at TEXT,
+    finished_at TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (run_key, node_id)
+  )`,
+  `CREATE INDEX graph_nodes_run_pos ON graph_nodes (run_key, position)`,
 ];
 
 /** The statements a migration may be made of. */

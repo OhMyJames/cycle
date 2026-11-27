@@ -4,6 +4,7 @@
 // change while it runs sends it to Blocked for a person to say whether the plan changed or a document was touched.
 
 import { type CriterionSpec, parseCriteria } from "./criteria.ts";
+import { parsePlanGraph, type TaskNodeSpec } from "./graph.ts";
 import { criterionSpecs } from "./parse/blocks.ts";
 import type { Tracker } from "./ports/tracker.ts";
 import { ALLOWED_COMMANDS } from "./preflight.ts";
@@ -51,10 +52,10 @@ export const readFullFlowDocs = (
 };
 
 export type FullFlowPreflight =
-  | { ok: true; specs: CriterionSpec[]; docs: DocVersion[] }
+  | { ok: true; specs: CriterionSpec[]; docs: DocVersion[]; graphSpecs?: TaskNodeSpec[] }
   | { ok: false; reasons: string[] };
 
-/** 预检 for 大档: the four documents, and the criteria in the Spec (the same rules as a description's). */
+/** 预检 for 大档: the four documents, the criteria in the Spec, and any fenced JSON Task Graph in the Plan. */
 export const fullFlowPreflight = async (
   issue: Issue,
   config: Pick<Config, "maxCriteria">,
@@ -81,9 +82,24 @@ export const fullFlowPreflight = async (
     ALLOWED_COMMANDS,
   );
   reasons.push(...bad);
+
+  // CYC-508: if the Plan declares a fenced JSON Task Graph under 「执行图」/「Task Graph」, validate it up front.
+  const plan = await tracker.getDocumentContent(read.byName.Plan.id);
+  const graph = parsePlanGraph(plan);
+  let graphSpecs: TaskNodeSpec[] | undefined;
+  if (graph.found) {
+    if (!graph.ok) reasons.push(...graph.reasons);
+    else graphSpecs = graph.specs;
+  }
+
   return reasons.length > 0
     ? { ok: false, reasons: marked(reasons) }
-    : { ok: true, specs, docs: read.docs };
+    : {
+        ok: true,
+        specs,
+        docs: read.docs,
+        ...(graphSpecs !== undefined ? { graphSpecs } : {}),
+      };
 };
 
 const marked = (reasons: string[]): string[] =>

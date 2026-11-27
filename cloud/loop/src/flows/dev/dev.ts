@@ -14,6 +14,7 @@ import { type Issue, SessionLost, type TurnResult } from "../../types.ts";
 import { conflictScene, judgeConflict, theirCommits } from "./conflict.ts";
 import { type DevRun, type FlowHost, type Save, where } from "./context.ts";
 import { docTexts } from "./docs.ts";
+import { nodeDev } from "./graph.ts";
 import { restoreNodeModules } from "./node-modules.ts";
 
 export async function dev(
@@ -24,6 +25,11 @@ export async function dev(
   byPerson: boolean,
   save: Save,
 ): Promise<void> {
+  // CYC-508: Level-2 Task Graph node execution uses its own fresh session per node; conflict resolution stays branch-wide.
+  if (run.dev.conflict?.state !== "dev" && run.dev.activeNodeId != null) {
+    await nodeDev(h, run, issue, book, byPerson, save);
+    return;
+  }
   const { config, store } = h.d;
   const worktree = h.need(run.worktree ?? undefined);
   // Released while waiting for CI or the merge: installed again before the session starts.

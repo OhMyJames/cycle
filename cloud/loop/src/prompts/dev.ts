@@ -1,6 +1,7 @@
 // What Dev is told: the first brief, the fix rounds, a conflict, going on and a hand-over.
 
 import type { Criterion } from "../criteria.ts";
+import { formatGraphTable, type TaskGraph, type TaskNode } from "../graph.ts";
 import type { Issue } from "../types.ts";
 import { criteriaTable, docBlock, PROGRESS_RULE as PROGRESS } from "./common.ts";
 
@@ -130,5 +131,82 @@ ${gitLog.trim() === "" ? "(none)" : gitLog.trim()}${
 }
 
 Finish what is left, run \`bun run check\`, commit (do not push), and report.
+
+${PROGRESS_RULE}`;
+
+const nodeSection = (graph: TaskGraph, node: TaskNode, gitLog: string): string => {
+  const upstream = node.dependsOn
+    .map((depId) => graph.nodes.find((n) => n.id === depId))
+    .filter((n): n is TaskNode => n !== undefined)
+    .map(
+      (n) =>
+        `- \`${n.id}\` (${n.title}): commit ${n.commitSha ? `\`${n.commitSha.slice(0, 8)}\`` : "none"}${n.summary ? ` — ${n.summary.replace(/\n/g, " ").slice(0, 240)}` : ""}`,
+    );
+  return `Task Graph (${graph.nodes.filter((n) => n.status === "passed" || n.status === "skipped").length}/${graph.nodes.length} completed):
+${formatGraphTable(graph)}
+
+${upstream.length > 0 ? `Upstream dependencies already committed on this branch:\n${upstream.join("\n")}\n\n` : ""}Commits already on this branch:
+${gitLog.trim() === "" ? "(none)" : gitLog.trim()}
+
+Your assigned Level-2 Task Node — \`${node.id}\` (${node.origin}): ${node.title}
+Goal:
+${node.goal}
+${node.filesHint.length > 0 ? `\nSuggested files/directories:\n${node.filesHint.map((f) => `- \`${f}\``).join("\n")}\n` : ""}
+Node verification commands (the loop runs these after your turn; saying they pass does not make them pass):
+${node.verify.map((cmd) => `- \`${cmd}\``).join("\n")}`;
+};
+
+/** CYC-508: first Dev turn for one Level-2 Task Node in its own fresh session on the shared worktree. */
+export const nodeDevBrief = (
+  issue: Issue,
+  graph: TaskGraph,
+  node: TaskNode,
+  gitLog: string,
+  docs?: { spec?: string; design?: string },
+): string => `You are the developer executing Task Node \`${node.id}\` (${node.title}) for Level-1 work item ${issue.key}: ${issue.title}.
+
+Work in the current directory: it is the shared git worktree for ${issue.key}. Do not leave it and do not switch worktrees. Read AGENTS.md first and follow it. Stay focused on THIS node's goal—do not implement unrelated downstream nodes, and inspect upstream commits on this branch directly rather than guessing.
+
+Level-1 work item:
+---
+${issue.description}
+---
+${docs?.spec ? `\nAdopted Spec:\n${docBlock("Spec", docs.spec)}\n` : ""}${docs?.design ? `\nAdopted Design (contracts you must follow):\n${docBlock("Design", docs.design)}\n` : ""}
+${nodeSection(graph, node, gitLog)}
+
+How to work:
+- Implement this node's goal and its tests cleanly on top of the current branch HEAD.
+- Run this node's verification commands before finishing.
+- Commit as you go (\`git add -A && git commit -m "<what and why>"\`). Do not push and do not open a pull request: the loop handles delivery once every node and whole-item QA pass.
+- If a contract in Design or an upstream commit conflicts with this node so a person must decide, use <question>...</question> and stop.
+
+${PROGRESS_RULE}`;
+
+/** CYC-508: local fix turn for a Task Node whose node-local verification commands failed. */
+export const nodeFixBrief = (
+  node: TaskNode,
+  round: number,
+  error: string,
+): string => `Node \`${node.id}\` (${node.title}) verification failed (node fix round ${round}). Fix what is listed, re-run the node's verification commands, commit, and report.
+
+${error}
+
+Node verification commands:
+${node.verify.map((cmd) => `- \`${cmd}\``).join("\n")}
+
+${PROGRESS_RULE}`;
+
+/** CYC-508: handoff to a fresh session when a node's Dev session was lost mid-node. */
+export const nodeHandoffBrief = (
+  issue: Issue,
+  graph: TaskGraph,
+  node: TaskNode,
+  gitLog: string,
+  docs?: { spec?: string; design?: string },
+): string => `You take over Task Node \`${node.id}\` (${node.title}) for ${issue.key}: ${issue.title}. The previous session for this node could not be continued. Work in the current directory (the shared worktree already holding prior commits). Read AGENTS.md first.
+
+${nodeSection(graph, node, gitLog)}
+${docs?.spec ? `\nAdopted Spec:\n${docBlock("Spec", docs.spec)}\n` : ""}${docs?.design ? `\nAdopted Design:\n${docBlock("Design", docs.design)}\n` : ""}${node.lastError ? `\nLatest verification error for this node:\n${node.lastError}\n` : ""}
+Finish this node, run its verification commands, commit (do not push), and report.
 
 ${PROGRESS_RULE}`;

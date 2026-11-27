@@ -4,6 +4,7 @@ import { waitForCi } from "../../pr.ts";
 import { handleConflict } from "./conflict.ts";
 import type { Dev } from "./context.ts";
 import { type DevRun, type Save, where } from "./context.ts";
+import { scheduleGraphFix } from "./graph.ts";
 import { assertNotClosed } from "./guard.ts";
 import { releaseNodeModules } from "./node-modules.ts";
 
@@ -95,12 +96,21 @@ export async function ci(x: Dev, run: DevRun, save: Save): Promise<void> {
       );
     }
     const findings = `CI checks failed on PR ${prUrl} (failed: ${failedList.join(", ")}). Fix the failures below, run \`bun run check\`, and commit; the loop will verify, run QA, and push to the same branch.\n\n${result.logs}`;
-    await save({
-      phase: "dev",
-      round: run.round + 1,
+    const scheduled = await scheduleGraphFix(h, run, {
+      title: `修复 CI 失败（${failedList.join("、")}）`,
       findings,
-      dev: { ciRound: run.dev.ciRound + 1, ciFailedSha: headSha },
+      verify: ["bun run check"],
+      save,
+      extraPatch: { dev: { ciRound: run.dev.ciRound + 1, ciFailedSha: headSha } },
     });
+    if (!scheduled) {
+      await save({
+        phase: "dev",
+        round: run.round + 1,
+        findings,
+        dev: { ciRound: run.dev.ciRound + 1, ciFailedSha: headSha },
+      });
+    }
     return;
   }
 

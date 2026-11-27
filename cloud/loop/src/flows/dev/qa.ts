@@ -9,8 +9,9 @@ import {
 } from "../../prompts/index.ts";
 import type { RunRecord } from "../../store.ts";
 import { type Issue, SessionLost, type TurnResult } from "../../types.ts";
-import { type DevRun, type FlowHost, type Save, where } from "./context.ts";
+import { asDev, type DevRun, type FlowHost, type Save, where } from "./context.ts";
 import { docTexts } from "./docs.ts";
+import { scheduleGraphFix } from "./graph.ts";
 
 /** The independent QA session of a dev run. */
 export const DEV_QA: Flow["qa"] = {
@@ -39,6 +40,7 @@ export async function qa(
   const checks = (await h.d.store.loadCi(run.key)).checks
     .map((c) => `- ${c.command}: ${c.passed ? "passed" : "failed"}`)
     .join("\n");
+  const graph = await h.d.store.loadGraph(run.key);
   const prompt = qaBrief(
     issue,
     book.items,
@@ -46,10 +48,14 @@ export async function qa(
     checks === "" ? "(none)" : checks,
     run.dev.resolvedFiles,
     await docTexts(h, run, issue, ["Spec", "Design", "Plan"]),
+    graph,
   );
   const verdict = await judge(h, DEV_QA, run, issue, worktree, before, prompt, save);
   if (!verdict.pass) {
-    await nextRound(h, run, `Independent review found:\n${formatFindings(verdict)}`, save);
+    await nextRound(h, run, `Independent review found:\n${formatFindings(verdict)}`, save, "dev", {
+      fixTitle: "修复独立 QA 审查问题",
+      fixVerify: ["bun run check"],
+    });
     return;
   }
   await save({ phase: "delivering" });
@@ -144,6 +150,7 @@ export async function nextRound(
   findings: string,
   save: Save,
   to: "dev" | "research" = "dev",
+  graphFix?: { fixTitle: string; fixVerify?: string[] },
 ): Promise<void> {
   await h.d.store.event(run.key, "round_failed", { round: run.round });
   if (run.round >= h.d.config.maxFixRounds) {
@@ -155,6 +162,15 @@ export async function nextRound(
       throw new Blocked(message, "research");
     }
     throw new Blocked(message);
+  }
+  if (to === "dev" && run.kind === "dev") {
+    const scheduled = await scheduleGraphFix(h, asDev(run), {
+      title: graphFix?.fixTitle ?? `修复整单问题 #${run.round + 1}`,
+      findings,
+      ...(graphFix?.fixVerify !== undefined ? { verify: graphFix.fixVerify } : {}),
+      save,
+    });
+    if (scheduled) return;
   }
   await save({ phase: to, round: run.round + 1, findings });
 }

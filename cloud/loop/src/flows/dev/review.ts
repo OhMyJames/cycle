@@ -12,6 +12,7 @@ import type { Issue } from "../../types.ts";
 import { tellTicket } from "../ticket.ts";
 import { handleConflict } from "./conflict.ts";
 import { type Dev, type DevRun, type Save, where } from "./context.ts";
+import { scheduleGraphFix } from "./graph.ts";
 import { assertNotClosed, confirmMerged } from "./guard.ts";
 
 export async function review(
@@ -229,7 +230,15 @@ export async function review(
     await h.d.store.saveCi(run.key, { greenSha: null });
     await store.event(run.key, "review_done", { decision: "reject", autoMerge: false });
     const findings = `PR review rejected ${prUrl} (decision: reject). Fix the blocker/major issues below, run \`bun run check\`, and commit; the loop will verify, run QA, push to the same branch, wait for CI, and re-review.\n\n${formatted}`;
-    await save({ phase: "dev", round: run.round + 1, findings });
+    const scheduled = await scheduleGraphFix(h, run, {
+      title: "修复 PR 独立评审问题",
+      findings,
+      verify: ["bun run check"],
+      save,
+    });
+    if (!scheduled) {
+      await save({ phase: "dev", round: run.round + 1, findings });
+    }
     return undefined;
   }
 

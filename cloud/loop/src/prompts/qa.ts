@@ -1,6 +1,7 @@
 // What independent QA is told.
 
 import type { Criterion } from "../criteria.ts";
+import { formatGraphTable, type TaskGraph } from "../graph.ts";
 import type { Issue } from "../types.ts";
 import { criteriaTable, diffBlock, docBlock, MAX_DIFF } from "./common.ts";
 import type { FullFlowTexts } from "./dev.ts";
@@ -12,6 +13,7 @@ export const qaBrief = (
   checks: string,
   conflictFiles: string[] = [],
   docs?: FullFlowTexts,
+  graph?: TaskGraph,
 ): string => `You are an independent reviewer for work item ${issue.key}: ${issue.title}. You did not write this change and you are not told how it was made.
 
 You are READ-ONLY. Do not edit, create, delete or commit anything, and do not run the test suites: the loop already ran them and its results are below. You may read files in the current directory (a git worktree holding the change) and use git status, git diff, git log, rg and ls.
@@ -26,6 +28,10 @@ ${
   docs === undefined
     ? ""
     : `\nThis is a 完整流程 work item. A person adopted these documents; judge the change against them, not only the description:\n${docBlock("Spec", docs.spec)}\n\n${docBlock("Design", docs.design)}\n\n${docBlock("Plan", docs.plan)}\n\nReport every place where the change departs from the Plan (a step not done, done differently, added, or out of order) as a finding, even when the code works. You are not told why the developer departed: judge by effect. A departure that changes behavior the Spec or Design asks for, or leaves a Plan step undone, is "major"; one that reaches the same result by another way is "minor". Also check it still follows the Design and meets the Spec.\n`
+}${
+  graph === undefined
+    ? ""
+    : `\nExecution Task Graph (executed sequentially on this branch; verify that all nodes fit together with no integration gaps):\n${formatGraphTable(graph, { includeCommits: true })}\n`
 }
 The loop ran these checks, and these are their results:
 ${checks}

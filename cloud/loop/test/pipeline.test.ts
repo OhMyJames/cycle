@@ -14,6 +14,7 @@ import {
   SessionLost,
   type TurnResult,
 } from "../src/types.ts";
+import { fourDocs, fullFlowIssue, setupFullFlow } from "./full-flow-helpers.ts";
 import {
   CHECKED,
   type CiResponse,
@@ -2513,4 +2514,312 @@ test("an edit that leaves the criteria alone still tells Dev, and the checks do 
   const after = s.sessions.prompts.filter((p) => p.role === "dev").slice(before);
   expect(after[0]?.prompt).toContain("A person edited CYC-1");
   expect(after[0]?.prompt).toContain("补充说明：已决定");
+});
+
+const twoNodePlan = `# Plan
+
+## 执行图
+
+\`\`\`json
+{
+  "nodes": [
+    {
+      "id": "n2",
+      "title": "接入引擎",
+      "goal": "在 devFlow 里驱动节点循环",
+      "dependsOn": ["n1"],
+      "filesHint": ["cloud/loop/src/flows/dev/"],
+      "verify": ["bun test ./cloud/loop/test/pipeline.test.ts"]
+    },
+    {
+      "id": "n1",
+      "title": "新增表结构",
+      "goal": "在 schema.ts 新增 run_graphs 与 graph_nodes",
+      "dependsOn": [],
+      "filesHint": ["cloud/loop/src/db/schema.ts"],
+      "verify": ["bun test ./cloud/loop/test/db.test.ts"]
+    }
+  ]
+}
+\`\`\`
+`;
+
+test("Task Graph: Plan with invalid fenced JSON graph is rejected at preflight with [Blocked:需规格]", async () => {
+  const s = await setupFullFlow([fullFlowIssue()], fourDocs(), { dev: [], qa: [] });
+  s.tracker.docContent[103] =
+    '# Plan\n\n## 执行图\n\n```json\n[{"id":"n1","title":"A","goal":"a","dependsOn":["n2"],"verify":["bun run check"]},{"id":"n2","title":"B","goal":"b","dependsOn":["n1"],"verify":["bun run check"]}]\n```\n';
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("rejected");
+  expect(s.tracker.moves).toEqual(["CYC-1:blocked"]);
+  expect(s.tracker.comments[0]).toContain("[Blocked:需规格]");
+  expect(s.tracker.comments[0]).toContain("cycle");
+  expect(s.sessions.created).toEqual([]);
+});
+
+test("Task Graph: multi-node Plan runs a fresh Dev session per node in topological order and opens 1 PR", async () => {
+  const s = await setupFullFlow([fullFlowIssue()], fourDocs(), {
+    dev: [
+      done("<progress>done: n1 schema ready\nnext: n2</progress>"),
+      done("<progress>done: n2 engine wired\nnext: verify</progress>"),
+    ],
+    qa: [done(PASS)],
+    review: [done(REVIEW_MERGE)],
+  });
+  s.tracker.docContent[102] = "# Design\n\nUse SQLite graph_nodes.";
+  s.tracker.docContent[103] = twoNodePlan;
+
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("delivered");
+
+  // Two distinct fresh Dev sessions created in topological order (n1 before n2), on the same worktree.
+  const devSessions = s.sessions.titles.filter((c) => c.role === "dev");
+  expect(devSessions.map((c) => c.title)).toEqual(["[CYC-1 · n1] Dev", "[CYC-1 · n2] Dev"]);
+
+  // Prompts give n1 its goal and give n2 the upstream n1 summary + Design contract.
+  const devPrompts = s.sessions.prompts.filter((p) => p.role === "dev").map((p) => p.prompt);
+  expect(devPrompts[0]).toContain("新增表结构");
+  expect(devPrompts[0]).toContain("Use SQLite graph_nodes.");
+  expect(devPrompts[1]).toContain("接入引擎");
+  expect(devPrompts[1]).toContain("n1 schema ready");
+
+  // One-way summary comment posted to tracker when multi-node graph starts.
+  expect(
+    s.tracker.comments.some((c) => c.includes("Loop 已按执行图（2 个二级节点）开始执行")),
+  ).toBe(true);
+
+  // Graph state persisted in loop.db with both nodes passed and commit SHAs recorded.
+  const graph = await s.store.loadGraph("CYC-1");
+  expect(graph?.nodes.map((n) => [n.id, n.status, n.commitSha])).toEqual([
+    ["n1", "passed", "abc"],
+    ["n2", "passed", "abc"],
+  ]);
+
+  // Single PR opened, body includes Task Graph section.
+  const prCreateCalls = s.world.calls.filter((c) => c.startsWith("gh pr create"));
+  expect(prCreateCalls).toHaveLength(1);
+  const prBody = await readFile(join(s.cfg.stateDir, "runs", "CYC-1", "pr-body.md"), "utf8");
+  expect(prBody).toContain("## 执行图（Task Graph）");
+  expect(prBody).toContain("`n1`");
+  expect(prBody).toContain("`n2`");
+});
+
+test("Task Graph: node-local verify failure retries in the same node session before moving on", async () => {
+  const s = await setupFullFlow([fullFlowIssue()], fourDocs(), {
+    dev: [
+      done("<progress>done: n1 attempt 1\nnext: check</progress>"),
+      done("<progress>done: n1 attempt 2\nnext: n2</progress>"),
+      done("<progress>done: n2 done\nnext: qa</progress>"),
+    ],
+    qa: [done(PASS)],
+    review: [done(REVIEW_MERGE)],
+  });
+  s.tracker.docContent[103] = twoNodePlan;
+
+  // Fail n1's local verify command on the first turn, then pass after the node fix turn.
+  let dbTestCalls = 0;
+  const baseExec = makeExec(s.world);
+  const pipeline = new Pipeline({
+    config: { ...s.cfg, maxVerifyRetries: 0 },
+    tracker: s.tracker,
+    sessions: s.sessions,
+    exec: async (argv, opts) => {
+      if (argv.join(" ") === "bun test ./cloud/loop/test/db.test.ts") {
+        dbTestCalls++;
+        if (dbTestCalls === 1)
+          return { code: 1, output: "1 fail\nboom in db test", timedOut: false };
+      }
+      return baseExec(argv, opts);
+    },
+    store: s.store,
+    clock: { now: () => new Date("2026-11-25T00:00:00Z") },
+    log: () => {},
+    env: { PATH: "/bin", GH_TOKEN: "secret", AUTO_LOOP_PLAN_KEY: "k" },
+    sleep: async () => {},
+    stopped: () => false,
+  });
+
+  const result = await pipeline.step();
+  expect(result.status).toBe("delivered");
+  // Still only 2 Dev sessions: n1 retried inside its own session, then n2 got a fresh session.
+  const devSessions = s.sessions.titles.filter((c) => c.role === "dev");
+  expect(devSessions.map((c) => c.title)).toEqual(["[CYC-1 · n1] Dev", "[CYC-1 · n2] Dev"]);
+  const devPrompts = s.sessions.prompts.filter((p) => p.role === "dev").map((p) => p.prompt);
+  expect(devPrompts[1]).toContain("Node `n1`");
+  expect(devPrompts[1]).toContain("boom in db test");
+  const graph = await s.store.loadGraph("CYC-1");
+  expect(graph?.nodes[0]?.rounds).toBe(1);
+});
+
+test("Task Graph: whole-item QA rejection appends a fix-1 node (origin: fix) and delivers 1 PR", async () => {
+  const s = await setupFullFlow([fullFlowIssue()], fourDocs(), {
+    dev: [
+      done("<progress>done: n1\nnext: n2</progress>"),
+      done("<progress>done: n2\nnext: qa</progress>"),
+      done("<progress>done: fixed QA finding\nnext: qa</progress>"),
+    ],
+    qa: [done(FAIL), done(PASS)],
+    review: [done(REVIEW_MERGE)],
+  });
+  s.tracker.docContent[103] = twoNodePlan;
+
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("delivered");
+
+  const devSessions = s.sessions.titles.filter((c) => c.role === "dev");
+  expect(devSessions.map((c) => c.title)).toEqual([
+    "[CYC-1 · n1] Dev",
+    "[CYC-1 · n2] Dev",
+    "[CYC-1 · fix-1] Dev",
+  ]);
+
+  const graph = await s.store.loadGraph("CYC-1");
+  expect(graph?.nodes.map((n) => [n.id, n.origin, n.status, n.dependsOn])).toEqual([
+    ["n1", "planned", "passed", []],
+    ["n2", "planned", "passed", ["n1"]],
+    ["fix-1", "fix", "passed", ["n1", "n2"]],
+  ]);
+
+  const prBody = await readFile(join(s.cfg.stateDir, "runs", "CYC-1", "pr-body.md"), "utf8");
+  expect(prBody).toContain("`fix-1`");
+});
+
+test("Task Graph: node asking a <question> blocks on that node and resumes without re-running passed nodes", async () => {
+  const s = await setupFullFlow([fullFlowIssue()], fourDocs(), {
+    dev: [
+      done("<progress>done: n1\nnext: n2</progress>"),
+      done(
+        "<question>Should n2 expose a retry button?</question><progress>done: partial\nnext: wait</progress>",
+      ),
+      done("<progress>done: n2 finished after answer\nnext: qa</progress>"),
+    ],
+    qa: [done(PASS)],
+    review: [done(REVIEW_MERGE)],
+  });
+  s.tracker.docContent[103] = twoNodePlan;
+
+  const first = await s.pipeline.step();
+  expect(first.status).toBe("blocked");
+  const blockedGraph = await s.store.loadGraph("CYC-1");
+  expect(blockedGraph?.nodes.map((n) => [n.id, n.status])).toEqual([
+    ["n1", "passed"],
+    ["n2", "blocked"],
+  ]);
+
+  // Human answers and moves ticket back to Todo.
+  (s.tracker.issues[0] as Issue).columnId = 22;
+  const second = await s.pipeline.step();
+  expect(second.status).toBe("delivered");
+
+  // Only 2 Dev sessions total: n1 was NOT re-run, n2 resumed in its preserved session.
+  const devSessions = s.sessions.titles.filter((c) => c.role === "dev");
+  expect(devSessions.map((c) => c.title)).toEqual(["[CYC-1 · n1] Dev", "[CYC-1 · n2] Dev"]);
+  const finalGraph = await s.store.loadGraph("CYC-1");
+  expect(finalGraph?.nodes.map((n) => [n.id, n.status])).toEqual([
+    ["n1", "passed"],
+    ["n2", "passed"],
+  ]);
+});
+
+test("Task Graph: crash recovery resumes directly on the active node without re-running passed nodes", async () => {
+  const s = await setupFullFlow([fullFlowIssue({ columnId: 23 })], fourDocs(), {
+    dev: [done("<progress>done: n2 after restart\nnext: qa</progress>")],
+    qa: [done(PASS)],
+    review: [done(REVIEW_MERGE)],
+  });
+  s.tracker.docContent[103] = twoNodePlan;
+  const nowIso = "2026-11-25T00:00:00Z";
+  await s.store.saveCriteria(
+    "CYC-1",
+    CriteriaBook.fromSpecs([{ text: "check", verify: [["bun", "run", "check"]] }]),
+  );
+  await s.store.saveGraph({
+    runKey: "CYC-1",
+    source: "plan_doc",
+    revision: 1,
+    currentNodeId: "n2",
+    createdAt: nowIso,
+    updatedAt: nowIso,
+    nodes: [
+      {
+        id: "n1",
+        position: 0,
+        origin: "planned",
+        title: "新增表结构",
+        goal: "Schema",
+        dependsOn: [],
+        filesHint: [],
+        verify: ["bun test ./cloud/loop/test/db.test.ts"],
+        status: "passed",
+        sessionId: "old-n1",
+        commitSha: "1111aaaa",
+        rounds: 0,
+        lastError: null,
+        summary: "n1 done before crash",
+        startedAt: nowIso,
+        finishedAt: nowIso,
+      },
+      {
+        id: "n2",
+        position: 1,
+        origin: "planned",
+        title: "接入引擎",
+        goal: "Wire engine",
+        dependsOn: ["n1"],
+        filesHint: [],
+        verify: ["bun test ./cloud/loop/test/pipeline.test.ts"],
+        status: "running",
+        sessionId: null,
+        commitSha: null,
+        rounds: 0,
+        lastError: null,
+        summary: null,
+        startedAt: nowIso,
+        finishedAt: null,
+      },
+    ],
+  });
+  await s.store.save({
+    key: "CYC-1",
+    kind: "dev",
+    issueId: 1,
+    issueNumber: 1,
+    title: "Test",
+    phase: "dev",
+    round: 0,
+    worktree: WT,
+    localBranch: "worktree-auto/cyc-1",
+    remoteBranch: "auto/cyc-1",
+    devSessionId: "old-n1",
+    qaSessionId: null,
+    replacedSessions: [],
+    blockedReason: null,
+    resumeFrom: null,
+    findings: null,
+    cleanedAt: null,
+    cleanupNote: null,
+    startedAt: nowIso,
+    updatedAt: nowIso,
+    dev: {
+      ciRound: 0,
+      ciFailedSha: null,
+      nodeModulesReleased: false,
+      conflictRound: 0,
+      conflict: null,
+      resolvedFiles: [],
+      reviewSessionId: null,
+      prUrl: null,
+      fullFlowDocs: fourDocs().map((d) => ({ id: d.id, title: d.title, version: d.version })),
+      activeNodeId: "n2",
+    },
+  });
+
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("delivered");
+  const devSessions = s.sessions.titles.filter((c) => c.role === "dev");
+  expect(devSessions.map((c) => c.title)).toEqual(["[CYC-1 · n2] Dev"]);
+  const finalGraph = await s.store.loadGraph("CYC-1");
+  expect(finalGraph?.nodes.map((n) => [n.id, n.status, n.commitSha])).toEqual([
+    ["n1", "passed", "1111aaaa"],
+    ["n2", "passed", "abc"],
+  ]);
 });

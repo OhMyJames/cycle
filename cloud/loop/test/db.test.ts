@@ -6,6 +6,7 @@ import { CriteriaBook } from "../src/criteria.ts";
 import { openDb } from "../src/db/db.ts";
 import { ALLOWED, MIGRATIONS, schemaVersion } from "../src/db/schema.ts";
 import { openStore, SqliteStore } from "../src/db/store.ts";
+import { appendFixNode, buildGraph, updateGraphNode } from "../src/graph.ts";
 import { Pipeline } from "../src/pipeline.ts";
 import { RunStore } from "../src/store.ts";
 import {
@@ -320,4 +321,101 @@ test("CI that went green seen green in this process is not asked again in review
   expect((await pipeline.step()).status).toBe("delivered");
   expect(world.calls.filter((c) => c.includes("statusCheckRollup"))).toHaveLength(1);
   store.close();
+});
+
+test("Task Graph persists atomically in SqliteStore and supports node updates and fix-* append", async () => {
+  const dir = await tmp();
+  const store = SqliteStore.open(dir, now);
+  expect(await store.loadGraph("CYC-508")).toBeUndefined();
+
+  const initial = buildGraph(
+    "CYC-508",
+    "plan_doc",
+    [
+      {
+        id: "n1",
+        title: "Schema",
+        goal: "Add run_graphs and graph_nodes",
+        dependsOn: [],
+        filesHint: ["cloud/loop/src/db/schema.ts"],
+        verify: ["bun test ./cloud/loop/test/db.test.ts"],
+      },
+      {
+        id: "n2",
+        title: "Engine",
+        goal: "Wire node loop",
+        dependsOn: ["n1"],
+        filesHint: [],
+        verify: ["bun run check"],
+      },
+    ],
+    now().toISOString(),
+  );
+  await store.saveGraph(initial);
+
+  const loaded = await store.loadGraph("CYC-508");
+  expect(loaded?.source).toBe("plan_doc");
+  expect(loaded?.nodes.map((n) => n.id)).toEqual(["n1", "n2"]);
+  expect(loaded?.nodes[1]?.dependsOn).toEqual(["n1"]);
+
+  // Update node + append fix-1 inside one transaction, and verify rollback on failure.
+  const passedN1 = updateGraphNode(
+    loaded as NonNullable<typeof loaded>,
+    "n1",
+    { status: "passed", commitSha: "deadbeef", summary: "done schema" },
+    now().toISOString(),
+    "n2",
+  );
+  const fixed = appendFixNode(passedN1, {
+    title: "修复整单 QA",
+    goal: "Fix lint warning",
+    verify: ["bun run check"],
+    nowIso: now().toISOString(),
+  });
+  if (!fixed.ok) throw new Error("expected fix node");
+
+  expect(() =>
+    store.transaction((tx) => {
+      tx.saveGraph(fixed.graph);
+      throw new Error("abort");
+    }),
+  ).toThrow("abort");
+  expect((await store.loadGraph("CYC-508"))?.nodes.map((n) => n.id)).toEqual(["n1", "n2"]);
+
+  store.transaction((tx) => {
+    tx.saveGraph(fixed.graph);
+  });
+  const after = await store.loadGraph("CYC-508");
+  expect(after?.nodes.map((n) => [n.id, n.origin, n.status])).toEqual([
+    ["n1", "planned", "passed"],
+    ["n2", "planned", "pending"],
+    ["fix-1", "fix", "pending"],
+  ]);
+  expect(after?.nodes[0]?.commitSha).toBe("deadbeef");
+  expect(after?.nodes[2]?.dependsOn).toEqual(["n1"]);
+  store.close();
+});
+
+test("Task Graph round-trips through RunStore fallback (graph.json)", async () => {
+  const dir = await tmp();
+  const store = new RunStore(dir, now);
+  expect(await store.loadGraph("CYC-508")).toBeUndefined();
+  const g = buildGraph(
+    "CYC-508",
+    "single",
+    [
+      {
+        id: "n1",
+        title: "Only step",
+        goal: "Implement feature",
+        dependsOn: [],
+        filesHint: [],
+        verify: ["bun run check"],
+      },
+    ],
+    now().toISOString(),
+  );
+  await store.saveGraph(g);
+  const loaded = await store.loadGraph("CYC-508");
+  expect(loaded?.nodes[0]?.id).toBe("n1");
 });

@@ -22,9 +22,11 @@ import { join } from "node:path";
 import { z } from "zod";
 import { CriteriaBook } from "./criteria.ts";
 import type { StoreOps } from "./db/store.ts";
+import { type TaskGraph, TaskGraphSchema } from "./graph.ts";
 
 export const PHASES = [
   "claimed",
+  "graph_plan",
   "dev",
   "verify",
   "qa",
@@ -106,6 +108,8 @@ export const DevStateSchema = z.object({
   fullFlowDocs: z
     .array(z.object({ id: z.number().int(), title: z.string(), version: z.number().int() }))
     .default([]),
+  /** CYC-508: id of the Level-2 Task Graph node currently running in `dev`/`verify`, or null/unset during whole-item stages. */
+  activeNodeId: z.string().nullable().optional(),
   /** CYC-467: a hash of the work item body the criteria were read from; null for a run begun before it was kept. */
   bodyHash: z.string().nullable().optional(),
   /** CYC-467: a person changed the body while the run was blocked; Dev's next turn says so, once. */
@@ -411,6 +415,9 @@ export interface LoopStore {
   savePlanMemory(memory: PlanMemory): Promise<void>;
   saveCriteria(key: string, book: CriteriaBook): Promise<void>;
   loadCriteria(key: string): Promise<CriteriaBook>;
+  /** CYC-508: Level-2 Task Graph for a dev run, or undefined when the run does not use a graph. */
+  loadGraph(key: string): Promise<TaskGraph | undefined>;
+  saveGraph(graph: TaskGraph): Promise<TaskGraph>;
   appendProgress(key: string, round: number, text: string): Promise<void>;
   readProgress(key: string): Promise<string>;
   event(run: string, kind: string, data?: Record<string, string | number | boolean>): Promise<void>;
@@ -607,6 +614,27 @@ export class RunStore implements LoopStore {
     return CriteriaBook.restore(
       JSON.parse(await readFile(join(this.#run(key), "criteria.json"), "utf8")),
     );
+  }
+
+  async loadGraph(key: string): Promise<TaskGraph | undefined> {
+    try {
+      return TaskGraphSchema.parse(
+        JSON.parse(await readFile(join(this.#run(key), "graph.json"), "utf8")),
+      );
+    } catch (error) {
+      if ((error as { code?: string }).code === "ENOENT") return undefined;
+      throw error;
+    }
+  }
+
+  async saveGraph(graph: TaskGraph): Promise<TaskGraph> {
+    const next = TaskGraphSchema.parse({ ...graph, updatedAt: this.#now().toISOString() });
+    await mkdir(this.#run(next.runKey), { recursive: true, mode: 0o700 });
+    await writeAtomic(
+      join(this.#run(next.runKey), "graph.json"),
+      `${JSON.stringify(next, null, 2)}\n`,
+    );
+    return next;
   }
 
   /** What Dev reports at the end of a turn is kept, newest last. */
