@@ -46,19 +46,32 @@ export function UpdateNotice() {
   const [confirming, setConfirming] = useState(false);
   const deferred = useAppState((s) => s.updateDeferred);
   const check = useAppState((s) => s.updateCheck);
-  if (update === undefined) return null;
-  if (!updateNoticed(update, deferred)) {
+  if (check !== undefined && (update === undefined || !updateNoticed(update, deferred))) {
     // A check the person asked for answers where they can see it, then goes: nothing to do, nothing kept.
-    if (check === undefined) return null;
     return (
       <AppNotice
-        tone="info"
+        tone={check === "failed" ? "error" : "info"}
         busy={check === "checking"}
-        icon={check === "checking" ? <RefreshIcon /> : <CheckIcon />}
-        text={check === "checking" ? t("update.checking") : t("update.upToDateNow")}
+        icon={
+          check === "checking" ? (
+            <RefreshIcon />
+          ) : check === "failed" ? (
+            <ErrorCircleIcon />
+          ) : (
+            <CheckIcon />
+          )
+        }
+        text={
+          check === "checking"
+            ? t("update.checking")
+            : check === "failed"
+              ? t("update.checkFailed")
+              : t("update.upToDateNow")
+        }
       />
     );
   }
+  if (update === undefined || !updateNoticed(update, deferred)) return null;
   const busy = update.kind === "downloading" || update.kind === "installing";
   const failedInstall = update.kind === "error";
   const version = versionOf(update);

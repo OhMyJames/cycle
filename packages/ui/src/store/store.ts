@@ -37,10 +37,10 @@ export { type BlankWorktree, blankWorktreeOf } from "./worktrees.ts";
 /** How long the Diff tab has to answer a request to show an edit before it lapses. */
 const REVEAL_IN_DIFF_MS = 3_000;
 
-/** Which view of its Diff tab each session shows (this session's edits, or the workspace), and who to tell of a change. */
-/** How long "up to date" stays after a check the person asked for. */
-const UP_TO_DATE_MS = 4000;
+/** How long the answer to a check the person asked for stays on screen. */
+const UPDATE_CHECK_MS = 4_000;
 
+/** Which view of its Diff tab each session shows (this session's edits, or the workspace), and who to tell of a change. */
 export class DiffModes {
   readonly #modes = new Map<string, "session" | "workspace">();
   readonly #listeners = new Set<() => void>();
@@ -58,6 +58,8 @@ export class DiffModes {
 
 export class AppStore extends StoreBase {
   #stop: (() => void) | undefined;
+  #updateChecks = 0;
+  #updateCheckTimer: ReturnType<typeof setTimeout> | undefined;
   /** Which view each session's Diff tab shows: kept while the window is open, so a tab looked away from finds it again. */
   readonly diffModes = new DiffModes();
 
@@ -111,6 +113,7 @@ export class AppStore extends StoreBase {
   }
 
   stop(): void {
+    clearTimeout(this.#updateCheckTimer);
     this.#stop?.();
   }
 
@@ -485,22 +488,35 @@ export class AppStore extends StoreBase {
 
   checkForUpdate = async (): Promise<void> => {
     const serial = ++this.#updateChecks;
+    clearTimeout(this.#updateCheckTimer);
     this.set({ updateCheck: "checking" });
-    await this.attempt(async () => {
+    let answer: "up-to-date" | "failed" | undefined;
+    try {
       const update = await this.bridge.checkForUpdate();
+      if (serial !== this.#updateChecks) return;
+      answer =
+        update.kind === "up-to-date"
+          ? "up-to-date"
+          : update.kind === "error"
+            ? "failed"
+            : undefined;
+      // Asked for by the person: a version they put off before is said again.
       this.set({
         update,
-        ...(update.kind === "up-to-date" ? { updateCheck: "up-to-date" as const } : {}),
+        updateCheck: answer,
+        ...(update.kind === "available" ? { updateDeferred: undefined } : {}),
       });
-    });
-    if (this.getState().updateCheck === "checking" && serial === this.#updateChecks)
-      this.set({ updateCheck: undefined });
-    if (this.getState().updateCheck === "up-to-date")
-      setTimeout(() => {
-        if (serial === this.#updateChecks) this.set({ updateCheck: undefined });
-      }, UP_TO_DATE_MS);
+    } catch {
+      if (serial !== this.#updateChecks) return;
+      answer = "failed";
+      this.set({ updateCheck: answer });
+    }
+    if (answer !== undefined)
+      this.#updateCheckTimer = setTimeout(
+        () => this.set({ updateCheck: undefined }),
+        UPDATE_CHECK_MS,
+      );
   };
-  #updateChecks = 0;
 
   /** The person's answer about usage statistics. */
   setAnalytics = async (enabled: boolean): Promise<void> => {

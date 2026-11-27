@@ -1176,6 +1176,7 @@ export const enUS = {
   "update.checking": "Checking for updates…",
   "update.upToDate": "Up to date",
   "update.upToDateNow": "You’re up to date",
+  "update.checkFailed": "Could not check for updates",
   "update.available": "Version {version} is available",
   "update.downloading": "Downloading {version}: {received} of {total} MB",
   "update.downloadingChanges": "Downloading the changes for {version}: {received} of {total} MB",
