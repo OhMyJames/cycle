@@ -19,7 +19,7 @@ const RECENT = 50;
 
 export type IntentPayload =
   | { comment: { body: string } }
-  | { move: { to: Stage } }
+  | { move: { to: Stage; from: Stage | Stage[] } }
   | { label: { labelId: number; add: boolean } }
   | { phase: { phase: LoopPhase | null; at: string } };
 
@@ -65,6 +65,17 @@ const targetOf = (intent: Intent): Target | undefined => {
   if (p === null || typeof p.issueId !== "number" || typeof p.issueNumber !== "number")
     return undefined;
   return { issueId: p.issueId, issueNumber: p.issueNumber };
+};
+
+/** A column as its stateType, and nothing of its name; an unknown column (Backlog, say) is `other`. */
+const stateTypeOf = (config: Config, column: unknown): string => {
+  const c = config.columns;
+  const id = typeof column === "string" ? c[column as Stage as keyof typeof c] : column;
+  if (id === c.todo) return "unstarted";
+  if (id === c.inProgress || id === c.inReview || id === c.blocked) return "started";
+  if (id === c.done) return "completed";
+  if (id === c.canceled) return "canceled";
+  return "other";
 };
 
 const KINDS = new Set(["comment", "move", "label", "phase"]);
@@ -207,6 +218,21 @@ export class Reconciler {
         if (to === "inProgress" && stopped) return;
       }
       if (issue.columnId === config.columns[to]) return;
+      // Only while the work item is where the loop thought it was: one a person has moved elsewhere is left alone. An intent
+      // written before `from` existed has no place, so it moves nothing that is somewhere else.
+      const wanted = [p.from].flat();
+      if (
+        !wanted.some((f) => typeof f === "string" && config.columns[f as Stage] === issue.columnId)
+      ) {
+        store.transaction((tx) =>
+          tx.event(intent.runKey, "intent_overridden", {
+            intent: "move",
+            from: stateTypeOf(config, wanted[0]),
+            at: stateTypeOf(config, issue.columnId),
+          }),
+        );
+        return;
+      }
       await tracker.move(issue, to);
     } else if (intent.kind === "label") {
       const labelId = p.labelId as number;

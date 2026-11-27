@@ -13,7 +13,7 @@ import { fullFlowPreflight, isFullFlow } from "../full-flow.ts";
 import { preflight, sendBackComment } from "../preflight.ts";
 import { pickNext } from "../select.ts";
 import { applyPatch, type RunRecord } from "../store.ts";
-import type { Issue } from "../types.ts";
+import type { Issue, Stage } from "../types.ts";
 
 /**
  * The `Todo` column: the next work item `pickNext` chooses, checked by `preflight`, which also says its kind. One
@@ -74,7 +74,7 @@ export const todoIntake = (host: FlowHost): Intake => ({
           issue,
           kind: "move",
           dedupe: `move:${issue.key}:rejected:${seq}`,
-          payload: { to: "blocked" },
+          payload: { to: "blocked", from: "todo" },
         });
       tx.event(issue.key, "preflight_rejected", { reasons: reasons.length });
     });
@@ -115,6 +115,10 @@ export const blockTicket = async (
   // a later step. `blockSeq` is which Blocked this is for the run: one comment each, the next Blocked comments again.
   store.transaction((tx) => {
     const blockSeq = tx.countEvents(run.key, "blocked") + 1;
+    const waitingFrom = tx
+      .pendingIntents()
+      .filter((i) => i.kind === "move" && i.runKey === run.key)
+      .flatMap((i) => [(i.payload as { from?: Stage | Stage[] }).from ?? []].flat());
     tx.save(
       applyPatch(run, { phase: "blocked", blockedReason: reason, resumeFrom: resumeFrom ?? from }),
     );
@@ -130,7 +134,8 @@ export const blockTicket = async (
       issue,
       kind: "move",
       dedupe: `move:${run.key}:${blockSeq}`,
-      payload: { to: "blocked" },
+      // A claim still waiting was replaced by this move, so the work item may well still be where it said.
+      payload: { to: "blocked", from: ["inProgress", ...waitingFrom] },
     });
     tx.event(run.key, "blocked", { phase: from, round: run.round });
     if (asked !== undefined)
