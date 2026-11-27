@@ -18,7 +18,7 @@ import { review } from "./review.ts";
 import { verify } from "./verify.ts";
 
 export const devFlow = (host: FlowHost): Flow => {
-  const x: Dev = { h: host, kept: new Set() };
+  const x: Dev = { h: host, kept: new Set(), greenSeen: new Map() };
   return {
     kind: "dev",
     phases: {
@@ -48,7 +48,7 @@ export const devFlow = (host: FlowHost): Flow => {
       review: {
         field: "review",
         step: async ({ run, issue, book, save }): Promise<StepResult | undefined> => {
-          const done = await review(host, asDev(run), issue, book, save);
+          const done = await review(x, asDev(run), issue, book, save);
           if (done === undefined) return undefined;
           await host.clear(run, issue);
           return {
@@ -127,6 +127,7 @@ export const devFlow = (host: FlowHost): Flow => {
     afterRemoved: () => ({ dev: { reviewSessionId: null, prUrl: null } }),
 
     forget(key) {
+      x.greenSeen.delete(key);
       for (const id of x.kept) if (id.startsWith(`${key}:`)) x.kept.delete(id);
     },
 
