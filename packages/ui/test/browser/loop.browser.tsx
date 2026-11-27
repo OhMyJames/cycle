@@ -58,12 +58,14 @@ const withTickets = (tickets: Record<string, LoopTicket[]>): LoopBoardAnswer => 
   })),
 });
 
-const mount = async (script: Parameters<typeof fakeBridge>[0]) => {
-  const fake = fakeBridge({ connected: true, ...script });
+const mount = async (script: NonNullable<Parameters<typeof fakeBridge>[0]>) => {
+  // `options` stays live: a test can change what the bridge answers later.
+  const options = { connected: true, ...script };
+  const fake = fakeBridge(options);
   await renderApp(fake.bridge);
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "Loop" }));
-  return { user, ...fake };
+  return { user, options, ...fake };
 };
 
 test("the Loop page shows a full-width board as a row of columns, with Done collapsed", async () => {
@@ -859,4 +861,89 @@ test("a ticket drawer shows the text, the criteria, why it needs a person, and j
   expect(
     await screen.findByText("The Dev session is not in the list of any connected location."),
   ).toBeTruthy();
+});
+
+const runState = (projects: HTMLElement, key: string) =>
+  projects.querySelector<HTMLElement>(`[data-project="${key}"] [data-kind="loop-run"]`)
+    ?.textContent ?? null;
+
+test("a Project with a running record says Running, and one without says Not running", async () => {
+  await mount(overviewScript({ loopRuns: { kind: "ok", running: { CYC: ["CYC-386"], DOC: [] } } }));
+  const projects = await screen.findByRole("region", { name: "Projects" });
+  await waitFor(() => expect(runState(projects, "CYC")).toBe("Running"));
+  expect(runState(projects, "DOC")).toBe("Not running");
+});
+
+test("a Loop server that does not answer is never shown as running, even with In Progress tickets", async () => {
+  await mount(overviewScript({ loopRuns: { kind: "disconnected" } }));
+  const projects = await screen.findByRole("region", { name: "Projects" });
+  await waitFor(() => expect(runState(projects, "CYC")).toBe("Not running"));
+});
+
+test("a pushed run state updates the page without reading again", async () => {
+  const { named, emit } = await mount(
+    overviewScript({ loopRuns: { kind: "ok", running: { CYC: [], DOC: [] } } }),
+  );
+  const projects = await screen.findByRole("region", { name: "Projects" });
+  await waitFor(() => expect(runState(projects, "CYC")).toBe("Not running"));
+  const reads = named("loopRuns").length;
+  act(() => emit({ type: "loop-runs", runs: { kind: "ok", running: { CYC: ["CYC-386"] } } }));
+  await waitFor(() => expect(runState(projects, "CYC")).toBe("Running"));
+  act(() => emit({ type: "loop-runs", runs: { kind: "disconnected" } }));
+  await waitFor(() => expect(runState(projects, "CYC")).toBe("Not running"));
+  expect(named("loopRuns").length).toBe(reads);
+});
+
+test("reopening the Loop page reads the run state again, and applies what changed meanwhile", async () => {
+  const script = overviewScript({ loopRuns: { kind: "ok", running: { CYC: [], DOC: [] } } });
+  const { user, options } = await mount(script);
+  const projects = await screen.findByRole("region", { name: "Projects" });
+  await waitFor(() => expect(runState(projects, "CYC")).toBe("Not running"));
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(document.querySelector('[data-kind="loop-overview"]')).toBeNull());
+  // Loop started while the page was closed, and nothing was pushed to it.
+  options.loopRuns = { kind: "ok", running: { CYC: ["CYC-386"], DOC: [] } };
+  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  const again = await screen.findByRole("region", { name: "Projects" });
+  await waitFor(() => expect(runState(again, "CYC")).toBe("Running"));
+});
+
+test("a pushed run state that changes who Loop is running reads the board again", async () => {
+  const { named, emit, user } = await mount(
+    overviewScript({ loopRuns: { kind: "ok", running: { CYC: [], DOC: [] } } }),
+  );
+  await user.click(await screen.findByRole("tab", { name: /Cycle/ }));
+  await screen.findByRole("region", { name: "In Progress" });
+  const reads = named("loopBoard").length;
+  act(() => emit({ type: "loop-runs", runs: { kind: "ok", running: { CYC: ["CYC-386"] } } }));
+  await waitFor(() => expect(named("loopBoard").length).toBeGreaterThan(reads));
+  // The same state pushed again changes nothing: no read.
+  const after = named("loopBoard").length;
+  act(() => emit({ type: "loop-runs", runs: { kind: "ok", running: { CYC: ["CYC-386"] } } }));
+  expect(named("loopBoard").length).toBe(after);
+});
+
+test("an older board read that lands last does not replace a newer one", async () => {
+  const { bridge, emit } = await mount(
+    overviewScript({ loopRuns: { kind: "ok", running: { CYC: [], DOC: [] } } }),
+  );
+  const projects = await screen.findByRole("region", { name: "Projects" });
+  await waitFor(() =>
+    expect(projects.querySelector('[data-project="CYC"]')?.textContent).toContain("Todo 1"),
+  );
+  // Two reads in flight at once, answered in the opposite order.
+  const waiting: ((answer: LoopBoardAnswer) => void)[] = [];
+  bridge.loopBoard = () => new Promise<LoopBoardAnswer>((resolve) => waiting.push(resolve));
+  act(() => emit({ type: "loop-runs", runs: { kind: "ok", running: { CYC: ["CYC-386"] } } }));
+  act(() =>
+    emit({ type: "loop-runs", runs: { kind: "ok", running: { CYC: ["CYC-386", "CYC-388"] } } }),
+  );
+  await waitFor(() => expect(waiting.length).toBe(2));
+  act(() => waiting[1]?.(withTickets({ Todo: [ticket(388, "Todo"), ticket(389, "Todo")] })));
+  await waitFor(() =>
+    expect(projects.querySelector('[data-project="CYC"]')?.textContent).toContain("Todo 2"),
+  );
+  act(() => waiting[0]?.(board));
+  await new Promise((r) => setTimeout(r, 50));
+  expect(projects.querySelector('[data-project="CYC"]')?.textContent).toContain("Todo 2");
 });

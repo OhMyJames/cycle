@@ -83,6 +83,8 @@ export const EVENTS = {
   analytics_toggled: o({ enabled: z.boolean() }),
   /** The Loop page read a Project's board: how it came out, never what is on it. */
   loop_board_read: o({ result: z.enum(["ok", "no_server", "unreachable"]) }),
+  /** The Loop page read the Projects' run state: whether the Loop server answered, never which runs. */
+  loop_runs_read: o({ result: z.enum(["ok", "disconnected"]) }),
   /** The person opened a ticket's page on the Loop page. */
   loop_ticket_opened: o({}),
   /** The person asked to talk about a ticket with an agent: how it came out; never which ticket or what was said. */

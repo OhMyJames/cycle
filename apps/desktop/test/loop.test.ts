@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LoopActFailure, LoopAction } from "@cycle/ui/api";
@@ -8,9 +9,13 @@ import {
   actOnTicket,
   answerBoard,
   answerNotices,
+  answerRuns,
   answerTicket,
+  type Called,
   callLoop,
+  loopFeed,
   readLoopProjects,
+  readLoopRuns,
   retireKeyFile,
   startTicketChat,
 } from "../src/main/loop.ts";
@@ -591,5 +596,352 @@ describe("a conversation about a ticket (CYC-389)", () => {
       sessionId: "s1",
       locationId: "local",
     });
+  });
+});
+
+type Reply = (method: string, params: Record<string, unknown>) => unknown;
+
+/** A Loop server on a unix socket: answers `runs/list` from `runs`, and `events/list` and the rest through `reply`. */
+const run = (key: string, state: "active" | "blocked" | "done") => ({
+  key,
+  kind: "dev" as const,
+  state,
+  startedAt: "2026-11-26T01:00:00.000Z",
+  updatedAt: "2026-11-26T02:00:00.000Z",
+});
+
+const loopServer = async (
+  socket: string,
+  options: { runs?: [string, ReturnType<typeof run>[]][]; reply?: Reply },
+) => {
+  const server = createServer((c) =>
+    c.on("data", (chunk) => {
+      const req = JSON.parse(chunk.toString("utf8").split("\n")[0] ?? "{}") as {
+        method: string;
+        params?: Record<string, unknown>;
+      };
+      const result =
+        req.method === "runs/list"
+          ? { projects: (options.runs ?? []).map(([projectKey, runs]) => ({ projectKey, runs })) }
+          : options.reply?.(req.method, req.params ?? {});
+      const body =
+        result && typeof result === "object" && "error" in result
+          ? { jsonrpc: "2.0", id: 1, ...result }
+          : { jsonrpc: "2.0", id: 1, result };
+      c.write(`${JSON.stringify(body)}\n`);
+    }),
+  );
+  await new Promise<void>((r) => server.listen(socket, r));
+  return server;
+};
+
+describe("where Loop is running (CYC-458)", () => {
+  test("only an active record is running, and a server that does not answer says nothing runs", async () => {
+    const socket = join(dir, "runs.sock");
+    expect(await readLoopRuns(socket)).toEqual({ kind: "disconnected" });
+    const server = await loopServer(socket, {
+      runs: [
+        ["CYC", [run("CYC-1", "active"), run("CYC-2", "done"), run("CYC-3", "blocked")]],
+        ["OPS", []],
+      ],
+    });
+    try {
+      expect(await readLoopRuns(socket)).toEqual({
+        kind: "ok",
+        running: { CYC: ["CYC-1"], OPS: [] },
+      });
+    } finally {
+      server.close();
+    }
+  });
+
+  const event = (seq: number) => ({
+    seq,
+    ts: "2026-11-26T02:00:00.000Z",
+    run: "CYC-1",
+    kind: "phase",
+  });
+
+  test("after a disconnect the next request carries the last seq, and a seq is applied once", async () => {
+    const socket = join(dir, "feed.sock");
+    const asked: unknown[] = [];
+    let active = true;
+    // The server resends seq 2 with the new one after it comes back: a client must not apply 2 a second time.
+    let pages: Record<number, ReturnType<typeof event>[]> = { 0: [event(1), event(2)] };
+    const reply: Reply = (method, params) => {
+      if (method !== "events/list") return {};
+      asked.push(params.afterSeq);
+      const after = Number(params.afterSeq);
+      const events = (pages[after] ?? []).filter((e) => e.seq > 0);
+      return {
+        projectKey: "CYC",
+        events,
+        lastSeq: events.at(-1)?.seq ?? after,
+        hasMore: false,
+      };
+    };
+    const start = () =>
+      loopServer(socket, {
+        runs: [["CYC", active ? [run("CYC-1", "active")] : [run("CYC-1", "done")]]],
+        reply,
+      });
+    let server = await start();
+    const told: unknown[] = [];
+    const feed = loopFeed({
+      call: (method, params) => callLoop(socket, method, params, 3000),
+      changed: (runs) => told.push(runs),
+    });
+    try {
+      await feed.tick(); // reads the runs, then catches up on the log
+      expect(told).toEqual([{ kind: "ok", running: { CYC: ["CYC-1"] } }]);
+      expect(feed.lastSeq("CYC")).toBe(2);
+      expect(asked).toEqual([0]);
+
+      // The server goes away: nothing is asked of it, and the last seq is kept.
+      await new Promise((r) => server.close(r));
+      // One or two misses keep what was known; the third in a row says the server is away.
+      await feed.tick();
+      await feed.tick();
+      expect(told).toHaveLength(1);
+      await feed.tick();
+      expect(feed.lastSeq("CYC")).toBe(2);
+
+      // It comes back: the Loop has finished meanwhile. The request carries 2; seq 2 comes back again, 3 is new.
+      active = false;
+      pages = { 2: [event(2), event(3)] };
+      server = await start();
+      await feed.tick();
+      expect(asked.slice(1)).toEqual([2]);
+      expect(feed.lastSeq("CYC")).toBe(3);
+      expect(told).toEqual([
+        { kind: "ok", running: { CYC: ["CYC-1"] } },
+        { kind: "disconnected" },
+        { kind: "ok", running: { CYC: [] } },
+      ]);
+
+      // Nothing new: only the seq is asked again, and nothing is told twice.
+      pages = { 3: [event(3)] };
+      await feed.tick();
+      expect(asked.at(-1)).toBe(3);
+      expect(told).toHaveLength(3);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("a read the page asked for is pushed too when it differs from what was told", async () => {
+    const socket = join(dir, "read.sock");
+    const server = await loopServer(socket, { runs: [["CYC", [run("CYC-1", "active")]]] });
+    const told: unknown[] = [];
+    const feed = loopFeed({
+      call: (method, params) => callLoop(socket, method, params, 3000),
+      changed: (runs) => told.push(runs),
+    });
+    try {
+      expect(await feed.read()).toEqual({ kind: "ok", running: { CYC: ["CYC-1"] } });
+      expect(told).toHaveLength(1);
+      expect(await feed.read()).toEqual({ kind: "ok", running: { CYC: ["CYC-1"] } });
+      expect(told).toHaveLength(1);
+      await new Promise((r) => server.close(r));
+      expect((await feed.read()).kind).toBe("ok");
+      expect((await feed.read()).kind).toBe("ok");
+      expect(told).toHaveLength(1);
+      expect(await feed.read()).toEqual({ kind: "disconnected" });
+      expect(told).toHaveLength(2);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("events/list that keeps failing does not make runs/list be read every tick, and backs off", async () => {
+    const socket = join(dir, "broken.sock");
+    let runsReads = 0;
+    let eventAsks = 0;
+    const server = createServer((c) =>
+      c.on("data", (chunk) => {
+        const req = JSON.parse(chunk.toString("utf8").split("\n")[0] ?? "{}") as { method: string };
+        if (req.method === "runs/list") {
+          runsReads++;
+          const result = { projects: [{ projectKey: "CYC", runs: [run("CYC-1", "active")] }] };
+          c.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, result })}\n`);
+        } else {
+          eventAsks++;
+          c.write(
+            `${JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32603, message: "Internal error" } })}\n`,
+          );
+        }
+      }),
+    );
+    await new Promise<void>((r) => server.listen(socket, r));
+    try {
+      const feed = loopFeed({
+        call: (method, params) => callLoop(socket, method, params, 3000),
+        changed: () => {},
+      });
+      for (let i = 0; i < 12; i++) await feed.tick();
+      // Runs were read at the start (and once more as a recheck); the failing events are asked less and less often.
+      expect(runsReads).toBeLessThanOrEqual(3);
+      expect(eventAsks).toBeLessThanOrEqual(6);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("the log that was there at the start is read to its end, and is not news", async () => {
+    const socket = join(dir, "cold.sock");
+    const server = await loopServer(socket, {
+      runs: [["CYC", [run("CYC-1", "active")]]],
+      reply: (_method, params) => {
+        const after = Number(params.afterSeq);
+        const events = [event(1), event(2), event(3)].filter((e) => e.seq > after);
+        return { projectKey: "CYC", events, lastSeq: 3, hasMore: false };
+      },
+    });
+    try {
+      const feed = loopFeed({
+        call: (method, params) => callLoop(socket, method, params, 3000),
+        changed: () => {},
+      });
+      await feed.tick();
+      expect(feed.lastSeq("CYC")).toBe(3);
+      await feed.tick();
+      await feed.tick();
+      expect(feed.lastSeq("CYC")).toBe(3);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("loop_runs_read is sent with the result alone", async () => {
+    const sent: unknown[] = [];
+    const track = (event: string, props: unknown) => sent.push([event, props]);
+    expect(await answerRuns(undefined, track)).toEqual({ kind: "disconnected" });
+    const runs = { kind: "ok" as const, running: { CYC: ["CYC-1"] } };
+    expect(await answerRuns({ read: async () => runs }, track)).toEqual(runs);
+    // Never a Project, a ticket or a count: the one fixed word.
+    expect(sent).toEqual([
+      ["loop_runs_read", { result: "disconnected" }],
+      ["loop_runs_read", { result: "ok" }],
+    ]);
+  });
+
+  test("a Loop that was away for several ticks is seen on the first tick after it is back", async () => {
+    const socket = join(dir, "back.sock");
+    const told: unknown[] = [];
+    const feed = loopFeed({
+      call: (method, params) => callLoop(socket, method, params, 3000),
+      changed: (runs) => told.push(runs),
+    });
+    for (let i = 0; i < 6; i++) await feed.tick();
+    expect(told).toEqual([{ kind: "disconnected" }]);
+    const server = await loopServer(socket, {
+      runs: [["CYC", [run("CYC-1", "active")]]],
+      reply: () => ({ projectKey: "CYC", events: [], lastSeq: 0, hasMore: false }),
+    });
+    try {
+      await feed.tick();
+      expect(told.at(-1)).toEqual({ kind: "ok", running: { CYC: ["CYC-1"] } });
+    } finally {
+      server.close();
+    }
+  });
+
+  test("an older runs answer that arrives late is not applied over a newer one", async () => {
+    const waiting: ((value: Called) => void)[] = [];
+    const told: unknown[] = [];
+    const feed = loopFeed({
+      call: () => new Promise<Called>((resolve) => waiting.push(resolve)),
+      changed: (runs) => told.push(runs),
+    });
+    const answer = (keys: string[]) => ({
+      kind: "ok" as const,
+      result: { projects: [{ projectKey: "CYC", runs: keys.map((k) => run(k, "active")) }] },
+    });
+    const older = feed.read();
+    const newer = feed.read();
+    waiting[1]?.(answer(["CYC-2"]));
+    await newer;
+    waiting[0]?.(answer([]));
+    await older;
+    expect(told).toEqual([{ kind: "ok", running: { CYC: ["CYC-2"] } }]);
+  });
+
+  test("one Project whose events are broken does not hold back a healthy one", async () => {
+    const socket = join(dir, "two.sock");
+    let ops: string[] = ["CYC-5"];
+    let ops2seq = 1;
+    const server = createServer((c) =>
+      c.on("data", (chunk) => {
+        const req = JSON.parse(chunk.toString("utf8").split("\n")[0] ?? "{}") as {
+          method: string;
+          params?: { projectKey?: string; afterSeq?: number };
+        };
+        const send = (o: object) => c.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, ...o })}\n`);
+        if (req.method === "runs/list")
+          return send({
+            result: {
+              projects: [
+                { projectKey: "BAD", runs: [] },
+                { projectKey: "OPS", runs: ops.map((k) => run(k, "active")) },
+              ],
+            },
+          });
+        if (req.params?.projectKey === "BAD")
+          return send({ error: { code: -32603, message: "Internal error" } });
+        const after = req.params?.afterSeq ?? 0;
+        const events = after < ops2seq ? [event(ops2seq)] : [];
+        send({ result: { projectKey: "OPS", events, lastSeq: ops2seq, hasMore: false } });
+      }),
+    );
+    await new Promise<void>((r) => server.listen(socket, r));
+    const told: unknown[] = [];
+    try {
+      const feed = loopFeed({
+        call: (method, params) => callLoop(socket, method, params, 3000),
+        changed: (runs) => told.push(runs),
+      });
+      for (let i = 0; i < 4; i++) await feed.tick();
+      // BAD is backing off; a new event in OPS still gets through at once.
+      ops = ["CYC-5", "CYC-6"];
+      ops2seq = 2;
+      await feed.tick();
+      expect(told.at(-1)).toEqual({ kind: "ok", running: { BAD: [], OPS: ["CYC-5", "CYC-6"] } });
+    } finally {
+      server.close();
+    }
+  });
+
+  test("a seq past the end of the log starts again from 0", async () => {
+    const socket = join(dir, "ahead.sock");
+    const asked: unknown[] = [];
+    let lines = 5;
+    const server = await loopServer(socket, {
+      runs: [["CYC", [run("CYC-1", "active")]]],
+      reply: (method, params) => {
+        if (method !== "events/list") return {};
+        const after = Number(params.afterSeq);
+        asked.push(after);
+        if (after > lines)
+          return {
+            error: { code: -32602, message: "Invalid params", data: { reason: "seq_ahead" } },
+          };
+        const events = Array.from({ length: lines - after }, (_, i) => event(after + i + 1));
+        return { projectKey: "CYC", events, lastSeq: lines, hasMore: false };
+      },
+    });
+    try {
+      const feed = loopFeed({
+        call: (method, params) => callLoop(socket, method, params, 3000),
+        changed: () => {},
+      });
+      await feed.tick();
+      expect(feed.lastSeq("CYC")).toBe(5);
+      lines = 2; // the log was swapped for a shorter one
+      await feed.tick();
+      expect(asked).toEqual([0, 5, 0]);
+      expect(feed.lastSeq("CYC")).toBe(2);
+    } finally {
+      server.close();
+    }
   });
 });

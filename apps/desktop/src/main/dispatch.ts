@@ -24,6 +24,7 @@ export const MAIN_METHODS = [
   "cancelSignIn",
   "signOut",
   "loopProjects",
+  "loopRuns",
   "loopBoard",
   "loopTicket",
   "loopAct",

@@ -284,18 +284,34 @@ export function TicketDrawer({
   );
   const waitingOn = (id: string) => waitingTitles.split("\n").includes(`[${id}] Dev`);
 
+  // Which tickets Loop is running changes what the Loop server says of this one (watch or not): it is read again then.
+  const runKey = useAppState((s) =>
+    s.loop.runs === undefined
+      ? "unknown"
+      : s.loop.runs.kind === "ok" && (s.loop.runs.running[projectKey] ?? []).includes(identifier)
+        ? "running"
+        : "idle",
+  );
+
   useEffect(() => {
+    // These are dependencies, not read in here: a change of any of them reads the ticket again. Not before the run
+    // state is known: the ticket would be read twice.
     void version;
     void retryCount;
+    if (runKey === "unknown") return;
+    void runKey;
     let live = true;
-    setTicket("loading");
     void store.loadLoopTicket(projectKey, identifier).then((answer) => {
-      if (live) setTicket(answer.kind === "ok" ? answer.ticket : "failed");
+      // A read again that fails leaves the ticket that was shown.
+      if (live)
+        setTicket((had) =>
+          answer.kind === "ok" ? answer.ticket : typeof had === "object" ? had : "failed",
+        );
     });
     return () => {
       live = false;
     };
-  }, [store, projectKey, identifier, version, retryCount]);
+  }, [store, projectKey, identifier, version, retryCount, runKey]);
 
   useEffect(() => {
     closeRef.current?.focus();
@@ -346,7 +362,10 @@ export function TicketDrawer({
               title={t("loop.detail.failed")}
               action={{
                 label: t("loop.reload"),
-                onAction: () => setRetryCount((n) => n + 1),
+                onAction: () => {
+                  setTicket("loading");
+                  setRetryCount((n) => n + 1);
+                },
               }}
             />
           ) : (
