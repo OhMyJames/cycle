@@ -680,6 +680,58 @@ test("awaiting-approval cards sit at the top of Backlog with a badge, quick appr
   );
 });
 
+const withPriority = (n: number, column: string, priority: string | null): LoopTicket => ({
+  ...ticket(n, column),
+  priority,
+});
+
+test("open columns sort by priority (stable), Backlog keeps pending first, Done keeps server order", async () => {
+  const user = userEvent.setup();
+  const fake = fakeBridge({
+    connected: true,
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: {
+      CYC: withTickets({
+        Backlog: [
+          withPriority(801, "Backlog", "medium"),
+          { ...withPriority(802, "Backlog", "low"), pending: { reason: "r" } },
+          withPriority(803, "Backlog", "urgent"),
+          { ...withPriority(804, "Backlog", "high"), pending: { reason: "r" } },
+        ],
+        Todo: [
+          withPriority(811, "Todo", null),
+          withPriority(812, "Todo", "low"),
+          withPriority(813, "Todo", "medium"),
+          withPriority(814, "Todo", "urgent"),
+          withPriority(815, "Todo", "medium"),
+          withPriority(816, "Todo", "high"),
+        ],
+        Done: [
+          withPriority(821, "Done", "low"),
+          withPriority(822, "Done", "urgent"),
+          withPriority(823, "Done", "medium"),
+        ],
+      }),
+    },
+  });
+  await renderApp(fake.bridge);
+  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  const idsOf = async (name: string) =>
+    within(await screen.findByRole("region", { name }))
+      .getAllByRole("listitem")
+      .map((li) => /CYC-\d+/.exec(li.textContent ?? "")?.[0]);
+  expect(await idsOf("Todo")).toEqual([
+    "CYC-814",
+    "CYC-816",
+    "CYC-813",
+    "CYC-815",
+    "CYC-812",
+    "CYC-811",
+  ]);
+  expect(await idsOf("Backlog")).toEqual(["CYC-804", "CYC-802", "CYC-803", "CYC-801"]);
+  expect(await idsOf("Done")).toEqual(["CYC-821", "CYC-822", "CYC-823"]);
+});
+
 test("with nothing waiting for approval there is no awaiting-approval badge or filter chip", async () => {
   await mount({
     loopProjects: { kind: "ok", projects: [cycle] },
