@@ -26,6 +26,8 @@ export type PageSection = {
   note?: string;
   /** Optional custom heading content in the right pane; defaults to `label`. */
   heading?: ReactNode;
+  /** `"full"` fills the content pane edge-to-edge without the centered reading column (used by the Loop board). */
+  layout?: "column" | "full";
   content: ReactNode;
 };
 
@@ -141,12 +143,20 @@ export function PageLayout({
             <h2 data-slot="page-heading">{shown?.heading ?? shown?.label}</h2>
           </header>
           {banner}
-          <div data-slot="page-body">
+          <div data-slot="page-body" data-full={shown?.layout === "full" ? "" : undefined}>
             {sections
               .filter((section) => section.disabled !== true)
               .map((section) => (
-                <TabsPanel key={section.id} value={section.id}>
-                  <div data-slot="page-column">{section.content}</div>
+                <TabsPanel
+                  key={section.id}
+                  value={section.id}
+                  data-layout={section.layout === "full" ? "full" : undefined}
+                >
+                  {section.layout === "full" ? (
+                    section.content
+                  ) : (
+                    <div data-slot="page-column">{section.content}</div>
+                  )}
                 </TabsPanel>
               ))}
           </div>

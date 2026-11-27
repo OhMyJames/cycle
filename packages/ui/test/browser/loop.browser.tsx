@@ -60,7 +60,7 @@ const mount = async (script: Parameters<typeof fakeBridge>[0]) => {
   return { user, ...fake };
 };
 
-test("the Loop page shows a Project's board as a row of columns, with Done collapsed", async () => {
+test("the Loop page shows a full-width board as a row of columns, with Done collapsed", async () => {
   const { user, calls } = await mount({
     loopProjects: { kind: "ok", projects: [cycle, docs] },
     loopBoards: { CYC: board },
@@ -71,14 +71,20 @@ test("the Loop page shows a Project's board as a row of columns, with Done colla
       .getAllByRole("listitem")
       .map((li) => li.textContent);
   await screen.findByRole("region", { name: "In Progress" });
-  expect(text("In Progress")).toEqual(["CYC-386highTicket 386"]);
-  expect(text("In Review")).toEqual(["CYC-387highTicket 387"]);
+  expect(text("In Progress")).toEqual(["CYC-386HighTicket 386"]);
+  expect(text("In Review")).toEqual(["CYC-387HighTicket 387"]);
   expect(
     within(screen.getByRole("region", { name: "Todo" })).getAllByRole("listitem"),
   ).toHaveLength(1);
   expect(
     within(screen.getByRole("region", { name: "Backlog" })).getByText("Nothing here"),
   ).toBeTruthy();
+  // Board uses full content width rather than the 48rem centered column.
+  const main = document.querySelector<HTMLElement>('[data-slot="page-body"]');
+  const boardEl = document.querySelector<HTMLElement>('[data-kind="loop-board"]');
+  expect(main && boardEl && boardEl.getBoundingClientRect().width >= main.clientWidth - 2).toBe(
+    true,
+  );
   // Done is collapsed until asked for.
   expect(screen.queryByText("Ticket 300")).toBeNull();
   await user.click(screen.getByRole("button", { name: "Show done" }));
@@ -107,10 +113,10 @@ test("with the Loop server away, the Projects it had are greyed out and the page
   expect(await screen.findByText("The Loop server is not running")).toBeTruthy();
 });
 
-test("with no server ever seen, the page says it is not running and offers to read again", async () => {
+test("with no server ever seen, the page says it is not running and offers to refresh", async () => {
   await mount({});
   expect(await screen.findByText("The Loop server is not running")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Read again" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Refresh" })).toBeTruthy();
 });
 
 test("with no key file, the board says how to give one", async () => {
@@ -173,7 +179,7 @@ test("Approve asks first; only the confirmation writes, and a failure is said, n
   ]);
 });
 
-test("a failed Back to Backlog on the ticket page is said there, and gone after going back", async () => {
+test("a failed Back to Backlog in the ticket drawer is said there, and gone after closing", async () => {
   const mine = {
     ...ticket(602, "In Review"),
     actions: ["to_backlog" as const, "to_todo" as const],
@@ -187,7 +193,12 @@ test("a failed Back to Backlog on the ticket page is said there, and gone after 
     loopTickets: {
       "CYC-602": {
         kind: "ok",
-        ticket: { ...mine, body: "text", acceptance: ["one"], links: [] },
+        ticket: {
+          ...mine,
+          body: "## Details\n\nSome markdown body.",
+          acceptance: ["one"],
+          links: [],
+        },
       },
     },
     loopAct: { kind: "failed", reason: "offline" },
@@ -195,15 +206,22 @@ test("a failed Back to Backlog on the ticket page is said there, and gone after 
   await renderApp(fake.bridge);
   await user.click(await screen.findByRole("button", { name: "Loop" }));
   await user.click(await screen.findByRole("button", { name: "Ticket 602" }));
-  await user.click(await screen.findByRole("button", { name: "Back to Backlog CYC-602" }));
-  const problem = () => document.querySelector('[data-slot="loop-problem"]');
-  await screen.findByText(/could not be reached/);
-  expect(problem()?.textContent).toMatch(/could not be reached/);
-  await user.click(screen.getByRole("button", { name: "Back to the board" }));
-  expect(problem()).toBeNull();
+  const drawer = await screen.findByRole("complementary", { name: "CYC-602" });
+  // Board remains mounted under the right-side drawer.
+  expect(document.querySelector('[data-kind="loop-board"]')).not.toBeNull();
+  // Markdown body is rendered as structured HTML, not raw <pre>.
+  await within(drawer).findByText("Some markdown body.");
+  expect(drawer.querySelector('[data-slot="loop-detail-markdown"] h2')?.textContent).toBe(
+    "Details",
+  );
+  await user.click(within(drawer).getByRole("button", { name: "Back to Backlog CYC-602" }));
+  await within(drawer).findByText(/could not be reached/);
+  await user.click(within(drawer).getByRole("button", { name: /Close ticket/ }));
+  expect(screen.queryByRole("complementary", { name: "CYC-602" })).toBeNull();
+  expect(screen.queryByText(/could not be reached/)).toBeNull();
 });
 
-const openTicketPage = async (
+const openTicketDrawer = async (
   chat: "new" | "watch",
   script: Parameters<typeof fakeBridge>[0] = {},
 ) => {
@@ -229,16 +247,16 @@ const openTicketPage = async (
   return { user, fake };
 };
 
-test("a Backlog ticket's page has the chat button: it asks main and opens the session", async () => {
-  const { user, fake } = await openTicketPage("new");
+test("a Backlog ticket drawer has the chat button: it asks main and opens the session", async () => {
+  const { user, fake } = await openTicketDrawer("new");
   await user.click(await screen.findByRole("button", { name: "Talk with an agent CYC-700" }));
   await waitFor(() => expect(fake.named("loopChat")).toEqual([["loopChat", "CYC", "CYC-700"]]));
   await waitFor(() => expect(fake.named("openSession").length).toBeGreaterThan(0));
   expect(fake.named("openSession")[0]?.slice(1)).toEqual(["local", "chat-1"]);
 });
 
-test("with no default model the page says to set one in Settings", async () => {
-  const { user } = await openTicketPage("new", {
+test("with no default model the drawer says to set one in Settings", async () => {
+  const { user } = await openTicketDrawer("new", {
     loopChat: { kind: "failed", reason: "needs_model" },
   });
   await user.click(await screen.findByRole("button", { name: "Talk with an agent CYC-700" }));
@@ -246,7 +264,7 @@ test("with no default model the page says to set one in Settings", async () => {
 });
 
 test("a session made whose first message did not go can still be opened", async () => {
-  const { user, fake } = await openTicketPage("new", {
+  const { user, fake } = await openTicketDrawer("new", {
     loopChat: { kind: "failed", reason: "offline", locationId: "local", sessionId: "orphan-1" },
   });
   await user.click(await screen.findByRole("button", { name: "Talk with an agent CYC-700" }));
@@ -257,29 +275,26 @@ test("a session made whose first message did not go can still be opened", async 
 });
 
 test("an In Progress ticket is only watched: a note, and no chat button", async () => {
-  const { fake } = await openTicketPage("watch");
+  const { fake } = await openTicketDrawer("watch");
   expect(await screen.findByText(/Loop is working on this ticket/)).toBeTruthy();
   expect(screen.queryByRole("button", { name: /Talk with an agent/ })).toBeNull();
   expect(fake.named("loopChat")).toEqual([]);
 });
 
-const withTicketPage = () => openTicketPage("new");
-
-test("Escape on the ticket page goes back to the board, not out of the Loop", async () => {
-  const { user } = await withTicketPage();
-  await screen.findByRole("button", { name: "Back to the board" });
+test("Escape on the ticket drawer closes the drawer, not the board", async () => {
+  const { user } = await openTicketDrawer("new");
+  await screen.findByRole("complementary", { name: "CYC-700" });
   await user.keyboard("{Escape}");
-  await screen.findByRole("button", { name: "Ticket 700" });
-  expect(screen.queryByRole("button", { name: "Back to the board" })).toBeNull();
+  await waitFor(() => expect(screen.queryByRole("complementary", { name: "CYC-700" })).toBeNull());
   expect(document.querySelector('[data-kind="loop-board"]')).not.toBeNull();
 });
 
 test("leaving the Loop and coming back lands on the level it was left on", async () => {
-  const { user } = await withTicketPage();
-  await screen.findByRole("button", { name: "Back to the board" });
-  // Ticket → board → overview → out of the Loop, one Escape each.
+  const { user } = await openTicketDrawer("new");
+  await screen.findByRole("complementary", { name: "CYC-700" });
+  // Ticket drawer → board → overview → out of the Loop, one Escape each.
   await user.keyboard("{Escape}");
-  await screen.findByRole("button", { name: "Ticket 700" });
+  await waitFor(() => expect(screen.queryByRole("complementary", { name: "CYC-700" })).toBeNull());
   await user.keyboard("{Escape}");
   await screen.findByRole("region", { name: "Projects" });
   await user.keyboard("{Escape}");
@@ -310,10 +325,10 @@ test("with two Projects the Loop lands on the overview, with each Project's coun
   expect(cycleRow.textContent).toContain("Done 1");
   expect(cycleRow.textContent).not.toContain("Backlog");
   expect(document.querySelector('[data-kind="loop-board"]')).toBeNull();
-  // The row that cannot be read says so and reads again.
+  // The row that cannot be read says so and refreshes.
   const docsRow = projects.querySelector<HTMLElement>('[data-project="DOC"]') as HTMLElement;
-  await within(docsRow).findByText("Could not read the board");
-  await user.click(within(docsRow).getByRole("button", { name: "Read again Docs" }));
+  await within(docsRow).findByText("Could not load the board");
+  await user.click(within(docsRow).getByRole("button", { name: "Refresh Docs" }));
   // A row opens its board.
   await user.click(within(cycleRow).getByRole("button", { name: /Cycle/ }));
   await screen.findByRole("region", { name: "In Progress" });
@@ -349,23 +364,14 @@ test("with nothing that needs a person, the section is not there", async () => {
   expect(screen.queryByRole("region", { name: "Needs you" })).toBeNull();
 });
 
-test("a Project opens on its board; the Overview tab is disabled and the crumbs lead back", async () => {
+test("a Project opens on its board with clean breadcrumbs leading back to Overview", async () => {
   const { user } = await mount({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: { CYC: board },
   });
   await screen.findByRole("region", { name: "In Progress" });
-  const tabs = screen.getByRole("radiogroup", { name: "Project pages" });
-  const boardTab = within(tabs).getByRole("radio", { name: "Board" }) as HTMLElement;
-  const overviewTab = within(tabs).getByRole("radio", { name: "Overview" }) as HTMLElement;
-  expect(boardTab.getAttribute("aria-checked")).toBe("true");
-  expect(
-    overviewTab.getAttribute("aria-disabled") ?? overviewTab.hasAttribute("disabled"),
-  ).toBeTruthy();
-  expect(screen.getByText("Coming later")).toBeTruthy();
-  overviewTab.click();
-  expect(boardTab.getAttribute("aria-checked")).toBe("true");
-  expect(screen.getByRole("region", { name: "In Progress" })).toBeTruthy();
+  // No placeholder "Coming later" tab clutter.
+  expect(screen.queryByText("Coming later")).toBeNull();
   const heading = screen.getByRole("heading", { level: 2 });
   expect(heading.textContent).toBe("Cycle/Board");
   // The Project name leads back to the Loop overview.
@@ -373,17 +379,18 @@ test("a Project opens on its board; the Overview tab is disabled and the crumbs 
   await screen.findByRole("region", { name: "Projects" });
 });
 
-test("a ticket page's title is Project / ticket, and the Project name leads to the board", async () => {
+test("opening a ticket drawer updates breadcrumbs to Project / ticket and clicking Project closes it", async () => {
   const { user } = await mount({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: { CYC: board },
   });
   await user.click(await screen.findByRole("button", { name: /Ticket 388/ }));
-  await screen.findByRole("button", { name: "Back to the board" });
+  await screen.findByRole("complementary", { name: "CYC-388" });
   const heading = screen.getByRole("heading", { level: 2 });
   expect(heading.textContent).toBe("Cycle/CYC-388");
   await user.click(within(heading).getByRole("button", { name: "Cycle" }));
-  await screen.findByRole("region", { name: "In Progress" });
+  await waitFor(() => expect(screen.queryByRole("complementary", { name: "CYC-388" })).toBeNull());
+  expect(screen.getByRole("region", { name: "In Progress" })).toBeTruthy();
 });
 
 test("the board shows the columns by name, in the order they come", async () => {
@@ -410,7 +417,7 @@ test("the board is a row of columns: cards are not draggable, there is no move m
   expect(new Set(tops).size).toBe(1);
 });
 
-test("a card opens its ticket, a button on it does not, and cancelling Approve writes nothing", async () => {
+test("a card opens its drawer, a button on it does not, and cancelling Approve writes nothing", async () => {
   const backlog = {
     ...ticket(600, "Backlog"),
     actions: ["approve" as const],
@@ -425,8 +432,7 @@ test("a card opens its ticket, a button on it does not, and cancelling Approve w
   const dialog = await screen.findByRole("alertdialog");
   await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
   expect(calls.some(([name]) => name === "loopAct")).toBe(false);
-  expect(screen.queryByText("Back to board")).toBeNull();
-  expect(document.querySelector('[data-kind="loop-ticket-page"]')).toBeNull();
+  expect(document.querySelector('[data-kind="loop-ticket-drawer"]')).toBeNull();
   await user.click(within(column).getByRole("button", { name: "Ticket 600" }));
   await waitFor(() => expect(calls.some(([name]) => name === "loopTicket")).toBe(true));
 });
@@ -514,7 +520,7 @@ const waiting = (n: number, priority: string, reason: string): LoopTicket => ({
   pending: { reason, criteria: n % 10 },
 });
 
-test("tickets waiting for approval are a group on top of Backlog: pick, select all, approve after asking, return with a reason", async () => {
+test("awaiting-approval cards sit at the top of Backlog with a badge, quick approve, and floating batch bar", async () => {
   const user = userEvent.setup();
   const fake = fakeBridge({
     connected: true,
@@ -538,19 +544,25 @@ test("tickets waiting for approval are a group on top of Backlog: pick, select a
   });
   await renderApp(fake.bridge);
   await user.click(await screen.findByRole("button", { name: "Loop" }));
-  const group = await screen.findByRole("region", { name: "Awaiting approval" });
-  // By priority, each with its criteria count and Loop's reason; ordinary tickets stay outside the group.
-  const items = within(group).getAllByRole("listitem");
+  const backlog = await screen.findByRole("region", { name: "Backlog" });
+  // Pending tickets appear first in Backlog sorted by priority, each with its badge, criteria, reason and quick Approve.
+  const items = within(backlog).getAllByRole("listitem");
   expect(items.map((li) => li.textContent)).toEqual([
     expect.stringContaining("CYC-702"),
     expect.stringContaining("CYC-701"),
+    expect.stringContaining("CYC-703"),
   ]);
-  expect(items[0]?.textContent).toContain("2 acceptance criteria");
+  expect(items[0]?.textContent).toContain("Awaiting approval");
+  expect(items[0]?.textContent).toContain("2 criteria");
   expect(items[0]?.textContent).toContain("Reason urgent");
-  const approve = within(group).getByRole("button", { name: "Approve selected" });
-  expect((approve as HTMLButtonElement).disabled).toBe(true);
-  await user.click(within(group).getByRole("checkbox", { name: "Select all" }));
-  await user.click(approve);
+  // Ordinary tickets do not carry the awaiting-approval badge.
+  expect(items[2]?.textContent).not.toContain("Awaiting approval");
+  // Floating selection bar is hidden until at least one pending card is picked.
+  expect(screen.queryByRole("region", { name: "Awaiting approval" })).toBeNull();
+
+  await user.click(within(backlog).getByRole("checkbox", { name: "Select all" }));
+  const bar = await screen.findByRole("region", { name: "Awaiting approval" });
+  await user.click(within(bar).getByRole("button", { name: "Approve selected" }));
   expect(fake.calls.some(([name]) => name === "loopActMany")).toBe(false);
   const dialog = await screen.findByRole("alertdialog");
   expect(dialog.textContent).toContain("CYC-702 Ticket 702");
@@ -560,10 +572,12 @@ test("tickets waiting for approval are a group on top of Backlog: pick, select a
   expect(fake.calls.filter(([name]) => name === "loopActMany")).toEqual([
     ["loopActMany", "CYC", "approve_many", ["CYC-702", "CYC-701"], true, undefined],
   ]);
+
   // Return: one ticket, with a reason; no second confirmation.
-  await user.click(within(group).getByRole("checkbox", { name: "Select CYC-701" }));
-  await user.type(within(group).getByRole("textbox"), "not now");
-  await user.click(within(group).getByRole("button", { name: "Return selected" }));
+  await user.click(within(backlog).getByRole("checkbox", { name: "Select CYC-701" }));
+  const bar2 = await screen.findByRole("region", { name: "Awaiting approval" });
+  await user.type(within(bar2).getByRole("textbox"), "not now");
+  await user.click(within(bar2).getByRole("button", { name: "Return selected" }));
   await waitFor(() =>
     expect(fake.calls.filter(([name]) => name === "loopActMany")[1]).toEqual([
       "loopActMany",
@@ -576,28 +590,52 @@ test("tickets waiting for approval are a group on top of Backlog: pick, select a
   );
 });
 
-test("with nothing waiting for approval there is no group", async () => {
-  const { user: _user } = await mount({
+test("with nothing waiting for approval there is no awaiting-approval badge or filter chip", async () => {
+  await mount({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: { CYC: withTickets({ Backlog: [ticket(710, "Backlog")] }) },
   });
   await screen.findByRole("region", { name: "Backlog" });
-  expect(screen.queryByRole("region", { name: "Awaiting approval" })).toBeNull();
+  expect(screen.queryByText("Awaiting approval")).toBeNull();
 });
 
-test("a batch return that fails is said in the group, and the picks stay", async () => {
+test("search and awaiting-approval filter chip narrow visible cards and can be cleared", async () => {
+  const { user } = await mount({
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: {
+      CYC: withTickets({
+        Backlog: [waiting(701, "urgent", "Ready"), ticket(702, "Backlog")],
+        Todo: [ticket(703, "Todo")],
+      }),
+    },
+  });
+  await screen.findByRole("region", { name: "Backlog" });
+  await user.click(screen.getByRole("button", { name: /Awaiting approval/ }));
+  expect(screen.getByText("Ticket 701")).toBeTruthy();
+  expect(screen.queryByText("Ticket 702")).toBeNull();
+  expect(screen.queryByText("Ticket 703")).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Clear filters" }));
+  expect(screen.getByText("Ticket 703")).toBeTruthy();
+
+  await user.type(screen.getByRole("searchbox", { name: "Search tickets" }), "703");
+  expect(screen.getByText("Ticket 703")).toBeTruthy();
+  expect(screen.queryByText("Ticket 701")).toBeNull();
+});
+
+test("a batch return that fails is said on the board, and the picks stay", async () => {
   const { user, calls } = await mount({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: { CYC: withTickets({ Backlog: [waiting(720, "high", "Why")] }) },
     loopActMany: { kind: "failed", reason: "offline" },
   });
-  const group = await screen.findByRole("region", { name: "Awaiting approval" });
-  await user.click(within(group).getByRole("checkbox", { name: "Select CYC-720" }));
-  await user.click(within(group).getByRole("button", { name: "Return selected" }));
-  expect(await within(group).findByRole("alert")).toBeTruthy();
+  const backlog = await screen.findByRole("region", { name: "Backlog" });
+  await user.click(within(backlog).getByRole("checkbox", { name: "Select CYC-720" }));
+  const bar = await screen.findByRole("region", { name: "Awaiting approval" });
+  await user.click(within(bar).getByRole("button", { name: "Return selected" }));
+  expect(await screen.findByText(/could not be reached/)).toBeTruthy();
   expect(calls.filter(([name]) => name === "loopActMany")).toHaveLength(1);
   expect(
-    (within(group).getByRole("checkbox", { name: "Select CYC-720" }) as HTMLInputElement).checked,
+    (within(backlog).getByRole("checkbox", { name: "Select CYC-720" }) as HTMLInputElement).checked,
   ).toBe(true);
 });
 
@@ -629,9 +667,10 @@ test("the counts of a batch stay when the reloaded board has nothing waiting any
   const bridge = fake.bridge;
   await renderApp(bridge);
   await user.click(await screen.findByRole("button", { name: "Loop" }));
-  const group = await screen.findByRole("region", { name: "Awaiting approval" });
-  await user.click(within(group).getByRole("checkbox", { name: "Select all" }));
-  await user.click(within(group).getByRole("button", { name: "Return selected" }));
+  const backlog = await screen.findByRole("region", { name: "Backlog" });
+  await user.click(within(backlog).getByRole("checkbox", { name: "Select all" }));
+  const bar = await screen.findByRole("region", { name: "Awaiting approval" });
+  await user.click(within(bar).getByRole("button", { name: "Return selected" }));
   expect(await screen.findByText(/1 succeeded, 0 skipped, 0 failed/)).toBeTruthy();
   expect(screen.queryByRole("checkbox", { name: "Select all" })).toBeNull();
 });
