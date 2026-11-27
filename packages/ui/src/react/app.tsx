@@ -174,7 +174,7 @@ function AppWindow() {
     pinned,
   });
   const trust = useWorkspaceTrust(nav.current, status, panel !== "none");
-  useMarkRead(session, status);
+  useMarkRead(session, status, pages.loop === undefined);
 
   const close = () => setPanel("none");
   // Opens a panel, and counts that it was opened (which one, and whether by a key).
@@ -294,11 +294,11 @@ function AppWindow() {
   const notices = (
     <>
       {/* With the sidebar put away, what concerns the whole app comes first under the title bar. */}
-      {sidebarCollapsed ? <AppNotices at="top" /> : null}
+      {sidebarCollapsed && pages.loop === undefined ? <AppNotices at="top" /> : null}
       <SessionNotices
         locationId={selectedLocation}
         shows={blank !== undefined ? "blank" : view !== undefined ? "session" : "nothing"}
-        errors={!pages.pageOpen}
+        errors={!pages.pageOpen && pages.loop === undefined}
       />
     </>
   );
@@ -409,7 +409,10 @@ function AppWindow() {
               onSearch={() => open("search")}
               onConnectors={pages.openConnectors}
               onLoop={pages.openLoop}
-              onSessions={pages.leaveLoop}
+              onSessions={() => {
+                store.track("sessions_mode_shown", {});
+                pages.leaveLoop();
+              }}
               mode={pages.loop !== undefined ? "loop" : "sessions"}
               loopNav={
                 pages.loop !== undefined ? (

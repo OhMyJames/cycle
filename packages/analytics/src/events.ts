@@ -131,6 +131,8 @@ export const EVENTS = {
   loop_notice_opened: o({ kind: z.enum(["permission", "blocked", "review"]) }),
   /** The person joined a ticket's Dev session from its page. */
   loop_session_joined: o({}),
+  /** The person pressed Sessions in the sidebar's Sessions/Loop switch, leaving the Loop mode (entering it is `panel_opened` with `loop`). */
+  sessions_mode_shown: o({}),
   /** The person asked to check for an update. */
   update_checked: o({ result: z.enum(["available", "up_to_date", "error", "disabled"]) }),
   update_install_started: o({}),
@@ -493,6 +495,7 @@ export const UI_EVENTS = [
   "loop_notice_opened",
   "loop_tickets_acted",
   "loop_session_joined",
+  "sessions_mode_shown",
   "diff_view_changed",
   "diff_file_opened",
   "diff_edit_revealed",

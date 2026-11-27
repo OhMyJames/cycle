@@ -584,6 +584,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "loop.overview": "概览",
   "loop.crumbs": "面包屑",
   "loop.tab.kanban": "看板",
+  "loop.kanbanOf": "{project} 看板",
   "loop.col.doing": "进行中",
   "loop.col.todo": "待办",
   "loop.col.backlog": "待整理",

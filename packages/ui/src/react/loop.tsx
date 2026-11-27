@@ -230,7 +230,7 @@ export function LoopNav({ view, onView }: { view: LoopView; onView: (view: LoopV
                 data-slot="loop-nav-item"
                 data-kind="loop-nav-kanban"
                 data-child=""
-                aria-label={`${p.name} ${t("loop.tab.kanban")}`}
+                aria-label={t("loop.kanbanOf", { project: p.name })}
                 aria-current={chosenKey === p.projectKey ? "page" : undefined}
                 disabled={away}
                 onClick={() => onView({ at: "project", projectKey: p.projectKey, tab: "kanban" })}
@@ -354,6 +354,8 @@ export function LoopMain({
         target.closest('[data-slot="main"], [data-slot="sidebar"]') !== null;
       if (target !== null && target !== document.body && !inMain) return;
       // Only a ticket's drawer is closed by it; elsewhere the key is left alone.
+      if (document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]') !== null)
+        return;
       if (up(viewRef.current) === undefined) return;
       event.preventDefault();
       goBack.current();

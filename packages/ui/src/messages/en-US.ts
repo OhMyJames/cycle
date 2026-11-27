@@ -646,6 +646,7 @@ export const enUS = {
   "loop.overview": "Overview",
   "loop.crumbs": "Where you are",
   "loop.tab.kanban": "Kanban",
+  "loop.kanbanOf": "{project} Kanban",
   "loop.col.doing": "Doing",
   "loop.col.todo": "Todo",
   "loop.col.backlog": "Backlog",

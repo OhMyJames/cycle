@@ -69,7 +69,7 @@ export function Sidebar(props: SidebarProps) {
   const loopMode = props.mode === "loop";
   const apart = props.locations.filter((h) => props.away.has(h.id));
   return (
-    <nav data-slot="sidebar" aria-label={t("sessions.label")}>
+    <nav data-slot="sidebar" aria-label={t(loopMode ? "loop.title" : "sessions.label")}>
       <div data-slot="titlebar">{props.toggle}</div>
       <div data-slot="sidebar-actions">
         <Button
