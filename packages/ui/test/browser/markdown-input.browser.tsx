@@ -3,13 +3,16 @@ import {
   $getRoot,
   $getSelection,
   $isRangeSelection,
+  type ElementNode,
   KEY_ENTER_COMMAND,
   KEY_ESCAPE_COMMAND,
   type LexicalEditor,
   PASTE_COMMAND,
+  type TextNode,
 } from "lexical";
 import { type ReactElement, useState } from "react";
 import { afterEach, expect, test } from "vitest";
+import { userEvent } from "vitest/browser";
 import { markdownOf } from "../../src/composer-markdown.ts";
 import { type InputKey, MarkdownInput } from "../../src/react/markdown-input.tsx";
 
@@ -38,7 +41,9 @@ function Parent({
   disabled,
   seen,
   setter,
+  mentions,
 }: {
+  mentions?: readonly { path: string; kind: "file" | "folder" | "session" }[] | undefined;
   start: string;
   disabled: boolean;
   seen: Seen;
@@ -49,6 +54,7 @@ function Parent({
   return (
     <MarkdownInput
       value={value}
+      mentions={mentions}
       onChange={(markdown) => {
         seen.changes.push(markdown);
         set(markdown);
@@ -67,10 +73,24 @@ function Parent({
 }
 
 /** Mounts it, and gives back what it was told, and a way to change the text from outside. */
-const mount = (start = "", options: { disabled?: boolean } = {}) => {
+const mount = (
+  start = "",
+  options: {
+    disabled?: boolean;
+    mentions?: readonly { path: string; kind: "file" | "folder" | "session" }[];
+  } = {},
+) => {
   const seen: Seen = { keys: [], changes: [], files: [] };
   const setter = { current: (_text: string) => {} };
-  render(<Parent start={start} disabled={options.disabled ?? false} seen={seen} setter={setter} />);
+  render(
+    <Parent
+      start={start}
+      disabled={options.disabled ?? false}
+      mentions={options.mentions}
+      seen={seen}
+      setter={setter}
+    />,
+  );
   return { seen, set: (text: string) => act(() => setter.current(text)) };
 };
 
@@ -218,4 +238,70 @@ test("the placeholder shows while there is nothing, and goes when there is", asy
     expect(document.querySelector('[data-slot="composer-placeholder"]')).toBeNull(),
   );
   expect(box.textContent).toBe("x");
+});
+
+const blocks = (box: HTMLElement) => [...box.querySelectorAll('[data-slot="mention-chip"]')];
+
+test("a mention is a block: Backspace or Delete next to it takes all of it, a selection across it leaves no part", async () => {
+  const { seen } = mount("see @src/a.ts now", { mentions: [{ path: "src/a.ts", kind: "file" }] });
+  const box = await screen.findByRole("textbox", { name: "Message" });
+  await waitFor(() => expect(blocks(box)).toHaveLength(1));
+  expect(blocks(box)[0]?.textContent).toBe("src/a.ts");
+  act(() => {
+    editorOf(box).update(
+      () => {
+        const block = ($getRoot().getFirstChildOrThrow() as ElementNode)
+          .getChildren()
+          .find((k) => k.getType() === "mention");
+        if (block === undefined) throw new Error("no block");
+        block.selectNext(0, 0);
+      },
+      { discrete: true },
+    );
+  });
+  box.focus();
+  await userEvent.keyboard("{Backspace}");
+  expect(blocks(box)).toHaveLength(0);
+  expect(markdownOf(editorOf(box))).toBe("see  now");
+  expect(seen.changes.at(-1)).toBe("see  now");
+});
+
+test("Delete before a mention takes all of it", async () => {
+  const { seen } = mount("a @src/b.ts c", { mentions: [{ path: "src/b.ts", kind: "file" }] });
+  const box = await screen.findByRole("textbox", { name: "Message" });
+  await waitFor(() => expect(blocks(box)).toHaveLength(1));
+  act(() => {
+    editorOf(box).update(
+      () => {
+        const kids = ($getRoot().getFirstChildOrThrow() as ElementNode).getChildren();
+        kids[0]?.selectEnd();
+      },
+      { discrete: true },
+    );
+  });
+  box.focus();
+  await userEvent.keyboard("{Delete}");
+  expect(blocks(box)).toHaveLength(0);
+  expect(seen.changes.at(-1)).toBe("a  c");
+});
+
+test("a selection across a mention takes the block whole", async () => {
+  const { seen } = mount("ab @src/c.ts de", { mentions: [{ path: "src/c.ts", kind: "file" }] });
+  const box = await screen.findByRole("textbox", { name: "Message" });
+  await waitFor(() => expect(blocks(box)).toHaveLength(1));
+  act(() => {
+    editorOf(box).update(
+      () => {
+        const kids = ($getRoot().getFirstChildOrThrow() as ElementNode).getChildren();
+        (kids[0] as TextNode | undefined)?.select(1, 1);
+        const sel = $getSelection();
+        if ($isRangeSelection(sel)) sel.focus.set(kids[2]?.getKey() ?? "", 2, "text");
+      },
+      { discrete: true },
+    );
+  });
+  box.focus();
+  await userEvent.keyboard("{Backspace}");
+  expect(blocks(box)).toHaveLength(0);
+  expect(seen.changes.at(-1)).toBe("ae");
 });

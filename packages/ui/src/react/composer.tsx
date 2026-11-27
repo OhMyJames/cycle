@@ -26,15 +26,7 @@ import {
   textOfBytes,
   textType,
 } from "../attachments.ts";
-import {
-  fileUri,
-  type Mention,
-  mentionText,
-  NOT_RECALLING,
-  type Recall,
-  recall,
-  sentTexts,
-} from "../draft.ts";
+import { fileUri, type Mention, NOT_RECALLING, type Recall, recall, sentTexts } from "../draft.ts";
 import {
   mentionableSessions,
   mentionQuery,
@@ -338,10 +330,7 @@ export function Composer({
         };
       } else return;
       // The @ and what was typed after it become the path and a space; the link for the agent is kept beside the text.
-      input.current?.replaceBeforeCaret(
-        (typed.mention?.length ?? 0) + 1,
-        `${mentionText(mention)} `,
-      );
+      input.current?.replaceBeforeCaret((typed.mention?.length ?? 0) + 1, "", mention);
       store.drafts.addMention(sessionKey, mention);
       store.track("mention_picked", { kind: mention.kind });
     }
@@ -898,6 +887,7 @@ export function Composer({
         <div data-slot="composer-field" ref={fieldRef}>
           <MarkdownInput
             value={text}
+            mentions={draft.mentions}
             onChange={(markdown) => {
               if (markdown !== recalled.current.shown) recalled.current = NOT_RECALLING;
               store.drafts.setText(sessionKey, markdown);

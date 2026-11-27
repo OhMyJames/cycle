@@ -1,4 +1,4 @@
-import { act, cleanup, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
 import type { SessionSummary } from "../../src/api.ts";
@@ -18,8 +18,21 @@ const sessions: SessionSummary[] = [
 ];
 
 const mount = async () => {
-  const script = fakeBridge({ connected: true });
+  const script = fakeBridge({
+    connected: true,
+    capabilities: { queue: true, files: true, folders: true, sessionMentions: true },
+  });
   script.bridge.sessions = async () => sessions;
+  script.bridge.searchFiles = async (_host, _session, query) => ({
+    root: "/work",
+    entries: query.startsWith("s")
+      ? [
+          { path: "src/main.ts", kind: "file" as const },
+          { path: "src/lib", kind: "folder" as const },
+        ]
+      : [],
+    truncated: false,
+  });
   script.bridge.agents = async () => [
     {
       id: "fake",
@@ -137,4 +150,66 @@ test("what was written is still there when the app starts again", async () => {
   cleanup();
   const second = await mount();
   expect(boxText(await second.open("alpha"))).toBe("half a sentence");
+});
+
+const chips = (box: HTMLElement) => [...box.querySelectorAll('[data-slot="mention-chip"]')];
+
+/** Types `@query`, takes the `row`th option of the menu. */
+const pickAt = async (box: HTMLElement, query: string, row: RegExp) => {
+  await write(box, `@${query}`);
+  const menu = await screen.findByRole("listbox", { name: "Files, folders and sessions" });
+  await userEvent.click(await within(menu).findByRole("option", { name: row }));
+};
+
+test("a file, a folder and a session picked with @ are each one block in the box", async () => {
+  const { open, store } = await mount();
+  const box = await open("alpha");
+  await pickAt(box, "s", /main\.ts/);
+  await waitFor(() => expect(chips(box)).toHaveLength(1));
+  await pickAt(box, "s", /lib/);
+  await waitFor(() => expect(chips(box)).toHaveLength(2));
+  await pickAt(box, "bet", /beta/);
+  await waitFor(() => expect(chips(box)).toHaveLength(3));
+  expect(chips(box).map((c) => [c.getAttribute("data-kind"), c.textContent])).toEqual([
+    ["file", "src/main.ts"],
+    ["folder", "src/lib/"],
+    ["session", "beta"],
+  ]);
+  expect(chips(box).every((c) => c.querySelector("svg") !== null)).toBe(true);
+  // The draft's words are as they were: `@path` and a space for each.
+  expect(boxText(box)).toBe("@src/main.ts @src/lib/ @beta ");
+  expect(store.drafts.get("local:s1").mentions).toHaveLength(3);
+});
+
+test("one key takes a whole block out: its @name leaves the text, and its link is not sent; the other blocks' are", async () => {
+  const { open, named, store } = await mount();
+  const box = await open("alpha");
+  await pickAt(box, "s", /main\.ts/);
+  await pickAt(box, "bet", /beta/);
+  await waitFor(() => expect(chips(box)).toHaveLength(2));
+  // The caret is after the session's block and the space; one Backspace takes the space, the next the whole block.
+  await userEvent.keyboard("{Backspace}{Backspace}");
+  await waitFor(() => expect(chips(box)).toHaveLength(1));
+  expect(boxText(box)).toBe("@src/main.ts ");
+  expect(store.drafts.get("local:s1").text).toBe("@src/main.ts ");
+  await write(box, "please");
+  await press(box, "Enter");
+  await waitFor(() => expect(named("prompt")).toHaveLength(1));
+  const blocks = named("prompt")[0]?.[3] as { type: string; uri?: string }[];
+  expect(blocks.map((b) => [b.type, b.uri])).toEqual([
+    ["text", undefined],
+    ["resource_link", "file:///work/src/main.ts"],
+  ]);
+});
+
+test("a draft that comes back shows the mentions it holds as blocks, and other @words as words", async () => {
+  const { open } = await mount();
+  const box = await open("alpha");
+  await pickAt(box, "s", /main\.ts/);
+  await write(box, "and @nobody");
+  await waitFor(() => expect(chips(box)).toHaveLength(1));
+  await open("beta");
+  const again = await open("alpha");
+  await waitFor(() => expect(chips(again)).toHaveLength(1));
+  expect(boxText(again)).toBe("@src/main.ts and @nobody");
 });
