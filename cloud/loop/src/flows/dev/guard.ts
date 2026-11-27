@@ -1,6 +1,7 @@
 import { Blocked, type StepResult, tail } from "../../engine/flow.ts";
 import type { PrState } from "../../ports/forge.ts";
 import type { Issue } from "../../types.ts";
+import { tellTicket } from "../ticket.ts";
 import { type DevRun, type FlowHost, type Save, where } from "./context.ts";
 
 /** Reads the PR state, retrying a failed read; an unreadable state blocks, it never counts as open. */
@@ -43,14 +44,16 @@ export async function guardPr(
   issue: Issue,
   save: Save,
 ): Promise<StepResult | undefined> {
-  const { store, tracker } = h.d;
   const { prUrl, state } = await prState(h, run);
   if (state === "OPEN") return undefined;
   if (state === "CLOSED") return closedBlock(h, run, prUrl);
-  await tracker.comment(issue, `PR 已在自动化之外合并：${prUrl}。按已交付处理，不再重复开 PR。`);
-  await tracker.move(issue, "inReview");
-  await store.event(run.key, "delivered", { prUrl, rounds: run.round, autoMerge: false });
-  await save({ phase: "done" });
+  await save({ phase: "done" }, (tx) => {
+    tellTicket(tx, run, issue, `merged-outside:${run.key}:${prUrl}`, {
+      body: `PR 已在自动化之外合并：${prUrl}。按已交付处理，不再重复开 PR。`,
+      to: "inReview",
+    });
+    tx.event(run.key, "delivered", { prUrl, rounds: run.round, autoMerge: false });
+  });
   return { status: "delivered", key: run.key, prUrl, autoMerge: false };
 }
 

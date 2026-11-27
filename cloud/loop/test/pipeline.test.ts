@@ -1148,6 +1148,8 @@ test("review crash recovery re-checks CI and refuses auto-merge if CI is not gre
     },
   });
 
+  // A run that is in review has been claimed: its work item is in progress.
+  for (const i of s.tracker.issues) i.columnId = 23;
   const result = await s.pipeline.step();
   expect(result).toEqual({
     status: "delivered",
@@ -1169,6 +1171,23 @@ const timeline = (s: ReturnType<typeof setup>) => {
     }
     return original(key, kind, data);
   };
+  // The ending of a review writes its events in the transaction of the run's save.
+  const transaction = s.store.transaction.bind(s.store);
+  s.store.transaction = (fn) =>
+    transaction((tx) =>
+      fn(
+        new Proxy(tx, {
+          get: (target, name) =>
+            name === "event"
+              ? (key: string, kind: string, data: Record<string, unknown> = {}) => {
+                  if (kind === "review_done")
+                    s.world.calls.push(`event:${kind}:${JSON.stringify(data)}`);
+                  return target.event(key, kind, data as never);
+                }
+              : Reflect.get(target, name, target).bind?.(target),
+        }),
+      ),
+    );
   return () => s.world.calls.filter((c) => c.startsWith("event:") || c.includes("gh pr merge"));
 };
 
@@ -2381,4 +2400,26 @@ test("resuming on an existing worktree reinstalls but does not measure (bun inst
   await withExec(w, dfExec(w, [5000, 4999])).step();
   expect(w.world.calls.filter((c) => c === "bun install").length).toBeGreaterThan(installs);
   expect(await installEvents(w)).toEqual([]);
+});
+
+test("a move to In Review that fails after the review: one ticket comment, one PR comment, made up later", async () => {
+  const s = setup([ready()], { dev: [done()], qa: [done(PASS)], review: [done(REVIEW_ESCALATE)] });
+  const move = s.tracker.move.bind(s.tracker);
+  let failing = true;
+  s.tracker.move = async (i, stage) => {
+    if (failing && stage === "inReview") throw new Error("tracker down");
+    return move(i, stage);
+  };
+  expect((await s.pipeline.step()).status).toBe("delivered");
+  expect((await s.store.load("CYC-1"))?.phase).toBe("done");
+  const prComments = () => s.world.calls.filter((c) => c.includes("gh pr comment")).length;
+  expect(prComments()).toBe(1);
+  expect(s.tracker.comments.filter((c) => c.includes("escalate"))).toHaveLength(1);
+  const run = await s.store.load("CYC-1");
+  expect(run?.kind === "dev" ? run.dev.reviewCommented : undefined).toMatch(/:escalate$/);
+  failing = false;
+  await s.pipeline.step();
+  expect(s.tracker.moves.at(-1)).toBe("CYC-1:inReview");
+  expect(prComments()).toBe(1);
+  expect(s.tracker.comments.filter((c) => c.includes("escalate"))).toHaveLength(1);
 });

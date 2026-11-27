@@ -11,7 +11,7 @@ import { CriteriaBook } from "../criteria.ts";
 import type { PlanFlow } from "../flows/plan.ts";
 import { isNetworkError } from "../network.ts";
 import type { At } from "../ports/forge.ts";
-import { applyPatch, type RunPatch, type RunRecord } from "../store.ts";
+import { applyPatch, type RunRecord } from "../store.ts";
 import type { Config, ExecResult, Issue, LoopPhase, SessionRole, TurnResult } from "../types.ts";
 import {
   Blocked,
@@ -24,7 +24,9 @@ import {
   type Opening,
   type OwnRun,
   type RunKind,
+  type Save,
   type StepResult,
+  saveWith,
 } from "./flow.ts";
 import { Reconciler, writeIntent } from "./reconcile.ts";
 
@@ -471,8 +473,9 @@ export class Engine {
     byPerson: boolean,
   ): Promise<StepResult> {
     let run = start;
-    const save = async (patch: RunPatch) => {
-      run = await this.#d.store.save(applyPatch(run, patch));
+    const save: Save = async (patch, also) => {
+      run = await saveWith(this.#d.store, applyPatch(run, patch), also);
+      if (also) await this.#reconcile.flush(issue.id, { capMs: this.#d.mirrorCapMs ?? 10_000 });
     };
     const flow = this.#flowOf(start);
     try {
