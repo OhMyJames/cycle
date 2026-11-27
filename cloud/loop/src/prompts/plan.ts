@@ -98,8 +98,8 @@ Epics:
 ${titles(input.board.epics.map((e) => `${e.key} ${e.title}: ${e.opening === "" ? "(no opening paragraph)" : e.opening}`))}
 
 Put each candidate in one category:
-- 能做: it can be made into one ready work item from what its body, its comments and the code say: what is wanted is clear, and each criterion can be checked by an allowed command. Example: 「Loop 清理已取消工单留下的 worktree」, with the cases named in its body.
-- 要拆: worth doing and clear enough, but more than one session's work, or its criteria belong to different parts of the product. It will be split into two or more work items.
+- 能做: it can be made into one ready Level-1 work item (1 work item = 1 complete PR) from what its body, its comments and the code say: what is wanted is clear, and each criterion can be checked by an allowed command. A full-stack or cross-module requirement that ships cleanly in 1 PR belongs under 能做 (Loop breaks it into internal Level-2 Task Graph nodes on one branch; do not split technical layers like API vs UI into separate tickets). Example: 「Loop 清理已取消工单留下的 worktree」, with the cases named in its body.
+- 要拆: worth doing and clear enough, and ONLY when it exceeds what one PR can reasonably carry OR consists of parts that can be scheduled and shipped independently as separate Level-1 work items. Do not mark a single 1-PR full-stack requirement as 要拆 just because it spans multiple modules or needs multiple Dev sessions.
 - 要问: rare. Only when a decision that only a person can make (what the product should do, what is in or out of scope) changes what gets built, and nothing settles it: not the body, its comments, the parent epic, linked work items, the code, nor a sensible default. A detail with a sensible default is not a question: put it under 能做 or 要拆, and shaping writes the default down marked 「待确认」. Open points the body already lists as 「待确认」 are not questions either, unless one of them blocks the whole work item. At most ${MAX_QUESTIONS} questions, each answerable in a sentence. Of all candidates, ask about only the few whose answers unblock the most valuable work; the loop writes at most a handful of questions per round, highest priority first, and the rest wait for a later round.
 - 不适合: not for the loop: it needs a real account, a real model or an outside system, or what it must do can only be judged by a person and cannot be written as the commands below. Being about the UI is not enough to be 不适合.
 
@@ -137,7 +137,7 @@ the whole new description, in Markdown
 what you changed, on what grounds (the original, a comment, a file), and what is 「待确认」
 </notes>
 
-2. A split, when it is more than one work item: 2 to ${f.maxSplit} parts, each a complete work item (its own opening paragraph, sections and 「验收标准」) of type "Feature" or "Bug".
+2. A split, ONLY when the work exceeds one PR's capacity or can be scheduled and shipped independently: 2 to ${f.maxSplit} parts, each an independently shippable Level-1 work item (1 item = 1 PR, with its own opening paragraph, sections and 「验收标准」) of type "Feature" or "Bug". Do not split a single 1-PR full-stack requirement into technical-layer sub-tickets (use Form 1 rewrite instead; Loop executes internal layers via its Level-2 Task Graph).
 <split>
 <part type="${f.type}" title="...">
 the part's description
@@ -148,7 +148,7 @@ the part's description
 </split>
 ${
   f.standalone
-    ? `${f.key} has no parent, so a split turns it into an Epic and every part becomes its child. Give its body as an Epic: an opening paragraph, then 「目标」, 「范围」, 「非目标」 and 「完成标准」, without listing the parts:
+    ? `${f.key} has no parent. Keep it as one Level-1 work item (Form 1 rewrite) whenever it can ship in 1 PR—do not turn a 1-PR requirement into an Epic of technical sub-tickets. Only when it genuinely must be split into multiple independently shippable Level-1 work items (each 1 PR), a split turns ${f.key} into an Epic container and every part becomes its child. Give its body as an Epic: an opening paragraph, then 「目标」, 「范围」, 「非目标」 and 「完成标准」, without listing the parts:
 <epic title="...">
 the Epic's description
 </epic>`
@@ -240,7 +240,7 @@ ${input.example.description}
 Rules you must keep:
 - Every sentence of the original lands somewhere in what you write (in a split, in one of the parts). Drop nothing.
 - Add nothing without grounds in the original, its comments or the code (name the file). What you cannot ground, write under 「待确认」, not as fact.
-- Each work item is atomic: one goal, one set of criteria, one session's work. A Feature has 「非目标」.
+- Each work item is one Level-1 business unit (1 item = 1 complete PR): one goal and one end-to-end set of criteria. Keep a 1-PR full-stack requirement as one work item (Loop handles internal multi-step execution with its Level-2 Task Graph); only split when it exceeds one PR or parts can ship independently. A Feature has 「非目标」.
 - Every description opens with two or three sentences for a person, before its first heading.
 - A title is an action and its object, in words a user sees; no type prefix (feat(...), fix(...), Epic：, 调研：) and no work item number.
 - If the answer needs a person (what is wanted is unclear, or two readings lead to different work), ask instead of guessing.
@@ -317,7 +317,7 @@ Check, against the original and the code:
 1. Nothing is lost: every piece of information in the original and its comments is in the result (in a split, in one of the parts).
 2. Nothing is invented: what was added has grounds in the original, the comments or the code; what has none is marked 「待确认」.
 3. Each criterion's command really checks what the criterion says: open the test file or directory it names, and the code under test. A criterion its command cannot fail is a "major" finding.
-4. Nothing can be read two ways; each work item is one atomic piece of work; each Feature has 「非目标」.
+4. Nothing can be read two ways; each work item is one Level-1 unit deliverable in 1 PR (do not require splitting a 1-PR full-stack requirement into technical sub-tickets); each Feature has 「非目标」.
 5. What only a person can see is under 「合并后由人验收（不进 Loop）」, not in 「验收标准」.
 6. Each title follows the rules: an action and its object, in words a user sees, no type prefix, no work item number.
 

@@ -408,6 +408,38 @@ test("a split under a parent: the original becomes part 1, the others are siblin
   });
 });
 
+test("a standalone 1-PR full-stack work item stays one rewritten Level-1 item (not turned into an Epic or split) (CYC-511)", async () => {
+  const s = setup(
+    {
+      triage: [done(triageReply([can("CYC-1", "high", "单 PR 可交付的全栈需求")], ["CYC-1"]))],
+      shape: [done(rewrite("在桌面端和协议层同时展示工单进度"))],
+      shape_qa: [done(PASS)],
+    },
+    [
+      backlogItem(1, {
+        parentId: null,
+        title: "支持看板和协议层展示工单进度",
+        description: "同时改协议、Loop API 和桌面端 UI，一个 PR 交付完。",
+      }),
+    ],
+  );
+  expect(await s.pipeline.step()).toMatchObject({ status: "planned", shaped: 1 });
+  const one = byKey(s, "CYC-1");
+  expect(one.typeId).toBe(FEATURE);
+  expect(one.parentId).toBeNull();
+  expect(one.title).toBe("在桌面端和协议层同时展示工单进度");
+  expect(one.labelIds).toEqual([LABELS.pending]);
+  expect(s.tracker.issues).toHaveLength(1);
+  expect(s.tracker.issueLinks).toEqual([]);
+  expect((await events(s.store)).find((e) => e.kind === "plan_shaped")).toMatchObject({
+    issue: "CYC-1",
+    form: "rewrite",
+    parts: 1,
+  });
+  expect(s.sessions.prompts[0]?.prompt).toContain("Level-2 Task Graph");
+  expect(s.sessions.prompts[1]?.prompt).toContain("do not turn a 1-PR requirement into an Epic");
+});
+
 test("a split of a work item with no parent: it becomes the Epic, every part its child; 待批准 on the parts only", async () => {
   const s = setup(
     {

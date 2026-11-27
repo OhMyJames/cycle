@@ -628,6 +628,63 @@ test("workflowRules takes 标题, 正文 (with 验收标准) and 拆分一张工
   );
 });
 
+test("workflowRules carries the Initiative / Level-1 / Level-2 Task Graph boundaries and Plan fenced json graph spec (CYC-511)", async () => {
+  const skill = await readFile(skillPath, "utf8");
+  const text = workflowRules(skill);
+  for (const keyword of [
+    "Initiative",
+    "一级业务单",
+    "二级 Task Graph",
+    "1 单 = 1 分支 = 1 个完整 PR",
+    "## 执行图",
+    "## Task Graph",
+    "fenced `json`",
+    "dependsOn",
+    "filesHint",
+    "verify",
+    "### 拆分一张工单",
+    "超过单 PR 承载量",
+    "独立排期上线",
+  ]) {
+    expect(text).toContain(keyword);
+  }
+});
+
+test("triage brief only splits beyond 1-PR capacity or independent shipping and puts 1-PR full-stack work under 能做 (CYC-511)", () => {
+  const brief = triageBrief({
+    candidates: [summary("CYC-1")],
+    board: { todo: [], inProgress: [], pending: [], epics: [] },
+    bodiesDir: "/state/plans/x/bodies",
+    readRoots: ["/state/plans/x/bodies"],
+    maxCriteria: 8,
+  });
+  expect(brief).toContain(
+    "full-stack or cross-module requirement that ships cleanly in 1 PR belongs under 能做",
+  );
+  expect(brief).toContain("Level-2 Task Graph");
+  expect(brief).toContain(
+    "ONLY when it exceeds what one PR can reasonably carry OR consists of parts that can be scheduled and shipped independently",
+  );
+  expect(brief).not.toContain(
+    "more than one session's work, or its criteria belong to different parts of the product",
+  );
+});
+
+test("standalone shape brief keeps 1-PR work as one Level-1 item and requires split parts to be independently shippable Level-1 items (CYC-511)", () => {
+  const work = item(7, { description: "ORIGINAL BODY", parentId: null });
+  const top = shapeBrief(work, {
+    ...shapeInput,
+    parent: null,
+    format: { key: "CYC-7", type: "Feature", standalone: true, maxSplit: 3 },
+  });
+  expect(top).toContain(
+    "Keep it as one Level-1 work item (Form 1 rewrite) whenever it can ship in 1 PR",
+  );
+  expect(top).toContain("do not turn a 1-PR requirement into an Epic of technical sub-tickets");
+  expect(top).toContain("independently shippable Level-1 work item");
+  expect(top).not.toContain("one session's work");
+});
+
 const summary = (key: string): CandidateSummary => ({
   key,
   title: `title of ${key}`,
