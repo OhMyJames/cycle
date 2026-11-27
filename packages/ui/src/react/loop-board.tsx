@@ -23,7 +23,6 @@ import { useI18n } from "./i18n.tsx";
 import {
   CheckIcon,
   ChevronDownIcon,
-  ChevronRightIcon,
   CloseIcon,
   ErrorCircleIcon,
   RefreshIcon,
@@ -155,7 +154,6 @@ function Column({
   totalCount,
   more,
   filtered,
-  collapsible,
   pageSize,
   openIdentifier,
   picked,
@@ -175,7 +173,6 @@ function Column({
   totalCount: number;
   more?: boolean;
   filtered?: boolean;
-  collapsible?: boolean;
   pageSize?: number;
   openIdentifier?: string | undefined;
   picked?: ReadonlySet<string> | undefined;
@@ -188,7 +185,6 @@ function Column({
   onOpen: (identifier: string) => void;
 }) {
   const { t } = useI18n();
-  const [open, setOpen] = useState(collapsible !== true);
   const [shown, setShown] = useState(pageSize ?? Number.POSITIVE_INFINITY);
   const visible = tickets.slice(0, shown);
   const countLabel =
@@ -203,34 +199,13 @@ function Column({
       data-column={id}
       data-state-type={stateType}
       data-role={role}
-      data-open={open || undefined}
-      data-folded={open ? undefined : ""}
       aria-label={title}
     >
       <header data-slot="loop-column-head">
-        {collapsible === true ? (
-          <Button
-            data-variant="ghost"
-            data-kind="loop-toggle"
-            aria-expanded={open}
-            aria-label={open ? t("loop.done.hide") : t("loop.done.show")}
-            onClick={() => setOpen((v) => !v)}
-          >
-            {open ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
-            <span data-slot="loop-column-dot" aria-hidden="true" />
-            {open ? <span data-slot="loop-column-title">{title}</span> : null}
-          </Button>
-        ) : (
-          <>
-            <span data-slot="loop-column-dot" aria-hidden="true" />
-            <h3 data-slot="loop-column-title">{title}</h3>
-          </>
-        )}
+        <span data-slot="loop-column-dot" aria-hidden="true" />
+        <h3 data-slot="loop-column-title">{title}</h3>
         <span data-slot="loop-column-count">{countLabel}</span>
-        {open &&
-        pendingCount !== undefined &&
-        pendingCount > 0 &&
-        onSelectAllPending !== undefined ? (
+        {pendingCount !== undefined && pendingCount > 0 && onSelectAllPending !== undefined ? (
           <label data-slot="loop-column-select-all">
             <input
               type="checkbox"
@@ -241,46 +216,44 @@ function Column({
           </label>
         ) : null}
       </header>
-      {open ? (
-        <div data-slot="loop-column-body">
-          {tickets.length === 0 ? (
-            <p data-slot="loop-column-empty">
-              {filtered === true ? t("loop.filter.empty") : t("loop.column.empty")}
-            </p>
-          ) : (
-            <ul data-slot="loop-tickets">
-              {visible.map((ticket) => (
-                <TicketCard
-                  key={ticket.identifier}
-                  ticket={ticket}
-                  act={act}
-                  busyAction={busyAction}
-                  active={openIdentifier === ticket.identifier}
-                  selected={picked?.has(ticket.identifier) === true}
-                  onTogglePick={
-                    ticket.pending !== undefined && onTogglePick !== undefined
-                      ? () => onTogglePick(ticket.identifier)
-                      : undefined
-                  }
-                  onOpen={onOpen}
-                />
-              ))}
-            </ul>
-          )}
-          {visible.length < tickets.length && pageSize !== undefined ? (
-            <Button
-              data-variant="ghost"
-              data-kind="loop-more"
-              onClick={() => setShown((n) => n + pageSize)}
-            >
-              {t("loop.more", { count: tickets.length - visible.length })}
-            </Button>
-          ) : null}
-          {more === true && pendingCount !== undefined && pendingCount > 0 ? (
-            <p data-slot="loop-column-note">{t("loop.pending.more")}</p>
-          ) : null}
-        </div>
-      ) : null}
+      <div data-slot="loop-column-body">
+        {tickets.length === 0 ? (
+          <p data-slot="loop-column-empty">
+            {filtered === true ? t("loop.filter.empty") : t("loop.column.empty")}
+          </p>
+        ) : (
+          <ul data-slot="loop-tickets">
+            {visible.map((ticket) => (
+              <TicketCard
+                key={ticket.identifier}
+                ticket={ticket}
+                act={act}
+                busyAction={busyAction}
+                active={openIdentifier === ticket.identifier}
+                selected={picked?.has(ticket.identifier) === true}
+                onTogglePick={
+                  ticket.pending !== undefined && onTogglePick !== undefined
+                    ? () => onTogglePick(ticket.identifier)
+                    : undefined
+                }
+                onOpen={onOpen}
+              />
+            ))}
+          </ul>
+        )}
+        {visible.length < tickets.length && pageSize !== undefined ? (
+          <Button
+            data-variant="ghost"
+            data-kind="loop-more"
+            onClick={() => setShown((n) => n + pageSize)}
+          >
+            {t("loop.more", { count: tickets.length - visible.length })}
+          </Button>
+        ) : null}
+        {more === true && pendingCount !== undefined && pendingCount > 0 ? (
+          <p data-slot="loop-column-note">{t("loop.pending.more")}</p>
+        ) : null}
+      </div>
     </section>
   );
 }
@@ -418,6 +391,11 @@ export function Board({
 
   const columns =
     answer !== undefined && answer !== "loading" && answer.kind === "ok" ? answer.columns : [];
+  // Done (completed) columns sit last; every other column keeps the server's order.
+  const displayColumns = [
+    ...columns.filter((c) => c.stateType !== "completed"),
+    ...columns.filter((c) => c.stateType === "completed"),
+  ];
 
   const allPending = useMemo(() => {
     const list: LoopTicket[] = [];
@@ -686,7 +664,7 @@ export function Board({
       ) : null}
 
       <div data-slot="loop-columns">
-        {columns.map((c) => {
+        {displayColumns.map((c) => {
           const isBacklog = c.stateType === "backlog";
           // In Backlog, keep awaiting-approval tickets pinned at the top sorted by priority,
           // followed by ordinary Backlog tickets — marked by card badge, never wrapped in a box.
@@ -725,7 +703,6 @@ export function Board({
                     pendingCount: colPending,
                   }
                 : {})}
-              {...(c.stateType === "completed" ? { collapsible: true } : {})}
               act={act}
               busyAction={busyAction}
               onOpen={openTicket}

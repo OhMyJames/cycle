@@ -650,8 +650,6 @@ export const enUS = {
   "loop.col.todo": "Todo",
   "loop.col.backlog": "Backlog",
   "loop.col.done": "Done",
-  "loop.done.show": "Show done",
-  "loop.done.hide": "Hide done",
   "loop.column.empty": "Nothing here",
   "loop.offline.title": "The Loop server is not running",
   "loop.offline.body":

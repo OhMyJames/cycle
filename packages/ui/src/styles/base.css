@@ -366,6 +366,8 @@
   [data-slot="command-list"],
   [data-slot="picker"],
   [data-slot="sidebar-scroll"],
+  [data-slot="loop-column-body"],
+  [data-slot="loop-columns"],
   [data-slot="panel-tabs-bar"] > [data-slot="tabs-list"],
   [data-slot="composer-extensions"]
 )::-webkit-scrollbar {
