@@ -1258,7 +1258,7 @@ Loop 页顶部的 Notice 区由桌面主进程从两处派生,不依赖 Loop 服
 
 ### `loop/` 方法:看板、run、Notice、批量批准(CYC-482)
 
-桌面端和运营 agent 之后只调这组方法,itsaplan 只在 Loop 内部对接一处,不再解析评论、不再写死标签名。决定见 [2026-11-26-loop-api-is-the-only-way-in](../.agents/notes/2026-11-26-loop-api-is-the-only-way-in.md)。**本节取代上文"服务不访问 itsaplan""工单状态按钮(桌面端写 itsaplan)""Notice(桌面端派生)"三处**:桌面端改用这组方法由下一张单做,在那之前它们仍是桌面端现在的行为。`projects/list`、`runs/list`、`events/list` 保持原名;新方法在 `loop/` 下,`loop/projects/list` 与 `projects/list` 同。schema 在 `loop.ts`,每个返回都按它校验。
+桌面端和运营 agent 之后只调这组方法,itsaplan 只在 Loop 内部对接一处,不再解析评论、不再写死标签名。决定见 [2026-11-26-loop-api-is-the-only-way-in](../.agents/notes/2026-11-26-loop-api-is-the-only-way-in.md)。**本节取代上文"服务不访问 itsaplan""工单状态按钮(桌面端写 itsaplan)""Notice(桌面端派生)"三处**:桌面端(CYC-483)只通过这组方法读看板、工单、Notice,并做单张按钮(批准/退回 Backlog/回 Todo,用单个 key 的 `loop/tickets/act`)和批量批准/退回,工单页读 `loop/ticket/get`,工单对话在 `chat` 为 `new` 时才开始。桌面端不再保存 itsaplan key(启动时删掉旧的 `itsaplan-key` 文件并提示一次)。设置里「你在 itsaplan 的名字」作为 `actor`,空时用 `desktop`。批量操作由页面分每 50 张一批发出,页面只发一次 `loop_tickets_acted`(`total`、`ok`、`skipped`、`failed`)。看板卡片没有按钮和「待批准」标记,只有 `pendingReason`:读不到原因的待批准卡不会进批量组;单张按钮在工单页。`projects/list`、`runs/list`、`events/list` 保持原名;新方法在 `loop/` 下,`loop/projects/list` 与 `projects/list` 同。schema 在 `loop.ts`,每个返回都按它校验。
 
 | 方法                 | 参数                                                            | 返回                                                   |
 | -------------------- | --------------------------------------------------------------- | ------------------------------------------------------ |

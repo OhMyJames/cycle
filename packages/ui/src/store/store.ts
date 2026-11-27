@@ -350,9 +350,23 @@ export class AppStore extends StoreBase {
   loadLoopNotices = this.#loop.loadNotices;
   takeLoopRequest = this.#loop.takeRequest;
 
+  /** Shows the session a Notice names in place of the Loop page; false when no connected location has it. */
+  joinLoopSession = (sessionId: string): boolean => {
+    const found = Object.entries(this.getState().sessions)
+      .flatMap(([locationId, list]) =>
+        list.filter((x) => !x.archived && x.sessionId === sessionId).map(() => locationId),
+      )
+      .at(0);
+    if (found === undefined) return false;
+    this.set((s) => ({ focusRequests: s.focusRequests + 1 }));
+    void this.focusSession(found, sessionId);
+    this.track("loop_session_joined", {});
+    return true;
+  };
+
   /** Shows the Dev session of a ticket (`[CYC-1] Dev`) in place of the Loop page; false when no session has that name. */
-  joinLoopSession = (identifier: string, title?: string): boolean => {
-    const wanted = title ?? `[${identifier}] Dev`;
+  joinLoopDevSession = (identifier: string): boolean => {
+    const wanted = `[${identifier}] Dev`;
     const sessions = Object.entries(this.getState().sessions).flatMap(([locationId, list]) =>
       list.filter((x) => !x.archived && x.title?.trim() === wanted).map((x) => ({ locationId, x })),
     );

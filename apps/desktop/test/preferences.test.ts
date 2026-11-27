@@ -43,6 +43,7 @@ test("a choice is still there after the app starts again", async () => {
     language: "system",
     promptSuggestions: true,
     worktreeAgents: [],
+    loopActor: "",
     systemLanguage: "en-GB",
   });
   expect(await first.set({ theme: "dark" })).toMatchObject({ theme: "dark", language: "system" });
@@ -98,6 +99,7 @@ test("a value that is not one of the choices is not taken, from the file or from
     language: "tlh",
     promptSuggestions: true,
     worktreeAgents: [],
+    loopActor: "",
   });
   // Once the person chooses a language here, theirs is what is kept.
   await control.set({ language: "zh-CN" });
@@ -165,6 +167,7 @@ test("two changes made at once both hold: the second starts from what the first 
     language: "zh-CN",
     promptSuggestions: true,
     worktreeAgents: [],
+    loopActor: "",
   });
   // A change that could not be kept does not stop the one after it.
   expect(applied).toEqual(["system", "dark"]);

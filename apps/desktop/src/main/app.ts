@@ -42,6 +42,7 @@ import {
   answerNotices,
   answerTicket,
   readLoopProjects,
+  retireKeyFile,
   startTicketChat,
 } from "./loop.ts";
 import { noticePoller, showAlert } from "./loop-alerts.ts";
@@ -79,10 +80,10 @@ export type AppOptions = {
   /** Where the window's size and place are kept between runs. Without it, the window opens at the default frame. */
   windowFrame?: FrameStore;
   /**
-   * Loop (docs/protocol.md §17): the Loop server's socket on this computer, the file holding the person's own itsaplan
-   * key (mode 0600), and the tracker's MCP address. Without it, the page says Loop is not connected.
+   * Loop (docs/protocol.md §17): the Loop server's socket on this computer, and the key file an older version kept,
+   * which is removed at start. Without it, the page says Loop is not connected.
    */
-  loop?: { socket: string; keyFile: string; trackerUrl: string; chatCwd?: string };
+  loop?: { socket: string; oldKeyFile?: string; chatCwd?: string };
   /** How the app updates itself. Without it, updating is off. */
   update?: Omit<UpdaterDeps, "emit" | "quit">;
   /**
@@ -221,6 +222,12 @@ export const startApp = async (options: AppOptions) => {
     return translatorFor(resolveLanguage(language, systemLanguage));
   };
 
+  /** What the Loop calls need: the socket, and the person's name for `actor` (Settings), read at each call. */
+  const loopOptions = () =>
+    options.loop
+      ? { socket: options.loop.socket, actor: () => preferences.state().loopActor }
+      : undefined;
+
   const emit = (event: AppEvent) => {
     if (window !== undefined && !window.isDestroyed())
       window.webContents.send(EVENT_CHANNEL, event);
@@ -332,8 +339,6 @@ export const startApp = async (options: AppOptions) => {
     emit: (state) => emit({ type: "interface-update", state }),
     log: (message) => console.warn(`[interface] ${message}`),
   });
-  /** The sessions of every location as last read: what a waiting session is, for the Notices. */
-  const sessionsNow = async () => Object.values((await manager.locations()).sessions).flat();
   /** The most the page may put on the clipboard at once: a long output, not a file. */
   const MAX_COPY = 5_000_000;
   const methods: Handlers = {
@@ -377,28 +382,18 @@ export const startApp = async (options: AppOptions) => {
         : ({ kind: "disconnected" } as const);
     },
     loopBoard: (projectKey: unknown) =>
-      answerBoard(options.loop, projectKey, (event, props) => analytics.track(event, props)),
+      answerBoard(loopOptions(), projectKey, (event, props) => analytics.track(event, props)),
     loopTicket: (projectKey: unknown, identifier: unknown) =>
-      answerTicket(options.loop, projectKey, identifier, (event, props) =>
+      answerTicket(loopOptions(), projectKey, identifier, (event, props) =>
         analytics.track(event, props),
       ),
     loopAct: (projectKey: unknown, identifier: unknown, action: unknown, confirmed: unknown) =>
-      actOnTicket(options.loop, projectKey, identifier, action, confirmed, (event, props) =>
-        analytics.track(event, props),
-      ),
-    loopActMany: (
-      projectKey: unknown,
-      action: unknown,
-      identifiers: unknown,
-      confirmed: unknown,
-      reason: unknown,
-    ) =>
-      actOnMany(options.loop, projectKey, action, identifiers, confirmed, reason, (event, props) =>
+      actOnTicket(loopOptions(), projectKey, identifier, action, confirmed, (event, props) =>
         analytics.track(event, props),
       ),
     loopChat: (projectKey: unknown, identifier: unknown) =>
       startTicketChat(
-        options.loop,
+        loopOptions(),
         {
           locationId: "local",
           cwd: options.loop?.chatCwd ?? "",
@@ -410,10 +405,15 @@ export const startApp = async (options: AppOptions) => {
         identifier,
         (event, props) => analytics.track(event, props),
       ),
+    loopActMany: (
+      projectKey: unknown,
+      action: unknown,
+      identifiers: unknown,
+      confirmed: unknown,
+      reason: unknown,
+    ) => actOnMany(loopOptions(), projectKey, action, identifiers, confirmed, reason),
     loopNotices: (projectKey: unknown) =>
-      answerNotices(options.loop, projectKey, sessionsNow, (event, props) =>
-        analytics.track(event, props),
-      ),
+      answerNotices(loopOptions(), projectKey, (event, props) => analytics.track(event, props)),
     setAnalytics: (enabled: unknown) => usage.set(enabled === true),
     // Through main, not the page's navigator.clipboard: the page is given no permissions. Text only, of a sane size.
     copyText: (text: unknown) => {
@@ -566,6 +566,12 @@ export const startApp = async (options: AppOptions) => {
 
   // Blocked tickets and escalated reviews are told with a system notification, also while the Loop page is not open.
   // Not in a test's hidden window: it would read the tracker for nothing.
+  // The itsaplan key file an older version kept: Loop holds the key now. Removed, and the person is told once.
+  if (options.loop?.oldKeyFile !== undefined && !hidden)
+    void retireKeyFile(options.loop.oldKeyFile, () => {
+      if (!Notification.isSupported()) return;
+      new Notification({ title: translator().t("loop.keyMoved") }).show();
+    });
   let stopNotices = () => {};
   if (options.loop && !hidden) {
     const loop = options.loop;
@@ -576,7 +582,7 @@ export const startApp = async (options: AppOptions) => {
         if (answer.kind !== "ok") throw new Error("the Loop server did not answer");
         return answer.projects;
       },
-      read: (projectKey) => answerNotices(loop, projectKey, sessionsNow, () => {}),
+      read: (projectKey) => answerNotices(loopOptions(), projectKey, () => {}),
       alert: showAlert({
         window: () => window,
         supported: () => Notification.isSupported(),
