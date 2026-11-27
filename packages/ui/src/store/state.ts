@@ -112,6 +112,8 @@ export type AppState = {
   switchNoticeSeen: boolean;
   /** The update version the person put off ("Later"): not offered again in the notices until a newer one. */
   updateDeferred?: string;
+  /** A check the person asked for: under way, or just found nothing newer (for a few seconds). */
+  updateCheck?: "checking" | "up-to-date" | undefined;
   locations: LocationConfig[];
   status: Record<string, LocationStatus>;
   sessions: Record<string, SessionSummary[]>;

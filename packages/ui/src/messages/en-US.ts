@@ -1175,6 +1175,7 @@ export const enUS = {
   "config.nothingToSet": "This agent has nothing to set.",
   "update.checking": "Checking for updates…",
   "update.upToDate": "Up to date",
+  "update.upToDateNow": "You’re up to date",
   "update.available": "Version {version} is available",
   "update.downloading": "Downloading {version}: {received} of {total} MB",
   "update.downloadingChanges": "Downloading the changes for {version}: {received} of {total} MB",

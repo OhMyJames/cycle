@@ -1060,6 +1060,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "config.nothingToSet": "这个 agent 没有可设置的项。",
   "update.checking": "正在检查更新…",
   "update.upToDate": "已是最新",
+  "update.upToDateNow": "已是最新版本",
   "update.available": "有新版本 {version}",
   "update.downloading": "正在下载 {version}：{received} / {total} MB",
   "update.downloadingChanges": "正在下载 {version} 的改动：{received} / {total} MB",

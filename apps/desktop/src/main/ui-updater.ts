@@ -187,3 +187,15 @@ export class UiUpdater {
     return this.#state;
   }
 }
+
+/**
+ * A check the person asked for: the whole app and the page are asked together, so a newer page does not wait for the
+ * next poll. What the page found reaches it through the updater's own emit; what is answered is the app's state.
+ */
+export const checkEverything = async <S>(
+  app: { check: (manual: boolean) => Promise<S> },
+  page: { check: () => Promise<unknown> } | undefined,
+): Promise<S> => {
+  const [state] = await Promise.all([app.check(true), page?.check()]);
+  return state;
+};

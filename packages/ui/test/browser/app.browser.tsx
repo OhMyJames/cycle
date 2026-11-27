@@ -1191,6 +1191,8 @@ test("an update that is found is offered, asks before it restarts, and the foote
   expect(check.querySelector('[data-slot="app-version"]')?.textContent).toBe("0.1.0");
   await user.click(check);
   expect(named("checkForUpdate")).toHaveLength(2);
+  // Up to date is said where it can be seen, though the menu has closed.
+  expect(await screen.findByText("You’re up to date")).toBeTruthy();
 });
 
 test("a daemon too old for the app says so in one line with a button, and updating asks first", async () => {

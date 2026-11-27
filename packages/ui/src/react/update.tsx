@@ -5,7 +5,7 @@ import type { Translator } from "../i18n.ts";
 import { AppNotice } from "./app-notice.tsx";
 import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
-import { DownloadIcon, ErrorCircleIcon, RefreshIcon, WarningIcon } from "./icons.tsx";
+import { CheckIcon, DownloadIcon, ErrorCircleIcon, RefreshIcon, WarningIcon } from "./icons.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
 
 /** Whole megabytes, and tenths while the whole is small (an update that changed a little). */
@@ -45,7 +45,20 @@ export function UpdateNotice() {
   const update = useAppState((s) => s.update);
   const [confirming, setConfirming] = useState(false);
   const deferred = useAppState((s) => s.updateDeferred);
-  if (update === undefined || !updateNoticed(update, deferred)) return null;
+  const check = useAppState((s) => s.updateCheck);
+  if (update === undefined) return null;
+  if (!updateNoticed(update, deferred)) {
+    // A check the person asked for answers where they can see it, then goes: nothing to do, nothing kept.
+    if (check === undefined) return null;
+    return (
+      <AppNotice
+        tone="info"
+        busy={check === "checking"}
+        icon={check === "checking" ? <RefreshIcon /> : <CheckIcon />}
+        text={check === "checking" ? t("update.checking") : t("update.upToDateNow")}
+      />
+    );
+  }
   const busy = update.kind === "downloading" || update.kind === "installing";
   const failedInstall = update.kind === "error";
   const version = versionOf(update);

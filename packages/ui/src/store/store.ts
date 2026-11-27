@@ -38,6 +38,9 @@ export { type BlankWorktree, blankWorktreeOf } from "./worktrees.ts";
 const REVEAL_IN_DIFF_MS = 3_000;
 
 /** Which view of its Diff tab each session shows (this session's edits, or the workspace), and who to tell of a change. */
+/** How long "up to date" stays after a check the person asked for. */
+const UP_TO_DATE_MS = 4000;
+
 export class DiffModes {
   readonly #modes = new Map<string, "session" | "workspace">();
   readonly #listeners = new Set<() => void>();
@@ -481,8 +484,23 @@ export class AppStore extends StoreBase {
   // ---- the app itself ----
 
   checkForUpdate = async (): Promise<void> => {
-    await this.attempt(async () => this.set({ update: await this.bridge.checkForUpdate() }));
+    const serial = ++this.#updateChecks;
+    this.set({ updateCheck: "checking" });
+    await this.attempt(async () => {
+      const update = await this.bridge.checkForUpdate();
+      this.set({
+        update,
+        ...(update.kind === "up-to-date" ? { updateCheck: "up-to-date" as const } : {}),
+      });
+    });
+    if (this.getState().updateCheck === "checking" && serial === this.#updateChecks)
+      this.set({ updateCheck: undefined });
+    if (this.getState().updateCheck === "up-to-date")
+      setTimeout(() => {
+        if (serial === this.#updateChecks) this.set({ updateCheck: undefined });
+      }, UP_TO_DATE_MS);
   };
+  #updateChecks = 0;
 
   /** The person's answer about usage statistics. */
   setAnalytics = async (enabled: boolean): Promise<void> => {
