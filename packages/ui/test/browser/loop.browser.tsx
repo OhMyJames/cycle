@@ -1180,3 +1180,26 @@ test("the parent id on a child card opens the parent", async () => {
     expect(fake.calls.some(([n, , id]) => n === "loopTicket" && id === "CYC-381")).toBe(true),
   );
 });
+
+test("the Loop title and crumbs fade at the end, and the scrolling areas fade at the top", async () => {
+  const { user } = await mount({
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: { CYC: board },
+  });
+  await screen.findByRole("region", { name: "In Progress" });
+  const crumbs = document.querySelector<HTMLElement>('[data-slot="loop-crumbs"]') as HTMLElement;
+  const crumbsStyle = getComputedStyle(crumbs);
+  expect(crumbsStyle.textOverflow).not.toBe("ellipsis");
+  expect(crumbsStyle.animationName).toBe("cycle-fade");
+  const column = document.querySelector<HTMLElement>(
+    '[data-slot="loop-column-body"]',
+  ) as HTMLElement;
+  expect(getComputedStyle(column).maskImage).toContain("linear-gradient");
+  expect(Number.parseFloat(getComputedStyle(column).paddingTop)).toBeGreaterThan(0);
+  await user.click(screen.getByRole("button", { name: "Overview" }));
+  await screen.findByRole("region", { name: "Projects" });
+  const heading = document.querySelector<HTMLElement>('[data-slot="loop-heading"]') as HTMLElement;
+  expect(getComputedStyle(heading).textOverflow).not.toBe("ellipsis");
+  const body = document.querySelector<HTMLElement>('[data-kind="loop-body"]') as HTMLElement;
+  expect(getComputedStyle(body).maskImage).toContain("linear-gradient");
+});

@@ -13,6 +13,9 @@
   :is(
     [data-slot="location-name"],
     [data-slot="session-title"],
+    [data-slot="page-heading"],
+    [data-slot="loop-crumbs"],
+    [data-slot="loop-heading"],
     [data-slot="workspace-name"],
     [data-slot="search-title"],
     [data-slot="account-name"],
