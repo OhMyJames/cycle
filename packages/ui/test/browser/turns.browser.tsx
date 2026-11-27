@@ -533,6 +533,60 @@ test("what arrives follows the end, and does not move a reader who is above it",
   expect(log.textContent).not.toContain("answer 105");
 });
 
+test("a jump into a part never drawn fills the view with blocks, not with room", async () => {
+  const { log } = await open(...turnsOf(400));
+  constrain(log);
+  await waitFor(() => expect(drawn(log)).toBeLessThan(80));
+  await settle();
+  // As a drag of the scrollbar does: far from where blocks were measured.
+  log.scrollTop = log.scrollHeight / 2;
+  await waitFor(() => {
+    const view = log.getBoundingClientRect();
+    const blocks = Array.from(log.querySelectorAll('[data-slot="block"]'), (b) =>
+      b.getBoundingClientRect(),
+    );
+    expect(blocks.length).toBeGreaterThan(2);
+    expect(blocks[0]?.top ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(view.top);
+    expect(blocks.at(-1)?.bottom ?? 0).toBeGreaterThanOrEqual(view.bottom);
+    for (const gap of log.querySelectorAll('[data-slot="spacer"]')) {
+      const box = gap.getBoundingClientRect();
+      expect(box.height === 0 || box.bottom <= view.top || box.top >= view.bottom).toBe(true);
+    }
+  });
+  expect(drawn(log)).toBeLessThan(80);
+});
+
+test("a card the reader opened is still open when they come back to it", async () => {
+  const { user, log } = await open(
+    you("first"),
+    ...tool("a", "Bash", "completed", { command: "make kept-open" }),
+    ...tool("b", "Read", "completed", { file_path: "kept.ts" }),
+    say("first answer"),
+    state({ state: "idle", stopReason: "end_turn" }),
+    ...turnsOf(300, 1),
+  );
+  constrain(log);
+  await waitFor(() => expect(drawn(log)).toBeLessThan(80));
+  await settle();
+  await waitFor(() => {
+    log.scrollTop = 0;
+    expect(screen.queryByRole("button", { name: /^Worked/ })).not.toBeNull();
+  });
+  const fold = await screen.findByRole("button", { name: /^Worked/ });
+  await user.click(fold);
+  expect(fold.getAttribute("aria-expanded")).toBe("true");
+  log.scrollTop = log.scrollHeight;
+  await waitFor(() => expect(log.textContent).toContain("answer 300"));
+  await waitFor(() => expect(log.scrollHeight - log.scrollTop - log.clientHeight).toBeLessThan(2));
+  expect(drawn(log)).toBeLessThan(80);
+  for (let i = 0; i < 100 && log.scrollTop > 0; i++) {
+    log.scrollTop = 0;
+    await settle();
+  }
+  const back = await screen.findByRole("button", { name: /^Worked/ });
+  expect(back.getAttribute("aria-expanded")).toBe("true");
+});
+
 test("an item far above the view is brought into view and marked, in a long conversation", async () => {
   const { log } = await open(
     you("first"),

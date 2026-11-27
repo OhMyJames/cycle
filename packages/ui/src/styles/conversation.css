@@ -1788,7 +1788,7 @@ button[data-slot="review-file"]:focus-visible {
   flex-direction: column;
 }
 
-[data-slot="block"][data-turn-start]:not(:first-child) {
+[data-slot="block"][data-turn-start] {
   margin-top: calc(var(--cycle-gap-turn) - var(--cycle-gap));
 }
 

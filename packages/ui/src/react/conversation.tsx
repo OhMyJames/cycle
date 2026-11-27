@@ -25,6 +25,7 @@ import {
   offsetOf,
   type Resend,
   resendOf,
+  type Slice,
   shownBlocks,
   sliceOf,
   spaceOf,
@@ -496,6 +497,53 @@ const ACTED_MS = 600;
 /** Further than this from the end, the reader is offered a way back to it. */
 const AWAY_PX = 240;
 
+type Plan = {
+  sizes: number[];
+  slice: Slice;
+  /** What is drawn: the blocks near the view, and those the reader has pressed a control in, which keep what they opened. */
+  kept: number[];
+  /** How tall what is not drawn is, in all. */
+  hidden: number;
+};
+
+/** What to draw of these blocks, for a view where it is. At the end (`stuck`) the last blocks. */
+const planOf = (
+  blocks: readonly LaidBlock[],
+  heights: ReadonlyMap<string, number>,
+  pinned: ReadonlySet<string>,
+  view: { top: number; height: number; gap: number },
+  stuck: boolean,
+): Plan => {
+  let known = 0;
+  let count = 0;
+  for (const block of blocks) {
+    const height = heights.get(block.key);
+    if (height !== undefined) {
+      known += height;
+      count += 1;
+    }
+  }
+  const guess = count > 0 ? known / count : GUESS_PX;
+  const sizes = blocks.map((block) => heights.get(block.key) ?? guess);
+  const slice = sliceOf(
+    sizes,
+    view.gap,
+    stuck ? Number.POSITIVE_INFINITY : view.top,
+    view.height,
+    LEAD_PX,
+  );
+  const near = new Set<number>();
+  for (let i = slice.start; i < slice.end; i++) near.add(i);
+  if (pinned.size > 0)
+    blocks.forEach((block, i) => {
+      if (pinned.has(block.key)) near.add(i);
+    });
+  const kept = [...near].sort((a, b) => a - b);
+  let hidden = 0;
+  for (let i = 0; i < sizes.length; i++) if (!near.has(i)) hidden += sizes[i] ?? 0;
+  return { sizes, slice, kept, hidden };
+};
+
 const reducedMotion = (): boolean =>
   typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -544,25 +592,10 @@ export function ConversationView({
     height: VIEW_PX,
     gap: 12,
   });
-  let known = 0;
-  let count = 0;
-  for (const block of blocks) {
-    const height = heights.get(block.key);
-    if (height !== undefined) {
-      known += height;
-      count += 1;
-    }
-  }
-  const guess = count > 0 ? known / count : GUESS_PX;
-  const sizes = blocks.map((block) => heights.get(block.key) ?? guess);
-  // At the end, the last blocks; otherwise those around where the reader is.
-  const slice = sliceOf(
-    sizes,
-    view.current.gap,
-    stuck.current ? Number.POSITIVE_INFINITY : view.current.top,
-    view.current.height,
-    LEAD_PX,
-  );
+  // Blocks the reader pressed a control in are kept drawn: what they opened would be lost, and their height with it.
+  const pinned = useRef(new Set<string>()).current;
+  const plan = planOf(blocks, heights, pinned, view.current, stuck.current);
+  const { sizes } = plan;
   // The view's height and place when last seen. A scroll that comes with a change of height and does not go up (a line
   // under the title bar, the box growing) is the layout's, not the reader's: it does not stop following the end.
   const lastSeen = useRef({ height: 0, top: 0 });
@@ -570,44 +603,66 @@ export function ConversationView({
   const seenFollow = useRef(follow);
 
   // Read through a ref, so that what listens to the view lasts the session instead of one per streamed chunk.
-  const laid = useRef({ blocks, sizes, slice });
-  laid.current = { blocks, sizes, slice };
-  // The view moved or changed height: if other blocks are now near it, they are drawn. A screen reader is not told of
-  // blocks that come and go as the reader scrolls past them.
-  const refit = useCallback(() => {
-    const el = ref.current;
-    if (el === null) return;
-    view.current.top = el.scrollTop;
-    view.current.height = el.clientHeight > 0 ? el.clientHeight : VIEW_PX;
-    const now = laid.current.slice;
-    const next = sliceOf(
-      laid.current.sizes,
-      view.current.gap,
-      stuck.current ? Number.POSITIVE_INFINITY : view.current.top,
-      view.current.height,
-      LEAD_PX,
-    );
-    if (next.start === now.start && next.end === now.end) return;
-    el.setAttribute("aria-live", "off");
-    redraw();
-  }, []);
+  const laid = useRef({ blocks, plan });
+  laid.current = { blocks, plan };
+  // The view moved or changed height, or what is drawn was measured: if other blocks are now near it, or what stands for the
+  // rest is another height, they are drawn again. A screen reader is not told of blocks that come and go as the reader
+  // scrolls past them (`quiet`), but is of those that arrive at the end being followed.
+  const refit = useCallback(
+    (quiet = false) => {
+      const el = ref.current;
+      if (el === null) return;
+      view.current.top = el.scrollTop;
+      view.current.height = el.clientHeight > 0 ? el.clientHeight : VIEW_PX;
+      const now = laid.current.plan;
+      const next = planOf(laid.current.blocks, heights, pinned, view.current, stuck.current);
+      if (
+        next.slice.start === now.slice.start &&
+        next.slice.end === now.slice.end &&
+        next.kept.length === now.kept.length &&
+        Math.abs(next.hidden - now.hidden) < 1
+      )
+        return;
+      if (quiet) el.setAttribute("aria-live", "off");
+      redraw();
+    },
+    [heights, pinned],
+  );
   // How tall each block drawn is, with the room its turn's start gives it above.
   const measure = useRef<ResizeObserver | undefined>(undefined);
+  const measured = useRef(0);
+  const keyOf = useRef(sessionKey);
+  keyOf.current = sessionKey;
   const observeBlock = useCallback(
     (node: HTMLDivElement | null) => {
       if (node === null || typeof ResizeObserver === "undefined") return;
       measure.current ??= new ResizeObserver((entries) => {
+        let changed = false;
         for (const entry of entries) {
           const key = (entry.target as HTMLElement).dataset.blockKey;
           if (key === undefined) continue;
           const margin = Number.parseFloat(getComputedStyle(entry.target).marginTop) || 0;
-          heights.set(key, entry.target.getBoundingClientRect().height + margin);
+          const height = entry.target.getBoundingClientRect().height + margin;
+          if (Math.abs((heights.get(key) ?? -1) - height) > 0.5) changed = true;
+          heights.set(key, height);
         }
+        // What is now known of how tall blocks are moves what stands for the rest, and how many the view holds: once a frame.
+        if (changed && measured.current === 0)
+          measured.current = requestAnimationFrame(() => {
+            measured.current = 0;
+            refit();
+            const el = ref.current;
+            if (el !== null)
+              remember(keyOf.current, {
+                top: stuck.current ? "bottom" : el.scrollTop,
+                heights,
+              });
+          });
       });
       measure.current.observe(node);
       return () => measure.current?.unobserve(node);
     },
-    [heights],
+    [heights, refit],
   );
   useLayoutEffect(() => {
     const el = ref.current;
@@ -620,7 +675,13 @@ export function ConversationView({
     const gap = Number.parseFloat(getComputedStyle(el).rowGap);
     if (Number.isFinite(gap)) view.current.gap = gap;
     refit();
-  }, [refit]);
+    return () => {
+      cancelAnimationFrame(measured.current);
+      measured.current = 0;
+      // Back to this session, the reader finds the blocks as tall as they were.
+      remember(keyOf.current, { top: stuck.current ? "bottom" : view.current.top, heights });
+    };
+  }, [refit, heights]);
 
   // Asked to show an item (from the Overview): if its block is not drawn, the view goes to where it is, and once it is
   // drawn (its card opened) it is scrolled to the middle and marked for a moment.
@@ -630,7 +691,8 @@ export function ConversationView({
       reveal.subscribe(() => {
         const asked = reveal.get();
         if (asked === undefined || asked.sessionKey !== sessionKey) return;
-        const { blocks, sizes, slice } = laid.current;
+        const { blocks, plan } = laid.current;
+        const { sizes, slice } = plan;
         const at = blocks.findIndex((block) => blockHolds(block as never, asked.itemId));
         if (at === -1) return reveal.done(asked.serial);
         const el = ref.current;
@@ -640,10 +702,13 @@ export function ConversationView({
           el.scrollTop = Math.max(0, middle - el.clientHeight / 2);
           view.current.top = el.scrollTop;
         }
+        // Its block keeps what the card opens for it, whichever way the reader scrolls after.
+        const held = blocks[at];
+        if (held !== undefined) pinned.add(held.key);
         revealing.current = { id: asked.itemId, serial: asked.serial };
         redraw();
       }),
-    [sessionKey],
+    [sessionKey, pinned],
   );
   useEffect(() => {
     const asked = revealing.current;
@@ -651,19 +716,31 @@ export function ConversationView({
     if (asked === undefined || el === null) return;
     const { id, serial } = asked;
     revealing.current = undefined;
-    let frames = 0;
-    // Not undone by the next render: a streamed chunk must not stop the search, nor leave the mark on.
+    let settling = 0;
+    // Not undone by the next render: a streamed chunk must not stop the search, nor leave the mark on. It goes on until the
+    // item is drawn (its block was found, so it will be), or the view is gone or another item is asked for.
     const find = () => {
-      if (!el.isConnected) return reveal.done(serial);
+      const now = reveal.get();
+      if (!el.isConnected || (now !== undefined && now.serial !== serial))
+        return reveal.done(serial);
       const node = el.querySelector<HTMLElement>(`[data-item-id="${CSS.escape(id)}"]`);
-      // The card that holds it opens on the next frame or two.
+      // The card that holds it opens on the next frame or two; its block may be drawn where it was guessed to be, not yet
+      // where it is.
       if (node === null) {
-        if (++frames < 10) requestAnimationFrame(find);
-        else reveal.done(serial);
+        const { blocks, plan } = laid.current;
+        const at = blocks.findIndex((block) => blockHolds(block as never, id));
+        if (at === -1) return reveal.done(serial);
+        if (at < plan.slice.start || at >= plan.slice.end) {
+          const middle = offsetOf(plan.sizes, view.current.gap, at) + (plan.sizes[at] ?? 0) / 2;
+          el.scrollTop = Math.max(0, middle - el.clientHeight / 2);
+        }
+        requestAnimationFrame(find);
         return;
       }
-      reveal.done(serial);
       node.scrollIntoView?.({ block: "center" });
+      // Heights found on the way move it: once more when they have settled.
+      if (settling++ < 2) return void requestAnimationFrame(find);
+      reveal.done(serial);
       node.setAttribute("data-revealed", "");
       setTimeout(() => node.removeAttribute("data-revealed"), 1200);
     };
@@ -737,8 +814,11 @@ export function ConversationView({
       if (
         event.target instanceof Element &&
         event.target.closest("button, summary, [role='button']")
-      )
+      ) {
         acted.current = performance.now();
+        const key = event.target.closest<HTMLElement>('[data-slot="block"]')?.dataset.blockKey;
+        if (key !== undefined) pinned.add(key);
+      }
     };
     el.addEventListener("pointerdown", act, true);
     el.addEventListener("keydown", act, true);
@@ -748,7 +828,7 @@ export function ConversationView({
       el.removeEventListener("pointerdown", act, true);
       el.removeEventListener("keydown", act, true);
     };
-  }, [refit]);
+  }, [refit, pinned]);
 
   // Away from the end, a button takes the reader back to it, and says when something arrived there meanwhile.
   const store = useAppStore();
@@ -811,7 +891,7 @@ export function ConversationView({
     if (fromEnd < NEAR_END_PX) setFresh(false);
     stuck.current = fromEnd < NEAR_END_PX;
     remember(sessionKey, { top: stuck.current ? "bottom" : el.scrollTop, heights });
-    refit();
+    refit(!stuck.current);
   };
 
   const working = conversation.status !== "idle";
@@ -860,6 +940,50 @@ export function ConversationView({
           },
     [filesRoot, store],
   );
+  // What is drawn, with a gap as tall as each stretch not drawn between.
+  const rows: ReactNode[] = [];
+  const gapOf = (from: number, to: number) => (
+    <div
+      key={`\0gap-${from}`}
+      data-slot="spacer"
+      aria-hidden="true"
+      style={{ height: spaceOf(sizes, view.current.gap, from, to) }}
+    />
+  );
+  let prev = -1;
+  for (const index of plan.kept) {
+    const block = blocks[index];
+    if (block === undefined) continue;
+    if (index > prev + 1) rows.push(gapOf(prev + 1, index));
+    prev = index;
+    rows.push(
+      <div
+        key={block.key}
+        ref={observeBlock}
+        data-slot="block"
+        data-block-key={block.key}
+        data-turn-start={(block.startsTurn && index > 0) || undefined}
+      >
+        <BlockView
+          block={block}
+          streaming={
+            working &&
+            block.turn === conversation.turns &&
+            (block.kind === "thought" ? block.item === lastItem : index === lastAgent)
+          }
+          live={working && block.turn === conversation.turns}
+          resend={block.kind === "end" && resend?.turn === block.turn ? resend : undefined}
+          replyOf={
+            replyEnds.has(block.key) && !(working && block.turn === conversation.turns)
+              ? replyOf
+              : undefined
+          }
+          ended={block.turn < conversation.turns}
+        />
+      </div>,
+    );
+  }
+  if (prev < blocks.length - 1) rows.push(gapOf(prev + 1, blocks.length));
   return (
     <FileLinksContext.Provider value={fileLinks}>
       <LoaderClaimsProvider value={claims}>
@@ -882,48 +1006,7 @@ export function ConversationView({
               <StateBlock tone="empty" title={t("conversation.empty")} />
             </div>
           ) : null}
-          {slice.start > 0 ? (
-            <div
-              data-slot="spacer"
-              aria-hidden="true"
-              style={{ height: spaceOf(sizes, view.current.gap, 0, slice.start) }}
-            />
-          ) : null}
-          {blocks.slice(slice.start, slice.end).map((block, at) => (
-            <div
-              key={block.key}
-              ref={observeBlock}
-              data-slot="block"
-              data-block-key={block.key}
-              data-turn-start={block.startsTurn || undefined}
-            >
-              <BlockView
-                block={block}
-                streaming={
-                  working &&
-                  block.turn === conversation.turns &&
-                  (block.kind === "thought"
-                    ? block.item === lastItem
-                    : slice.start + at === lastAgent)
-                }
-                live={working && block.turn === conversation.turns}
-                resend={block.kind === "end" && resend?.turn === block.turn ? resend : undefined}
-                replyOf={
-                  replyEnds.has(block.key) && !(working && block.turn === conversation.turns)
-                    ? replyOf
-                    : undefined
-                }
-                ended={block.turn < conversation.turns}
-              />
-            </div>
-          ))}
-          {slice.end < blocks.length ? (
-            <div
-              data-slot="spacer"
-              aria-hidden="true"
-              style={{ height: spaceOf(sizes, view.current.gap, slice.end, blocks.length) }}
-            />
-          ) : null}
+          {rows}
           {!loading ? (
             <StepLine
               conversation={conversation}

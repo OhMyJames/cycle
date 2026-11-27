@@ -326,6 +326,35 @@ test("a long list draws the blocks near the view, and a gap stands for the rest"
   expect(offsetOf(sizes, 10, slice.start)).toBe(above + 10);
 });
 
+test("slices of lists of different heights, with no gap, a huge lead, or a view past the end", () => {
+  const sizes = [50, 300, 20, 20, 500, 10, 80];
+  // No gap: the blocks lie one after another, 0-50, 50-350, 350-370, ...
+  expect(sliceOf(sizes, 0, 360, 5, 0)).toEqual({ start: 2, end: 3 });
+  expect(sliceOf(sizes, 0, 0, 40, 0)).toEqual({ start: 0, end: 1 });
+  // A lead that covers everything draws everything.
+  expect(sliceOf(sizes, 5, 400, 100, 1_000_000)).toEqual({ start: 0, end: 7 });
+  // A top past the end is the end; a negative one is the start.
+  const end = sliceOf(sizes, 0, 1e9, 100, 0);
+  expect(end.end).toBe(7);
+  expect(end.start).toBe(4);
+  expect(sliceOf(sizes, 0, -50, 100, 0).start).toBe(0);
+  // A view taller than the list draws all of it.
+  expect(sliceOf(sizes, 0, 500, 10_000, 0)).toEqual({ start: 0, end: 7 });
+  // One block is always drawn, even in a view of no height.
+  expect(sliceOf(sizes, 0, 100, 0, 0).end - sliceOf(sizes, 0, 100, 0, 0).start).toBeGreaterThan(0);
+});
+
+test("offsets and rooms add up, whatever the sizes", () => {
+  const sizes = [50, 300, 20, 20, 500, 10, 80];
+  expect(offsetOf(sizes, 0, 0)).toBe(0);
+  expect(offsetOf(sizes, 10, 2)).toBe(50 + 10 + 300 + 10);
+  expect(offsetOf(sizes, 10, 99)).toBe(980 + 70);
+  // A room stands for blocks and the gaps between them, not the gaps at its ends.
+  expect(spaceOf(sizes, 10, 1, 3)).toBe(300 + 10 + 20);
+  expect(spaceOf(sizes, 0, 0, 7)).toBe(980);
+  expect(spaceOf(sizes, 10, 5, 2)).toBe(0);
+});
+
 test("at the end the last blocks are drawn, at the top the first, and a short list whole", () => {
   const sizes = sizesOf(1000);
   expect(sliceOf(sizes, 10, Number.POSITIVE_INFINITY, 600, 400).end).toBe(1000);
