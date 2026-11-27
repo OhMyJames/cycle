@@ -49,7 +49,7 @@ bun run check    # 边界、类型、lint、测试
 - [docs/daemon.md](docs/daemon.md):daemon:做了什么、没做什么、验证结果
 - [docs/testing.md](docs/testing.md):门禁、集成测试、真实模型的运行
 - [docs/conversation-content.md](docs/conversation-content.md):对话内容怎么展示
-- [docs/harness-settings.md](docs/harness-settings.md):agent 设置页
+- [docs/harness-settings.md](docs/harness-settings.md):agent 设置页的设计与实测记录(CYCL-226,历史文档;现状见 desktop.md 的设置页)
 - [docs/adapters/](docs/adapters/):各 agent 适配([Claude](docs/adapters/claude.md)、[Codex](docs/adapters/codex.md)、[agy](docs/adapters/agy.md)、[pi](docs/adapters/pi.md) 调研)
 - [docs/decisions/](docs/decisions/):设计决策记录
 
