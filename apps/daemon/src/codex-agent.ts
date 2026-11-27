@@ -11,6 +11,7 @@ import { runAdapter } from "@cycle/harness-codex/run";
 import { createCodexSetupProvider } from "./agent-setup.ts";
 import type { Config } from "./config.ts";
 import type { Harness } from "./harness.ts";
+import { ensureHomeKeychain } from "./home-keychain.ts";
 import { processAgent } from "./process-agent.ts";
 import { protectedFiles } from "./secrets.ts";
 import { shippedExecutable } from "./self.ts";
@@ -31,6 +32,11 @@ export const codexEnv = (
   // Fall back to CODEX_HOME when no non-empty HOME was inherited or configured.
   if (!env.HOME) env.HOME = env.CODEX_HOME;
   return env;
+};
+
+/** When `codexEnv` made HOME up (it is CODEX_HOME), that HOME gets a keychain before Codex or its tools run in it. */
+const keychainIfMadeUp = (env: Record<string, string>): void => {
+  if (env.HOME === env.CODEX_HOME) ensureHomeKeychain(env.HOME);
 };
 
 /** The source checkout's locked native package; absent in the compiled daemon, where the shipped one is used. */
@@ -58,10 +64,12 @@ export const codexHarness: Harness = {
     args: [...CODEX_FIXED_ARGS],
     login: ["login"],
     directories: ["CODEX_HOME"],
+    prepare: async (_context, env) => keychainIfMadeUp(env),
   },
   definition: ({ config, dataDir, inherited, self, log, providers }) => {
     const settings = config.codex;
     const env = codexEnv(settings, dataDir, inherited);
+    keychainIfMadeUp(env);
     const executable = () => settings.executable ?? shippedExecutable("codex") ?? sourceBinary();
     return processAgent({
       id: "codex",

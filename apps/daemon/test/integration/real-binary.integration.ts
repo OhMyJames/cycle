@@ -13,6 +13,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CycleClient, commandChannel } from "@cycle/client";
+import { ensureHomeKeychain } from "../../src/home-keychain.ts";
 
 const token = process.env.CYCLE_REAL_MODEL_TOKEN;
 const model = process.env.CYCLE_REAL_MODEL ?? "haiku";
@@ -23,6 +24,8 @@ const enabled = token !== undefined && token !== "" && existsSync(bin);
 let root: string;
 beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), "cv1-bin-"));
+  // The agents get this as HOME and keep keys with `security`: without a keychain, a window on the screen.
+  ensureHomeKeychain(root);
 });
 afterAll(async () => {
   await rm(root, { recursive: true, force: true });

@@ -12,6 +12,7 @@ import {
   textReply,
   toolReply,
 } from "../../../../harness/claude/test/integration/mock-anthropic.ts";
+import { ensureHomeKeychain } from "../../../daemon/src/home-keychain.ts";
 import { built, startWebApp, until } from "../web/web-app.ts";
 
 const daemonMain = join(new URL("../..", import.meta.url).pathname, "../daemon/src/main.ts");
@@ -44,6 +45,8 @@ test.skipIf(!built)(
     });
     const data = join(root, "data");
     const home = join(root, "home");
+    // Claude runs in this HOME and keeps its key with `security`: without a keychain, a window on the screen.
+    ensureHomeKeychain(home);
     const cwd = join(root, "work");
     await Bun.write(join(cwd, ".keep"), "");
     await Bun.write(
@@ -239,6 +242,7 @@ test.skipIf(!built)(
     const base = join(root, "sign-in");
     const data = join(base, "data");
     const socket = join(base, "d.sock");
+    ensureHomeKeychain(join(base, "home"));
     const app = await startWebApp({
       root: base,
       daemon: ["bun", daemonMain],

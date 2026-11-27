@@ -7,6 +7,7 @@ import {
   ndJsonStream,
   type SessionUpdate,
 } from "@agentclientprotocol/sdk/experimental/v2";
+import { ensureHomeKeychain } from "../../../../apps/daemon/src/home-keychain.ts";
 
 const entry = new URL("../../src/main.ts", import.meta.url).pathname;
 
@@ -115,5 +116,7 @@ export const withAdapter = async <T>(
 
 export const tempConfigDir = async () => {
   const dir = await mkdtemp(join(tmpdir(), "cycle-v1-claude-config-"));
+  // It is Claude's HOME too (withAdapter): without a keychain there, macOS opens "Keychain Not Found" on the screen.
+  ensureHomeKeychain(dir);
   return { dir, dispose: () => rm(dir, { recursive: true, force: true }) };
 };
