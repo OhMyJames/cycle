@@ -3,6 +3,8 @@ import { afterEach, expect, test } from "vitest";
 import { page, userEvent } from "vitest/browser";
 import type {
   LoopBoardAnswer,
+  LoopGraph,
+  LoopGraphNode,
   LoopProjectInfo,
   LoopTicket,
   LoopTicketDetail,
@@ -870,13 +872,15 @@ test("the Settings page has a name field for itsaplan and no key field", async (
 });
 
 /** What `loop/ticket/get` gives for a ticket: the text, the buttons it allows, whether a conversation may start. */
+const withoutGraph = ({ graph: _summary, ...rest }: LoopTicket): Omit<LoopTicket, "graph"> => rest;
+
 const detailOf = (
   base: LoopTicket,
   extra: Partial<LoopTicketDetail> = {},
 ): { kind: "ok"; ticket: LoopTicketDetail } => ({
   kind: "ok",
   ticket: {
-    ...base,
+    ...withoutGraph(base),
     actions: [],
     chat: "none",
     body: "text",
@@ -1254,4 +1258,160 @@ test("the Loop title and crumbs fade at the end, and the scrolling areas fade at
   expect(getComputedStyle(heading).textOverflow).not.toBe("ellipsis");
   const body = document.querySelector<HTMLElement>('[data-kind="loop-body"]') as HTMLElement;
   expect(getComputedStyle(body).maskImage).toContain("linear-gradient");
+});
+
+const node = (n: number, extra: Partial<LoopGraphNode> = {}): LoopGraphNode => ({
+  id: `n${n}`,
+  position: n,
+  origin: "planned",
+  title: `Node ${n}`,
+  goal: `Goal ${n}`,
+  dependsOn: [],
+  filesHint: [],
+  verify: [`bun test ${n}`],
+  status: "pending",
+  sessionId: null,
+  commitSha: null,
+  rounds: 0,
+  lastError: null,
+  summary: null,
+  startedAt: null,
+  finishedAt: null,
+  ...extra,
+});
+const graphOf = (nodes: LoopGraphNode[]): LoopGraph => ({
+  runKey: "CYC-610",
+  source: "plan_doc",
+  revision: 1,
+  currentNodeId: "n2",
+  nodes,
+  createdAt: "2026-11-26T00:00:00Z",
+  updatedAt: "2026-11-26T00:00:00Z",
+});
+
+test("a card shows passed/total and the current node when it has a graph, and nothing when it has none", async () => {
+  const withGraph: LoopTicket = {
+    ...ticket(610, "In Progress"),
+    graph: {
+      source: "plan_doc",
+      total: 4,
+      passed: 1,
+      failed: 0,
+      blocked: 0,
+      running: 1,
+      currentNodeId: "n2",
+      currentNodeTitle: "Wire the bridge",
+    },
+  };
+  const plain = ticket(611, "In Progress");
+  await mount({
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: { CYC: withTickets({ "In Progress": [withGraph, plain] }) },
+  });
+  const region = await screen.findByRole("region", { name: "In Progress" });
+  const cards = within(region).getAllByRole("listitem");
+  const graphCard = cards.find((c) => c.getAttribute("data-id") === "CYC-610");
+  const plainCard = cards.find((c) => c.getAttribute("data-id") === "CYC-611");
+  expect(within(graphCard as HTMLElement).getByText("1/4")).toBeTruthy();
+  expect(within(graphCard as HTMLElement).getByText("Now: Wire the bridge")).toBeTruthy();
+  expect(plainCard?.querySelector('[data-slot="loop-graph-progress"]')).toBeNull();
+});
+
+const graphTicket = () => {
+  const mine = ticket(610, "In Progress");
+  const nodes = [
+    node(1, { status: "passed", sessionId: "sess-1", summary: "Did the first part" }),
+    node(0, { status: "passed" }),
+    node(2, { status: "blocked", sessionId: "sess-2", lastError: "tests red", origin: "fix" }),
+    node(3, { status: "failed" }),
+    node(4, { status: "running" }),
+  ];
+  return {
+    connected: true,
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: { CYC: withTickets({ "In Progress": [mine] }) },
+    loopTickets: { "CYC-610": detailOf(mine, { graph: graphOf(nodes) }) },
+  } satisfies NonNullable<Parameters<typeof fakeBridge>[0]>;
+};
+const tracked = (calls: [string, ...unknown[]][]) =>
+  calls.filter(([name]) => name === "track").map(([, event, props]) => [event, props]);
+
+const openGraphDrawer = async () => {
+  const user = userEvent.setup();
+  const fake = fakeBridge(graphTicket());
+  const store = await renderApp(fake.bridge);
+  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  await user.click(await screen.findByRole("button", { name: "Ticket 610" }));
+  const drawer = await screen.findByRole("complementary", { name: "CYC-610" });
+  await within(drawer).findByRole("heading", { name: "Execution Graph" });
+  return { user, fake, store, drawer };
+};
+
+test("the drawer lists the graph in order, shows details, and opens a node's session", async () => {
+  const { user, fake, store, drawer } = await openGraphDrawer();
+  const selected: unknown[][] = [];
+  store.selectSession = async (...args: [string, string]) => {
+    selected.push(args);
+  };
+  const titles = Array.from(drawer.querySelectorAll('[data-slot="loop-graph-node-title"]')).map(
+    (e) => e.textContent,
+  );
+  expect(titles).toEqual(["Node 0", "Node 1", "Node 2", "Node 3", "Node 4"]);
+  // Details come with expanding.
+  expect(within(drawer).queryByText("tests red")).toBeNull();
+  await user.click(within(drawer).getByRole("button", { name: "Expand node Node 2" }));
+  expect(within(drawer).getByText("tests red")).toBeTruthy();
+  expect(within(drawer).getByText("Goal 2")).toBeTruthy();
+  expect(within(drawer).getByText("bun test 2")).toBeTruthy();
+  await user.click(within(drawer).getByRole("button", { name: "Expand node Node 1" }));
+  expect(within(drawer).getByText("Did the first part")).toBeTruthy();
+  // Only nodes with a session have the entry.
+  expect(within(drawer).getAllByRole("button", { name: /^Open the session of node/ })).toHaveLength(
+    2,
+  );
+
+  await user.click(within(drawer).getByRole("button", { name: "Open the session of node Node 2" }));
+  expect(selected).toEqual([["local", "sess-2"]]);
+  expect(tracked(fake.calls)).toContainEqual([
+    "loop_graph_node_opened",
+    { status: "blocked", origin: "fix" },
+  ]);
+  expect(tracked(fake.calls)).toContainEqual([
+    "loop_graph_viewed",
+    { node_count: 5, source: "plan_doc" },
+  ]);
+  // No event carries what a node says.
+  const sent = JSON.stringify(tracked(fake.calls));
+  for (const text of ["Node 2", "Goal 2", "tests red", "Did the first part", "bun test"])
+    expect(sent.includes(text)).toBe(false);
+});
+
+test("only blocked and failed nodes have retry and skip, and they act on that node", async () => {
+  const { user, fake, drawer } = await openGraphDrawer();
+  expect(within(drawer).getAllByRole("button", { name: /^Retry node/ })).toHaveLength(2);
+  expect(within(drawer).getAllByRole("button", { name: /^Skip node/ })).toHaveLength(2);
+  expect(within(drawer).queryByRole("button", { name: "Retry node Node 1" })).toBeNull();
+  expect(within(drawer).queryByRole("button", { name: "Skip node Node 4" })).toBeNull();
+  await user.click(within(drawer).getByRole("button", { name: "Retry node Node 2" }));
+  await user.click(within(drawer).getByRole("button", { name: "Skip node Node 3" }));
+  await waitFor(() =>
+    expect(fake.calls.filter(([name]) => name === "loopGraphAct")).toEqual([
+      ["loopGraphAct", "CYC", "CYC-610", "n2", "retry_node"],
+      ["loopGraphAct", "CYC", "CYC-610", "n3", "skip_node"],
+    ]),
+  );
+});
+
+test("a refused retry says why", async () => {
+  const user = userEvent.setup();
+  const fake = fakeBridge({
+    ...graphTicket(),
+    loopGraphAct: { kind: "failed", reason: "not_allowed" },
+  });
+  await renderApp(fake.bridge);
+  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  await user.click(await screen.findByRole("button", { name: "Ticket 610" }));
+  const drawer = await screen.findByRole("complementary", { name: "CYC-610" });
+  await user.click(await within(drawer).findByRole("button", { name: "Retry node Node 2" }));
+  expect(await within(drawer).findByRole("alert")).toBeTruthy();
 });

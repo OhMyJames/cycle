@@ -131,6 +131,29 @@ export const EVENTS = {
   loop_notice_opened: o({ kind: z.enum(["permission", "blocked", "review"]) }),
   /** The person joined a ticket's Dev session from its page. */
   loop_session_joined: o({}),
+  /** A ticket's drawer drew its Execution Graph: how many nodes and where the graph came from; never a title or goal. */
+  loop_graph_viewed: o({
+    node_count: count,
+    source: z.enum(["plan_doc", "auto_planner", "single"]),
+  }),
+  /** The person pressed a node's session entry in the Execution Graph: the node's status and origin; never which node or what it says. */
+  loop_graph_node_opened: o({
+    status: z.enum(["pending", "running", "passed", "failed", "blocked", "skipped"]),
+    origin: z.enum(["plan", "auto", "fix"]),
+  }),
+  /** The person retried, skipped or edited a graph node: which action and how it came out; never which node. */
+  loop_graph_acted: o({
+    action: z.enum(["retry_node", "skip_node", "edit_node"]),
+    result: z.enum([
+      "ok",
+      "no_server",
+      "forbidden",
+      "conflict",
+      "not_allowed",
+      "offline",
+      "refused",
+    ]),
+  }),
   /** The person pressed Sessions in the sidebar's Sessions/Loop switch, leaving the Loop mode (entering it is `panel_opened` with `loop`). */
   sessions_mode_shown: o({}),
   /** The person asked to check for an update. */
@@ -495,6 +518,8 @@ export const UI_EVENTS = [
   "loop_notice_opened",
   "loop_tickets_acted",
   "loop_session_joined",
+  "loop_graph_viewed",
+  "loop_graph_node_opened",
   "sessions_mode_shown",
   "diff_view_changed",
   "diff_file_opened",

@@ -28,6 +28,7 @@ export const MAIN_METHODS = [
   "loopBoard",
   "loopTicket",
   "loopAct",
+  "loopGraphAct",
   "loopActMany",
   "loopChat",
   "loopNotices",

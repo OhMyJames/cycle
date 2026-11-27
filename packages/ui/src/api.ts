@@ -1333,6 +1333,16 @@ export type AppApi = {
     confirmed?: boolean,
   ): Promise<LoopActResult>;
   /**
+   * Retries or skips one node of a work item's Task Graph through the Loop server (`loop/graph/act`, CYC-513). Never
+   * throws for a refused write: the reason comes back.
+   */
+  loopGraphAct(
+    projectKey: string,
+    identifier: string,
+    nodeId: string,
+    action: LoopGraphNodeAction,
+  ): Promise<LoopActResult>;
+  /**
    * Approves or returns a batch of the tickets waiting for approval (CYC-451). The Loop server reads each ticket again and writes
    * nothing unless `confirmed` is true. `reason` (return only) is posted as a comment on each returned ticket.
    */
@@ -1383,6 +1393,59 @@ export type LoopTicket = {
   pending?: { reason: string };
   /** Where Loop is on a ticket it is working on, and since when (ISO time), from its run record. */
   phase?: { name: string; since: string };
+  /** The run's Task Graph in short; left out when it has none. */
+  graph?: LoopGraphSummary;
+};
+
+/** Where a Task Graph came from (mirrors the protocol; the page may not import it). */
+export type LoopGraphSource = "single" | "plan_doc" | "auto_plan" | "auto_planner" | "edited";
+export type LoopGraphNodeStatus =
+  | "pending"
+  | "running"
+  | "passed"
+  | "failed"
+  | "blocked"
+  | "skipped";
+/** What the person may do to a stuck node. */
+export type LoopGraphNodeAction = "retry_node" | "skip_node";
+export type LoopGraphSummary = {
+  source: LoopGraphSource;
+  total: number;
+  passed: number;
+  failed: number;
+  blocked: number;
+  running: number;
+  currentNodeId: string | null;
+  currentNodeTitle: string | null;
+};
+export type LoopGraphNode = {
+  id: string;
+  /** Topological order, from 0. */
+  position: number;
+  origin: "planned" | "fix";
+  title: string;
+  goal: string;
+  dependsOn: string[];
+  filesHint: string[];
+  verify: string[];
+  status: LoopGraphNodeStatus;
+  sessionId: string | null;
+  commitSha: string | null;
+  rounds: number;
+  lastError: string | null;
+  summary: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+};
+export type LoopGraph = {
+  runKey: string;
+  source: LoopGraphSource;
+  revision: number;
+  currentNodeId: string | null;
+  /** In `position` order. */
+  nodes: LoopGraphNode[];
+  createdAt: string;
+  updatedAt: string;
 };
 
 /** What the person can do with an agent on a ticket: `new` a conversation; `watch` only look; `none` neither. */
@@ -1453,7 +1516,7 @@ export type LoopNoticesAnswer =
   | { kind: "no_server" }
   | { kind: "unreachable" };
 
-export type LoopTicketDetail = LoopTicket & {
+export type LoopTicketDetail = Omit<LoopTicket, "graph"> & {
   /** What the person can do with the ticket, decided by the Loop server; the page only draws it. */
   actions: LoopAction[];
   chat: LoopChat;
@@ -1467,6 +1530,8 @@ export type LoopTicketDetail = LoopTicket & {
   acceptance: string[];
   /** Pull or merge request addresses (https only). */
   links: string[];
+  /** The Task Graph of the ticket's run; left out when it has none. */
+  graph?: LoopGraph;
 };
 export type LoopTicketAnswer =
   | { kind: "ok"; ticket: LoopTicketDetail }
@@ -1606,6 +1671,7 @@ const METHODS: { readonly [method in keyof AppApi]-?: true } = {
   loopBoard: true,
   loopTicket: true,
   loopAct: true,
+  loopGraphAct: true,
   loopChat: true,
   loopActMany: true,
   loopNotices: true,

@@ -15,6 +15,7 @@ import type {
   LoopActResult,
   LoopBoardAnswer,
   LoopChatResult,
+  LoopGraphNodeAction,
   LoopManyAction,
   LoopManyResult,
   LoopNoticesAnswer,
@@ -86,6 +87,8 @@ export const fakeBridge = (
     loopTickets?: Record<string, LoopTicketAnswer>;
     /** What a state button comes to. Default: it worked. */
     loopAct?: LoopActResult;
+    /** What retrying or skipping a graph node comes to. Default: it worked. */
+    loopGraphAct?: LoopActResult;
     /** What starting a conversation about a ticket comes to. Default: it started. */
     loopChat?: LoopChatResult;
     /** What a state button comes to. Default: it worked. */
@@ -722,6 +725,15 @@ export const fakeBridge = (
         _action: LoopAction,
         _confirmed?: boolean,
       ): Promise<LoopActResult> => options.loopAct ?? { kind: "ok" },
+    ),
+    loopGraphAct: record(
+      "loopGraphAct",
+      async (
+        _projectKey: string,
+        _identifier: string,
+        _nodeId: string,
+        _action: LoopGraphNodeAction,
+      ): Promise<LoopActResult> => options.loopGraphAct ?? { kind: "ok" },
     ),
     loopNotices: record(
       "loopNotices",

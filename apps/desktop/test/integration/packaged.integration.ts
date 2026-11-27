@@ -180,6 +180,7 @@ test.skipIf(!ready)(
           "loopBoard",
           "loopTicket",
           "loopAct",
+          "loopGraphAct",
           "loopActMany",
           "loopChat",
           "loopNotices",
