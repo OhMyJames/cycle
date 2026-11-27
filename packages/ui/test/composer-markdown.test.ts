@@ -133,3 +133,40 @@ test("random text of what people type, apart from what would make a block, comes
     expect(through(text)).toBe(text);
   }
 });
+
+const inline = (e: ReturnType<typeof editor>) =>
+  (
+    e.getEditorState().toJSON().root.children[0] as unknown as {
+      children: { type: string; path?: string }[];
+    }
+  ).children;
+
+test("a mention the draft holds reads back as a block, and writes as its @path; one it does not hold stays text", () => {
+  const e = editor();
+  setMarkdown(e, "see @src/a_b.ts and @other and @Fix the bug.", [
+    { path: "src/a_b.ts", kind: "file" },
+    { path: "Fix the bug", kind: "session" },
+  ]);
+  const kinds = e.read(() =>
+    $getRoot()
+      .getAllTextNodes()
+      .map((n) => n.getTextContent()),
+  );
+  expect(kinds).toEqual(["see ", " and @other and ", "."]);
+  expect(
+    inline(e)
+      .filter((c) => c.type === "mention")
+      .map((c) => c.path),
+  ).toEqual(["src/a_b.ts", "Fix the bug"]);
+  expect(markdownOf(e)).toBe("see @src/a_b.ts and @other and @Fix the bug.");
+});
+
+test("a folder's block says the slash, and no list means no block", () => {
+  const e = editor();
+  setMarkdown(e, "in @src/ now", [{ path: "src", kind: "folder" }]);
+  expect(markdownOf(e)).toBe("in @src/ now");
+  expect(inline(e).map((c) => c.type)).toContain("mention");
+  const plain = editor();
+  setMarkdown(plain, "in @src/ now");
+  expect(JSON.stringify(plain.getEditorState().toJSON())).not.toContain("mention");
+});

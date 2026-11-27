@@ -13,6 +13,7 @@ import { MarkdownShortcutPlugin } from "@lexical/react/LexicalMarkdownShortcutPl
 import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
 import { isComposing } from "@ui-sdk/core";
 import {
+  $createTextNode,
   $getRoot,
   $getSelection,
   $isRangeSelection,
@@ -32,11 +33,13 @@ import {
 import { createElement, type RefObject, useEffect, useRef } from "react";
 import {
   $setMarkdown,
+  type MentionRef,
   markdownOf,
   NODES,
   setMarkdown,
   TRANSFORMERS_FOR_COMPOSER,
 } from "../composer-markdown.ts";
+import { $createMentionNode } from "./mention-node.tsx";
 
 export type InputKey = "enter" | "up" | "down" | "right" | "tab" | "escape";
 
@@ -55,12 +58,14 @@ export type InputHandle = {
   focus: () => void;
   caret: () => Caret;
   /** Replaces the last `length` characters before the caret (in its block) with `text`. */
-  replaceBeforeCaret: (length: number, text: string) => void;
+  replaceBeforeCaret: (length: number, text: string, mention?: MentionRef) => void;
 };
 
 export type MarkdownInputProps = {
   /** The Markdown. The editor is made to hold it when it is not what the editor last said. */
   value: string;
+  /** The mentions the draft holds: the `@path` of each that the text says is shown as a block, not as words. */
+  mentions?: readonly MentionRef[] | undefined;
   onChange: (markdown: string) => void;
   disabled: boolean;
   label: string;
@@ -169,7 +174,7 @@ function Behaviour({ props }: { props: MarkdownInputProps }) {
   useEffect(() => {
     if (props.value === emitted.current) return;
     emitted.current = props.value;
-    setMarkdown(editor, props.value);
+    setMarkdown(editor, props.value, latest.current.mentions);
     editor.update(() => $getRoot().selectEnd(), { discrete: true, tag: "history-merge" });
   }, [editor, props.value]);
 
@@ -246,7 +251,7 @@ function Behaviour({ props }: { props: MarkdownInputProps }) {
     handle.current = {
       focus: () => editor.focus(),
       caret: () => caretOf(editor),
-      replaceBeforeCaret: (length, text) =>
+      replaceBeforeCaret: (length, text, mention) =>
         editor.update(() => {
           const selection = $getSelection();
           if (!$isRangeSelection(selection)) return;
@@ -287,6 +292,14 @@ function Behaviour({ props }: { props: MarkdownInputProps }) {
               selection.insertRawText(text);
             }
           }
+          if (mention !== undefined) {
+            const now = $getSelection();
+            if ($isRangeSelection(now))
+              now.insertNodes([
+                $createMentionNode(mention.path, mention.kind),
+                $createTextNode(" "),
+              ]);
+          }
         }),
     };
     return () => {
@@ -299,14 +312,14 @@ function Behaviour({ props }: { props: MarkdownInputProps }) {
 
 export function MarkdownInput(props: MarkdownInputProps) {
   // The document it starts with. Later changes of the text arrive through the plugin, which tells them from the editor's own.
-  const first = useRef(props.value);
+  const first = useRef({ text: props.value, mentions: props.mentions });
   return (
     <LexicalComposer
       initialConfig={{
         namespace: "composer",
         nodes: NODES,
         editable: !props.disabled,
-        editorState: () => $setMarkdown(first.current),
+        editorState: () => $setMarkdown(first.current.text, first.current.mentions),
         onError: (error) => {
           throw error;
         },

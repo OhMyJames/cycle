@@ -109,9 +109,11 @@ const fileChipsOf = (
     const path = inSession(block.uri);
     if (path === undefined) return [];
     const folder = block.uri.endsWith("/");
+    // The link names a folder without its slash; the words, and the box's block, say it with one.
+    const words = folder && !said.endsWith("/") ? `${said}/` : said;
     return [
       {
-        said,
+        said: words,
         chip: (key: string) => (
           <button
             type="button"
@@ -122,7 +124,7 @@ const fileChipsOf = (
             onClick={() => show(path, folder)}
           >
             {folder ? <FolderIcon size={12} /> : <FileIcon size={12} />}
-            {said}
+            {words}
           </button>
         ),
       },

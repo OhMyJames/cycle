@@ -39,7 +39,11 @@ const state = (extra: object) => u({ sessionUpdate: "state_update", ...extra });
 
 /** The session `s1`, open, with these updates in it; `stopSubagent`: its daemon can stop one sub-agent alone. */
 const openWith = async (
-  options: { stopSubagent?: boolean; stopped?: (childId: string) => Promise<boolean> },
+  options: {
+    stopSubagent?: boolean;
+    fs?: boolean;
+    stopped?: (childId: string) => Promise<boolean>;
+  },
   ...updates: SessionUpdate[]
 ) => {
   const snapshot = (): SessionSnapshot => ({
@@ -51,8 +55,16 @@ const openWith = async (
     connected: true,
     snapshot,
     ...(options.stopped !== undefined ? { stopSubagent: options.stopped } : {}),
-    ...(options.stopSubagent === true
-      ? { capabilities: { queue: true, files: true, folders: true, stopSubagent: true } }
+    ...(options.stopSubagent === true || options.fs === true
+      ? {
+          capabilities: {
+            queue: true,
+            files: true,
+            folders: true,
+            ...(options.stopSubagent === true ? { stopSubagent: true } : {}),
+            ...(options.fs === true ? { fs: true } : {}),
+          },
+        }
       : {}),
   });
   await renderApp(script.bridge);
@@ -190,6 +202,43 @@ test("a session named with @ is a chip in the sent message, and the record the a
   ]);
   const message = chips[0]?.closest('[data-slot="message"]');
   expect(message?.textContent).toBe("Go on from Fix the login bug, then @GoneUnsaid");
+});
+
+test("a sent @ is the box's block for a session and for a file or folder inside the session's folder; one outside stays words", async () => {
+  const link = (name: string, uri: string) => ({
+    type: "resource_link",
+    name,
+    uri,
+    _meta: { "cycle/mention": name },
+  });
+  const { log } = await openWith(
+    { fs: true },
+    u({
+      sessionUpdate: "user_message",
+      messageId: "u1",
+      content: [
+        { type: "text", text: "See @src/a.ts, @src/lib/, @Other and @../far/x.ts" },
+        link("src/a.ts", "file:///work/src/a.ts"),
+        link("src/lib", "file:///work/src/lib/"),
+        link("Other", "cycle://session/s2"),
+        link("../far/x.ts", "file:///far/x.ts"),
+      ],
+    }),
+    state({ state: "idle", stopReason: "end_turn" }),
+  );
+  const chips = await waitFor(() => {
+    const found = [...log.querySelectorAll('[data-slot="mention-chip"]')];
+    expect(found).toHaveLength(3);
+    return found;
+  });
+  expect(chips.map((c) => [c.getAttribute("data-kind"), c.textContent])).toEqual([
+    ["file", "src/a.ts"],
+    ["folder", "src/lib/"],
+    ["session", "Other"],
+  ]);
+  // Each has the icon of its kind, as the box's block has.
+  expect(chips.every((c) => c.querySelector("svg") !== null)).toBe(true);
+  expect(chips[0]?.closest('[data-slot="message"]')?.textContent).toContain("@../far/x.ts");
 });
 
 test("only a purpose sentence is a description: an MCP tool's description field is content, not the line", async () => {

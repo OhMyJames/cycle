@@ -15,9 +15,14 @@ import {
 } from "@lexical/markdown";
 import { HeadingNode, QuoteNode } from "@lexical/rich-text";
 import { $nodesOfType, createEditor, type LexicalEditor, TextNode } from "lexical";
+import { mentionText, wordAt } from "./draft.ts";
+import { $createMentionNode, MentionNode } from "./react/mention-node.tsx";
 
 /** What the document is made of. No links: a link is typed as text, and sent as text. */
-export const NODES = [HeadingNode, QuoteNode, ListNode, ListItemNode, CodeNode];
+export const NODES = [HeadingNode, QuoteNode, ListNode, ListItemNode, CodeNode, MentionNode];
+
+/** What the editor needs of a mention that the draft holds: the `@path` it reads back as a block. */
+export type MentionRef = { readonly path: string; readonly kind: "file" | "folder" | "session" };
 
 /** Lexical's own set, less the `_` forms of emphasis and less links. */
 export const TRANSFORMERS_FOR_COMPOSER: Transformer[] = TRANSFORMERS.filter((t) => {
@@ -56,12 +61,53 @@ export const decode = (text: string): string =>
   text.replace(DECODE, (m, escaped?: string) => escaped ?? BACK.get(m) ?? m);
 
 /** Replaces what the document holds with a Markdown text. Call it inside `editor.update`. */
-export const $setMarkdown = (text: string): void => {
+export const $setMarkdown = (text: string, mentions: readonly MentionRef[] = []): void => {
   $convertFromMarkdownString(encode(text), TRANSFORMERS_FOR_COMPOSER, undefined, true);
   // What the person sees, and what Lexical edits from here on, is the real text.
   for (const node of $nodesOfType(TextNode)) {
     const real = decode(node.getTextContent());
     if (real !== node.getTextContent()) node.setTextContent(real);
+  }
+  if (mentions.length > 0) $blockMentions(mentions);
+};
+
+/** The `@path` the draft knows as a mention, wherever the text says it as a whole word, becomes a block. */
+const $blockMentions = (mentions: readonly MentionRef[]): void => {
+  // The longest first, so that a title that starts another does not take part of it.
+  const words = mentions
+    .map((m) => ({
+      m,
+      said: mentionText({ path: m.path, kind: m.kind === "folder" ? "folder" : "file" }),
+    }))
+    .sort((a, b) => b.said.length - a.said.length);
+  for (const node of $nodesOfType(TextNode)) {
+    if (node.getType() !== "text") continue;
+    const text = node.getTextContent();
+    const found: { at: number; end: number; m: MentionRef }[] = [];
+    let from = 0;
+    while (from < text.length) {
+      let best: { at: number; end: number; m: MentionRef } | undefined;
+      for (const w of words) {
+        const at = wordAt(text, w.said, from);
+        if (at !== -1 && (best === undefined || at < best.at))
+          best = { at, end: at + w.said.length, m: w.m };
+      }
+      if (best === undefined) break;
+      found.push(best);
+      from = best.end;
+    }
+    if (found.length === 0) continue;
+    const cuts = [...new Set(found.flatMap((f) => [f.at, f.end]))].filter(
+      (c) => c > 0 && c < text.length,
+    );
+    const pieces = cuts.length === 0 ? [node] : node.splitText(...cuts);
+    let offset = 0;
+    for (const piece of pieces) {
+      const size = piece.getTextContentSize();
+      const hit = found.find((f) => f.at === offset && f.end === offset + size);
+      if (hit !== undefined) piece.replace($createMentionNode(hit.m.path, hit.m.kind));
+      offset += size;
+    }
   }
 };
 
@@ -97,10 +143,14 @@ export const markdownOf = (editor: LexicalEditor): string => {
 };
 
 /** Puts a Markdown text into an editor, as one step that is not part of what undo takes back. */
-export const setMarkdown = (editor: LexicalEditor, text: string): void => {
+export const setMarkdown = (
+  editor: LexicalEditor,
+  text: string,
+  mentions: readonly MentionRef[] = [],
+): void => {
   editor.update(
     () => {
-      $setMarkdown(text);
+      $setMarkdown(text, mentions);
     },
     { discrete: true, tag: "history-merge" },
   );
