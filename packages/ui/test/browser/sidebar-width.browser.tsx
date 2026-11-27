@@ -115,3 +115,22 @@ test("a page's sidebar folds with the shortcut and comes back from the title bar
   expect(sidebarWidth()).toBeGreaterThan(0);
   expect(screen.getByRole("tab", { name: "General" }).getAttribute("aria-selected")).toBe("true");
 });
+
+// Leaving a page while the sidebar is folded: the button that opened it is out of reach, so the keyboard goes to the
+// button that unfolds the sidebar, not to nowhere.
+test("leaving a page with the sidebar folded gives the keyboard to the button that shows it", async () => {
+  await page.viewport(1200, 800);
+  const script = fakeBridge({ connected: true });
+  await renderApp(script.bridge);
+  const user = userEvent.setup();
+  const mod = /Mac/.test(navigator.userAgent) ? "Meta" : "Control";
+  await screen.findByRole("button", { name: "Connectors" });
+  await user.keyboard(`{${mod}>},{/${mod}}`);
+  await screen.findByRole("heading", { name: "General", level: 2 });
+  await user.keyboard(`{${mod}>}b{/${mod}}`);
+  await settle();
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(document.activeElement?.closest('[data-kind="sidebar-toggle"]')).not.toBeNull(),
+  );
+});

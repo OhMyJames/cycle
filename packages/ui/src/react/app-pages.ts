@@ -130,8 +130,14 @@ export function usePlaces(appRef: RefObject<HTMLElement | null>) {
     go({ id: "loop", view: enter(last.current.loop) });
     store.track("panel_opened", { panel: "loop", via: "click" });
   };
-  // Moving inside the Loop: where it is now is where it comes back to.
-  const showLoopView = (view: LoopView) => go({ id: "loop", view });
+  // Moving inside the Loop: where it is now is where it comes back to. Under a page opened from it the Loop can still
+  // move by itself (it lands on the only Project's board once the Projects are read): that is remembered for the way
+  // back, and the page stays.
+  const showLoopView = (view: LoopView) => {
+    const now = placeRef.current;
+    if (isPage(now)) last.current.loop = view;
+    else go({ id: "loop", view });
+  };
   // Escape closes a ticket's drawer, back to its board. It goes no higher and does not leave the Loop: the sidebar's
   // Overview and Sessions do.
   const loopBack = () => {
@@ -164,14 +170,26 @@ export function usePlaces(appRef: RefObject<HTMLElement | null>) {
   if (shownLoop !== loopRequest?.n) {
     setShownLoop(loopRequest?.n);
     if (loopRequest !== undefined)
-      showLoopView({ at: "project", projectKey: loopRequest.projectKey, tab: "kanban" });
+      go({
+        id: "loop",
+        view: { at: "project", projectKey: loopRequest.projectKey, tab: "kanban" },
+      });
   }
   const pageOpen = isPage(place);
   useEffect(() => {
     const opener = returnFocus.current;
     if (pageOpen || opener === undefined) return;
     returnFocus.current = undefined;
-    appRef.current?.querySelector<HTMLElement>(opener)?.focus();
+    const root = appRef.current;
+    const button = root?.querySelector<HTMLElement>(opener);
+    // The button is in the sidebar: folded, it is out of reach, and the keyboard goes to the button that unfolds it.
+    const target =
+      button != null && button.closest("[inert]") === null
+        ? button
+        : root?.querySelector<HTMLElement>(
+            '[data-slot="main-header"] [data-kind="sidebar-toggle"]',
+          );
+    target?.focus();
   }, [pageOpen, appRef]);
 
   // The Loop stays as it was under a page opened from it: its board, scroll and drawer are there on the way back.

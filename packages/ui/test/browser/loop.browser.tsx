@@ -6,6 +6,7 @@ import type {
   LoopGraph,
   LoopGraphNode,
   LoopProjectInfo,
+  LoopProjectsAnswer,
   LoopTicket,
   LoopTicketDetail,
 } from "../../src/api.ts";
@@ -1179,6 +1180,52 @@ test("Settings opened from the Loop returns to the Loop", async () => {
   await user.keyboard("{Escape}");
   await screen.findByRole("region", { name: "Projects" });
   expect(screen.getByRole("button", { name: "Loop" }).getAttribute("aria-pressed")).toBe("true");
+});
+
+// The Loop stays under a page opened from it, and can still move by itself (it lands on the only Project's board once
+// the Projects are read): the page stays, and the way back finds the board.
+test("Settings opened over a Loop that is still landing stays open when the Projects arrive", async () => {
+  const fake = fakeBridge({ connected: true, loopBoards: { CYC: board } });
+  let answer: (value: LoopProjectsAnswer) => void = () => {};
+  fake.bridge.loopProjects = () =>
+    new Promise<LoopProjectsAnswer>((resolve) => {
+      answer = resolve;
+    });
+  await renderApp(fake.bridge);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  await openSettings(user);
+  await screen.findByRole("heading", { name: "General", level: 2 });
+  await act(async () => {
+    answer({ kind: "ok", projects: [cycle] });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  });
+  expect(screen.getByRole("heading", { name: "General", level: 2 })).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: /Back to Loop/ }));
+  await screen.findByRole("region", { name: "In Progress" });
+});
+
+// The board's Escape clears its picks only while the board is shown: over it, Escape is the page's.
+test("Escape leaves a page opened over a board with picks, and the picks stay", async () => {
+  const { user } = await mount({
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: { CYC: withTickets({ Backlog: [waiting(740, "high", "Why")] }) },
+  });
+  const backlog = await screen.findByRole("region", { name: "Backlog" });
+  await user.click(within(backlog).getByRole("checkbox", { name: "Select CYC-740" }));
+  await openSettings(user);
+  await screen.findByRole("heading", { name: "General", level: 2 });
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("heading", { name: "General", level: 2 })).toBeNull(),
+  );
+  expect(
+    (
+      within(screen.getByRole("region", { name: "Backlog" })).getByRole("checkbox", {
+        name: "Select CYC-740",
+      }) as HTMLInputElement
+    ).checked,
+  ).toBe(true);
 });
 
 test("a parent card folds a sub-ticket list; children keep their cards and name the parent", async () => {

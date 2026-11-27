@@ -41,6 +41,7 @@ import {
   TicketDrawer,
   TicketStage,
 } from "./loop-ticket.tsx";
+import { usePlaceActive } from "./shell.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
 import { Tip } from "./tip.tsx";
@@ -471,9 +472,11 @@ export function Board({
     store.takeLoopRequest(request.n);
   }, [request, projectKey, store, onOpen]);
 
-  // Escape clears batch selection before reaching LoopMain (when no ticket drawer is open).
+  // Escape clears batch selection before reaching LoopMain (when no ticket drawer is open). Not while a page opened from
+  // the Loop is over it: Escape is the page's then.
+  const active = usePlaceActive();
   useEffect(() => {
-    if (picked.size === 0 || openIdentifier !== undefined) return;
+    if (!active || picked.size === 0 || openIdentifier !== undefined) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented || isComposing(event)) return;
       if (document.querySelector('[role="alertdialog"], [role="dialog"]') !== null) return;
@@ -482,7 +485,7 @@ export function Board({
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [picked.size, openIdentifier]);
+  }, [active, picked.size, openIdentifier]);
 
   const act: Act = async (ticket, action, confirmed) => {
     const key = `${ticket.identifier}:${action}`;
