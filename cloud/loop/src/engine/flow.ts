@@ -89,6 +89,13 @@ export class NetworkWait extends Error {
   }
 }
 
+/** A turn that did not end by itself blocks the run: it timed out or stopped for another reason. */
+export const mustHaveEnded = (who: string, result: TurnResult): void => {
+  if (result.timedOut) throw new Blocked(`${who} 会话单回合超时被取消。`);
+  if (result.stopReason !== "end_turn")
+    throw new Blocked(`${who} 会话回合异常结束（${result.stopReason}）。`);
+};
+
 export type RunKind = RunRecord["kind"];
 export type Phase = RunRecord["phase"];
 export type Save = (patch: RunPatch) => Promise<void>;
@@ -229,6 +236,11 @@ export interface Flow {
    * leaves it where it is.
    */
   stillWanted(run: RunRecord): Promise<{ issue: Issue; byPerson: boolean } | undefined>;
+  /**
+   * Before each phase: is the work item still where a person left it for the loop (Todo or In Progress, with `auto`)?
+   * True, or the state type of the column it was moved to. A tracker out of reach throws `NetworkWait`.
+   */
+  stillMine(run: RunRecord): Promise<true | { stateType: string }>;
   /** On resume, a phase to go back to before going on (checks to run again), or undefined to go on where it is. */
   recheck(run: RunRecord, byPerson: boolean): Phase | undefined;
   /**

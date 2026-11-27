@@ -20,12 +20,14 @@ import {
   type Flow,
   type FlowHost,
   type Intake,
+  mustHaveEnded,
   NetworkWait,
   type Opening,
   type OwnRun,
   type RunKind,
   type StepResult,
 } from "./flow.ts";
+import { stopIfMoved, waitingForBlockers } from "./person.ts";
 import { Reconciler, writeIntent } from "./reconcile.ts";
 
 /** What the engine runs with beyond `Deps`: the flows and intakes, made with the host they may use. */
@@ -77,7 +79,7 @@ export class Engine {
       net: (key, command, fn, failure) => this.#net(key, command, fn, failure),
       netExec: (key, command, fn) => this.#netExec(key, command, fn),
       turn: (key, sessionId, prompt, context) => this.#turn(key, sessionId, prompt, context),
-      mustHaveEnded: (who, result) => this.#mustHaveEnded(who, result),
+      mustHaveEnded,
       snapshot: (worktree) => this.#snapshot(worktree),
       reconcile: this.#reconcile,
       clear: (run, issue) => this.#clear(run, issue),
@@ -201,6 +203,7 @@ export class Engine {
       if (!flow.enabled(config)) continue;
       const wanted = await flow.stillWanted(run);
       if (wanted === undefined) continue;
+      if (wanted.byPerson && (await waitingForBlockers(this.#d, run, wanted.issue))) continue;
       this.#active.add(run.key);
       return { key: run.key, resume: { run, issue: wanted.issue, byPerson: wanted.byPerson } };
     }
@@ -480,6 +483,10 @@ export class Engine {
       // A person put the run back: the flow's checks start from what they left, once.
       let rebase = byPerson;
       for (;;) {
+        if (await stopIfMoved(this.#d, flow, run, save)) {
+          await this.#clear(run, issue);
+          return { status: "idle" };
+        }
         if (flow.beforePhase !== undefined && run.phase !== "blocked" && run.phase !== "done") {
           const settled = await flow.beforePhase({ run, issue, book, announce, save, rebase });
           rebase = false;
@@ -495,6 +502,8 @@ export class Engine {
         const result = await phase.step({ run, issue, book, announce, save });
         if (result) return result;
         if (phase.announces === true) announce = false;
+        // Asked to stop: this phase is over, the next is not begun.
+        if (this.#d.stopped?.() === true) return { status: "idle" };
       }
     } catch (error) {
       if (error instanceof NetworkWait) {
@@ -531,12 +540,6 @@ export class Engine {
         );
       await store.event(key, "turn_resent", { role: context.role, resend: resend + 1 });
     }
-  }
-
-  #mustHaveEnded(who: string, result: TurnResult): void {
-    if (result.timedOut) throw new Blocked(`${who} 会话单回合超时被取消。`);
-    if (result.stopReason !== "end_turn")
-      throw new Blocked(`${who} 会话回合异常结束（${result.stopReason}）。`);
   }
 
   /** The commit and the changed files: two snapshots equal means nothing was written in between. */
