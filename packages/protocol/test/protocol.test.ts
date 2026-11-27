@@ -5,6 +5,7 @@ import {
   CycleErrorCode,
   checkPrompt,
   describePromptProblem,
+  LoopCardSchema,
   META,
   NOTIFICATIONS,
   normalizePrompt,
@@ -243,4 +244,24 @@ test("an adapter reads a prompt without the sizes the daemon holds it to, and an
     ok: false,
     problem: { reason: "unsupported_media_type", index: 1 },
   });
+});
+
+test("LoopCardSchema takes a parent object, null, or none", () => {
+  const card = {
+    key: "CYC-2",
+    title: "t",
+    type: null,
+    priority: null,
+    labels: [],
+    pendingReason: null,
+    phase: null,
+  };
+  expect(
+    LoopCardSchema.safeParse({ ...card, parent: { key: "CYC-1", title: "Epic" } }).success,
+  ).toBe(true);
+  expect(LoopCardSchema.safeParse({ ...card, parent: null }).success).toBe(true);
+  expect(LoopCardSchema.safeParse(card).success).toBe(true);
+  expect(LoopCardSchema.safeParse({ ...card, parent: { key: "", title: "x" } }).success).toBe(
+    false,
+  );
 });

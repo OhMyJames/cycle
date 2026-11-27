@@ -48,7 +48,7 @@ class FakeTracker implements ApiTracker {
   issues = new Map<number, Record<string, unknown>>();
   comments: { number: number; text: string }[] = [];
   writes: string[] = [];
-  seed(n: number, column: number, labelIds: number[], title = `ticket ${n}`) {
+  seed(n: number, column: number, labelIds: number[], title = `ticket ${n}`, parent?: string) {
     this.issues.set(n, {
       id: 100 + n,
       sequenceNumber: n,
@@ -57,6 +57,7 @@ class FakeTracker implements ApiTracker {
       labelIds,
       typeId: 20,
       priority: "high",
+      ...(parent ? { parentId: 101, parent: { id: 101, identifier: "CYC-1", title: parent } } : {}),
     });
   }
   #check() {
@@ -202,7 +203,7 @@ const call = (method: string, params?: unknown): Promise<Reply> =>
 describe("loop/ methods answer in their schemas", () => {
   test("projects, board, runs, run, notices, status", async () => {
     tracker.seed(1, 1, [12], "wait for approval");
-    tracker.seed(2, 3, [11], "in doing");
+    tracker.seed(2, 3, [11], "in doing", "the epic");
     tracker.seed(3, 4, [], "done one");
     await store.save(run("CYC-2", { phase: "qa", qaSessionId: "s-qa" }));
     await store.save(run("CYC-9", { phase: "done" }));
@@ -228,6 +229,8 @@ describe("loop/ methods answer in their schemas", () => {
       labels: ["待批准"],
       pendingReason: "拆分结果",
     });
+    expect(backlog?.parent).toBeNull();
+    expect(board.columns[2]?.cards[0]?.parent).toEqual({ key: "CYC-1", title: "the epic" });
     expect(board.columns[2]?.cards[0]?.phase).toEqual({
       name: "qa",
       since: "2026-11-26T10:00:00.000Z",
