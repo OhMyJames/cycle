@@ -1,16 +1,18 @@
-// The Loop page (CYC-386, CYC-387): the Projects the Loop server on this computer serves, and one Project's board. It
-// takes the window in place of the sessions, as Connectors does. The Projects are the page's sections: with the server
-// away they stay listed, greyed, and say so. The page only reads and shows what the Loop server answers (the board, the
+// The Loop mode (CYC-386, CYC-387, CYC-500): the Projects the Loop server on this computer serves, and one Project's board.
+// The sidebar keeps its frame and only its lower half becomes the Loop's navigation (`LoopNav`); the main area shows the
+// overview or the board (`LoopMain`). The Projects are listed in the navigation: with the server away they stay listed,
+// greyed, and say so. The page only reads and shows what the Loop server answers (the board, the
 // Notices) and asks it to approve or return a batch (`loop-board.tsx`, `loop-ticket.tsx`, `loop-notices.tsx`).
+import { isComposing } from "@ui-sdk/core";
 import { Button } from "@ui-sdk/react/button";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { LoopBoardColumn, LoopNotice, LoopProjectInfo, LoopRunsAnswer } from "../api.ts";
 import { useI18n } from "./i18n.tsx";
 import { ChevronRightIcon, RefreshIcon } from "./icons.tsx";
 import { Board } from "./loop-board.tsx";
 import { type LoopView, viewProject } from "./loop-nav.ts";
 import { Notices } from "./loop-notices.tsx";
-import { PageGroup, PageLayout, PageRows, type PageSection } from "./page-layout.tsx";
+import { PageGroup, PageRows } from "./page-layout.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
 
@@ -198,20 +200,70 @@ function RunState({ runs, projectKey }: { runs: LoopRunsAnswer | undefined; proj
   );
 }
 
-export function LoopPage({
+/** The sidebar's lower half in the Loop mode: the Overview, then every Project with its Kanban. */
+export function LoopNav({ view, onView }: { view: LoopView; onView: (view: LoopView) => void }) {
+  const { t } = useI18n();
+  const { projects, connected } = useAppState((s) => s.loop);
+  const away = connected === false;
+  const chosenKey = projects.find((p) => p.projectKey === viewProject(view))?.projectKey;
+  return (
+    <section data-slot="loop-nav" aria-label={t("loop.title")}>
+      <button
+        type="button"
+        data-slot="loop-nav-item"
+        data-kind="loop-nav-overview"
+        aria-current={chosenKey === undefined ? "page" : undefined}
+        onClick={() => onView({ at: "overview" })}
+      >
+        {t("loop.overview")}
+      </button>
+      {projects.length > 0 ? (
+        <div data-slot="loop-nav-group">
+          <div data-slot="loop-nav-heading">{t("loop.projects")}</div>
+          {projects.map((p) => (
+            <div key={p.projectKey} data-slot="loop-nav-project" data-project={p.projectKey}>
+              <span data-slot="loop-nav-name" title={p.name}>
+                {p.name}
+              </span>
+              <button
+                type="button"
+                data-slot="loop-nav-item"
+                data-kind="loop-nav-kanban"
+                data-child=""
+                aria-label={`${p.name} ${t("loop.tab.kanban")}`}
+                aria-current={chosenKey === p.projectKey ? "page" : undefined}
+                disabled={away}
+                onClick={() => onView({ at: "project", projectKey: p.projectKey, tab: "kanban" })}
+              >
+                <span>{t("loop.tab.kanban")}</span>
+                {away ? <span data-slot="loop-nav-note">{t("loop.offline.note")}</span> : null}
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+/** The main area in the Loop mode: the title bar, what is wrong, then the overview or one Project's board. */
+export function LoopMain({
   view,
   onView,
   onBack,
   onClose,
   banner,
+  sidebarToggle,
 }: {
   view: LoopView;
   onView: (view: LoopView) => void;
-  /** One level up; out of the Loop from the top. */
+  /** One level up (ticket → board → overview); nothing from the overview. */
   onBack: () => void;
-  /** Out of the Loop whatever the level: a conversation about a ticket was started. */
+  /** Out of the Loop: a conversation about a ticket was started. */
   onClose: () => void;
-  banner?: React.ReactNode;
+  banner?: ReactNode;
+  /** The button that shows the sidebar again, in the title bar, while it is put away. */
+  sidebarToggle?: ReactNode;
 }) {
   const { t } = useI18n();
   const store = useAppStore();
@@ -283,114 +335,114 @@ export function LoopPage({
     if (unknown || failed) store.takeLoopRequest(request.n);
   }, [store, request, requestedBoard, connected, projects]);
 
+  // Escape closes the ticket drawer (one level up). It does not leave the Loop mode: the sidebar's Sessions does. What is
+  // drawn over the page (a dialog, a menu) takes its own Escape first, and the board's batch selection before this.
+  const goBack = useRef(onBack);
+  goBack.current = onBack;
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented || isComposing(event)) return;
+      const target = event.target as Node | null;
+      const inMain = target instanceof Element && target.closest('[data-slot="main"]') !== null;
+      if (target !== null && target !== document.body && !inMain) return;
+      event.preventDefault();
+      goBack.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   const away = connected === false;
-  const overview: PageSection = {
-    id: "overview",
-    label: t("loop.overview"),
-    content:
-      projects.length === 0 ? (
-        connected === undefined ? (
-          <StateBlock tone="loading" title={t("loop.loading")} />
-        ) : away ? null : (
+  const heading =
+    chosen === undefined ? (
+      <h1 data-slot="loop-heading">{t("loop.overview")}</h1>
+    ) : (
+      <nav data-slot="loop-crumbs" aria-label={t("loop.crumbs")}>
+        <button
+          type="button"
+          data-slot="loop-crumb"
+          onClick={() =>
+            onView(
+              view.at === "ticket"
+                ? { at: "project", projectKey: chosen.projectKey, tab: "kanban" }
+                : { at: "overview" },
+            )
+          }
+        >
+          {chosen.name}
+        </button>
+        <span aria-hidden="true">/</span>
+        <span aria-current="page">
+          {view.at === "ticket" && view.projectKey === chosen.projectKey
+            ? view.identifier
+            : t("loop.tab.kanban")}
+        </span>
+      </nav>
+    );
+
+  return (
+    <>
+      <header data-slot="session-header" data-empty-header="" data-kind="loop-header">
+        {sidebarToggle}
+        {heading}
+      </header>
+      {banner}
+      {away ? (
+        <div data-slot="loop-offline-banner">
           <StateBlock
-            tone="empty"
-            title={t("loop.noProjects.title")}
-            body={t("loop.noProjects.body")}
-            action={{
-              label: t("loop.reload"),
-              onAction: () => void store.loadLoopProjects(),
-            }}
+            tone="away"
+            size="inline"
+            title={t("loop.offline.title")}
+            body={t("loop.offline.body")}
+            action={{ label: t("loop.reload"), onAction: () => void store.loadLoopProjects() }}
           />
-        )
-      ) : (
-        <Overview
-          projects={projects}
-          away={away}
-          onOpenProject={(key) => onView({ at: "project", projectKey: key, tab: "kanban" })}
-          onOpenTicket={(key, identifier) => onView({ at: "ticket", projectKey: key, identifier })}
-        />
-      ),
-  };
-  const sections: PageSection[] = [
-    overview,
-    ...projects.map(
-      (p): PageSection => ({
-        id: p.projectKey,
-        group: t("loop.projects"),
-        label: p.name,
-        note: away ? t("loop.offline.note") : p.projectKey,
-        disabled: away,
-        layout: "full",
-        heading: (
-          <nav data-slot="loop-crumbs" aria-label={t("loop.crumbs")}>
-            <button
-              type="button"
-              data-slot="loop-crumb"
-              onClick={() =>
-                onView(
-                  view.at === "ticket"
-                    ? { at: "project", projectKey: p.projectKey, tab: "kanban" }
-                    : { at: "overview" },
-                )
-              }
-            >
-              {p.name}
-            </button>
-            <span aria-hidden="true">/</span>
-            <span aria-current="page">
-              {view.at === "ticket" && view.projectKey === p.projectKey
-                ? view.identifier
-                : t("loop.tab.kanban")}
-            </span>
-          </nav>
-        ),
-        content: (
+        </div>
+      ) : null}
+      <div data-slot="page-body" data-full={chosen !== undefined ? "" : undefined}>
+        {chosen !== undefined ? (
           <Board
-            projectKey={p.projectKey}
-            answer={loop.boards[p.projectKey]}
+            projectKey={chosen.projectKey}
+            answer={loop.boards[chosen.projectKey]}
             openIdentifier={
-              view.at === "ticket" && view.projectKey === p.projectKey ? view.identifier : undefined
+              view.at === "ticket" && view.projectKey === chosen.projectKey
+                ? view.identifier
+                : undefined
             }
-            onOpen={(identifier) => onView({ at: "ticket", projectKey: p.projectKey, identifier })}
+            onOpen={(identifier) =>
+              onView({ at: "ticket", projectKey: chosen.projectKey, identifier })
+            }
             onBack={onBack}
             onChatStarted={onClose}
           />
-        ),
-      }),
-    ),
-  ];
-
-  return (
-    <PageLayout
-      title={t("loop.title")}
-      sectionsLabel={t("loop.sections")}
-      backLabel={t("settings.back")}
-      onBack={onBack}
-      banner={
-        <>
-          {banner}
-          {away ? (
-            <div data-slot="loop-offline-banner">
-              <StateBlock
-                tone="away"
-                size="inline"
-                title={t("loop.offline.title")}
-                body={t("loop.offline.body")}
-                action={{ label: t("loop.reload"), onAction: () => void store.loadLoopProjects() }}
+        ) : (
+          <div data-slot="page-column">
+            {projects.length === 0 ? (
+              connected === undefined ? (
+                <StateBlock tone="loading" title={t("loop.loading")} />
+              ) : away ? null : (
+                <StateBlock
+                  tone="empty"
+                  title={t("loop.noProjects.title")}
+                  body={t("loop.noProjects.body")}
+                  action={{
+                    label: t("loop.reload"),
+                    onAction: () => void store.loadLoopProjects(),
+                  }}
+                />
+              )
+            ) : (
+              <Overview
+                projects={projects}
+                away={away}
+                onOpenProject={(key) => onView({ at: "project", projectKey: key, tab: "kanban" })}
+                onOpenTicket={(key, identifier) =>
+                  onView({ at: "ticket", projectKey: key, identifier })
+                }
               />
-            </div>
-          ) : null}
-        </>
-      }
-      sections={sections}
-      value={chosenKey ?? "overview"}
-      onValueChange={(key) =>
-        onView(
-          key === "overview"
-            ? { at: "overview" }
-            : { at: "project", projectKey: key, tab: "kanban" },
-        )
-      }
-    />
+            )}
+          </div>
+        )}
+      </div>
+    </>
   );
 }

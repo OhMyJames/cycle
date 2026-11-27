@@ -542,6 +542,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "sessions.hideArchived": "隐藏已归档",
   "sidebar.newSession": "新建会话",
   "sidebar.newShort": "新建",
+  "sidebar.mode": "侧栏模式",
   "sidebar.searchShort": "搜索",
   "mark.needsYou": "需要你",
   "mark.running": "运行中",

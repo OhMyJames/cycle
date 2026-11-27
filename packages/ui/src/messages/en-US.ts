@@ -604,6 +604,7 @@ export const enUS = {
   "sidebar.newSession": "New session",
   // What the sidebar buttons show; their accessible names stay the full ones above
   "sidebar.newShort": "New",
+  "sidebar.mode": "Sidebar mode",
   "sidebar.searchShort": "Search",
   // What a row says of its session, in words (the dot is its colour and shape)
   "mark.needsYou": "Needs you",
@@ -645,7 +646,7 @@ export const enUS = {
   "loop.projects": "Projects",
   "loop.overview": "Overview",
   "loop.crumbs": "Where you are",
-  "loop.tab.kanban": "Board",
+  "loop.tab.kanban": "Kanban",
   "loop.col.doing": "Doing",
   "loop.col.todo": "Todo",
   "loop.col.backlog": "Backlog",

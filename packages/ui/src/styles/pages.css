@@ -2106,3 +2106,17 @@ html[data-platform="darwin"] [data-slot="loop-crumb"] {
     animation: none;
   }
 }
+
+/* The Loop's title bar in the main area: the overview's name, or the crumbs, beside the sidebar toggle when it is put away. */
+[data-slot="loop-heading"] {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-ui);
+  font-weight: 600;
+  letter-spacing: var(--cycle-tracking-display);
+  line-height: var(--cycle-leading-ui);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
