@@ -242,12 +242,13 @@ test("a stale move does not undo what the run has become", async () => {
       issue: target,
       kind: "move",
       dedupe: "stale2",
-      payload: { to: "blocked" },
+      payload: { to: "blocked", from: "inProgress" },
     });
   });
   await reconciler(s).flush();
   expect(s.tracker.moves).toEqual([]);
   // Two moves for one run: only the newer is made.
+  target.columnId = 23;
   s.store.transaction((tx) => {
     tx.save({ ...run, phase: "blocked" });
     writeIntent(tx, {
@@ -255,14 +256,14 @@ test("a stale move does not undo what the run has become", async () => {
       issue: target,
       kind: "move",
       dedupe: "m-old",
-      payload: { to: "inProgress" },
+      payload: { to: "inProgress", from: "todo" },
     });
     writeIntent(tx, {
       run: "CYC-1",
       issue: target,
       kind: "move",
       dedupe: "m-new",
-      payload: { to: "blocked" },
+      payload: { to: "blocked", from: "inProgress" },
     });
   });
   await reconciler(s).flush();
@@ -276,4 +277,73 @@ test("a phase write that always fails does not hold the Blocked comment and move
   expect(s.tracker.comments).toHaveLength(1);
   expect(s.tracker.issues[0]?.columnId).toBe(35);
   expect(pending(s.store).every((i) => i.kind === "phase")).toBe(true);
+});
+
+const events = (s: ReturnType<typeof setup>, kind: string) =>
+  s.store.transaction((tx) => tx.countEvents("CYC-1", kind));
+
+const moveIntent = (
+  s: ReturnType<typeof setup>,
+  payload: Record<string, unknown>,
+  dedupe = "mv",
+) => {
+  const target = s.tracker.issues[0] as ReturnType<typeof issue>;
+  s.store.transaction((tx) => {
+    writeIntent(tx, { run: "CYC-1", issue: target, kind: "move", dedupe, payload });
+  });
+};
+
+test("a move to Blocked that failed is dropped when a person has put the work item in Todo; the loop goes on", async () => {
+  const s = setup(undefined, { dev: Array.from({ length: 12 }, () => done()), qa: [] });
+  const move = s.tracker.move.bind(s.tracker);
+  let failing = true;
+  s.tracker.move = async (i, stage) => {
+    if (failing && stage === "blocked") throw new Error("tracker timeout");
+    return move(i, stage);
+  };
+  expect((await s.pipeline.step()).status).toBe("blocked");
+  expect(pending(s.store).map((i) => i.kind)).toEqual(["move"]);
+  failing = false;
+  const target = s.tracker.issues[0] as ReturnType<typeof issue>;
+  target.columnId = 22; // a person puts it back in Todo
+  await reconciler(s).flush();
+  expect(pending(s.store)).toEqual([]);
+  expect(events(s, "intent_overridden")).toBe(1);
+  expect(s.tracker.moves).not.toContain("CYC-1:blocked");
+  expect(s.tracker.issues[0]?.columnId).toBe(22);
+  // The loop then takes it as put back by a person: it resumes.
+  await s.pipeline.step();
+  expect(events(s, "resumed")).toBe(1);
+});
+
+test("a claim move is not made once a person has moved the work item; one still in Todo is moved", async () => {
+  const s = setup(undefined, { dev: [], qa: [] });
+  const target = s.tracker.issues[0] as ReturnType<typeof issue>;
+  target.columnId = 21; // Backlog
+  moveIntent(s, { to: "inProgress", from: "todo" });
+  await reconciler(s).flush();
+  expect(pending(s.store)).toEqual([]);
+  expect(s.tracker.moves).toEqual([]);
+  expect(events(s, "intent_overridden")).toBe(1);
+
+  target.columnId = 22;
+  moveIntent(s, { to: "inProgress", from: "todo" }, "mv2");
+  await reconciler(s).flush();
+  expect(s.tracker.moves).toEqual(["CYC-1:inProgress"]);
+});
+
+test("a rejected-preflight move, and one without `from`, is not made for a work item elsewhere", async () => {
+  const s = setup(undefined, { dev: [], qa: [] });
+  const target = s.tracker.issues[0] as ReturnType<typeof issue>;
+  target.columnId = 23;
+  moveIntent(s, { to: "blocked", from: "todo" });
+  moveIntent(s, { to: "blocked" }, "old");
+  await reconciler(s).flush();
+  expect(pending(s.store)).toEqual([]);
+  expect(s.tracker.moves).toEqual([]);
+  expect(events(s, "intent_overridden")).toBe(1);
+  target.columnId = 22;
+  moveIntent(s, { to: "blocked", from: "todo" }, "again");
+  await reconciler(s).flush();
+  expect(s.tracker.moves).toEqual(["CYC-1:blocked"]);
 });

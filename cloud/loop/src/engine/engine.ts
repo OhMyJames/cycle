@@ -270,7 +270,7 @@ export class Engine {
           issue,
           kind: "move",
           dedupe: `move:${issue.key}:claimed:${tx.countEvents(issue.key, "claimed") + 1}`,
-          payload: { to: "inProgress" },
+          payload: { to: "inProgress", from: "todo" },
         });
         tx.event(issue.key, "claimed", opening.claimed);
       });
@@ -418,7 +418,7 @@ export class Engine {
           issue,
           kind: "move",
           dedupe: `move:${run.key}:resumed:${tx.countEvents(run.key, "resumed") + 1}`,
-          payload: { to: "inProgress" },
+          payload: { to: "inProgress", from: "todo" },
         });
         tx.event(run.key, "resumed", { phase: saved.phase });
         return saved;
