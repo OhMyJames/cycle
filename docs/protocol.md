@@ -58,6 +58,7 @@ ACP 方法和类型已对照 `@agentclientprotocol/sdk` 2.7.0 的 v2 稳定版 J
   "storage": true,
   "agentPrewarm": true,
   "sessionMentions": true,
+  "search": true,
   "terminal": true
 }
 ```
@@ -90,6 +91,7 @@ ACP 方法和类型已对照 `@agentclientprotocol/sdk` 2.7.0 的 v2 稳定版 J
 | `_cycle/prompt/dequeue`      | 客户端 → daemon | daemon 处理:把排队的 prompt 撤回,见 §8                                                                        |
 | `_cycle/files/search`        | 客户端 → daemon | daemon 处理:在 session 的 `cwd` 里找文件,见 §8                                                                |
 | `_cycle/folders/list`        | 客户端 → daemon | daemon 处理:列出一个目录下的文件夹(选 `cwd` 用),见 §8                                                         |
+| `_cycle/search`              | 客户端 → daemon | daemon 处理:在本机存的会话对话内容里全文搜索,返回带片段的命中,见 §8 "搜索对话内容"                            |
 | `_cycle/fs/list`             | 客户端 → daemon | daemon 处理:列出 session 的 `cwd` 里一个文件夹,见 §8                                                          |
 | `_cycle/fs/read`             | 客户端 → daemon | daemon 处理:读 session 的 `cwd` 里一个文件,见 §8                                                              |
 | `_cycle/diff/status`         | 客户端 → daemon | daemon 处理:工作区相对 HEAD 改了哪些文件,见 §8                                                                |
@@ -589,6 +591,24 @@ agent 是 daemon 的子进程,daemon 停止(`cycle stop`、升级、崩溃、机
 - **和 `_cycle/files/search` 不同,它不限定在某个 `cwd` 之内**:选文件夹本来就要走遍整个文件系统。它给出的只有文件夹的名字,而且谁能连上 daemon,谁本来就能让 agent 在这台机器上执行命令;所以没有新增能被利用的东西。仍然只在 loopback、unix socket 或 SSH 通道上服务,不放宽。
 - **路径用 `/` 分隔**:v1 只支持 POSIX 的 daemon(Linux、macOS);客户端拼下一级时按这个来。
 - 能力 `folders` 为 `true` 才有这个方法。旧 daemon 没有:客户端不提供浏览,用户自己输入路径。
+
+### 搜索对话内容(`_cycle/search`,CYC-342)
+
+⌘K 原本只搜元数据(标题、文件夹、agent、主机)。对话内容的全文在**存历史的 daemon 里**搜,不把整份历史拉到客户端;跨主机的合并和展示由客户端做,不在 L1 里。
+
+`_cycle/search`(客户端 → daemon),参数 `{query, limit?}`,响应 `{hits: [{sessionId, seq, from, snippet}], truncated}`:
+
+- `query`:1 到 200 个字符。一条消息要**含 `query` 里全部的词**(不分大小写)才算命中。词是字母和数字连成的一段,标点和空白只用来分词、本身不参与匹配(`hello, world` 和 `hello world` 一样),按整词匹配;中日韩文字按字符匹配,所以 `登录` 能搜到"登录失败"。没有可搜的词(只有空白或标点)的 `query` 返回空结果,不报错。
+- **一条消息**:人发的一条 `user_message`,或 agent 的一条回复。流式回复的多个 `agent_message_chunk`(同一个 `messageId`、前后相接)合成一条回复来搜,词和短语可以跨块;命中的 `seq` 是这条回复**第一块**的序号。一条消息只索引前 100,000 个字符。
+- `limit`:1 到 50,缺省 20。多于 `limit` 条命中时只给 `limit` 条,并带 `truncated: true`。
+- 搜的是人说的话(`user_message`)和 agent 的回复(`agent_message_chunk`);不搜思考、工具调用及其输出、计划。人的消息里只有文字块被搜:图片、附件、`@` 提及的 session 或文件不进索引。
+- 每条命中:`sessionId`;`seq` 是命中那条记录在该 session 历史里的序号,和 `session/update` 的 `_meta["_cycle.seq"]` 同一个序号,客户端用它定位对话位置;`from` 是 `user` 或 `agent`;`snippet` 是含命中词的一段原文(非空,最长约 160 个字符,被截断的一端以 `…` 标出)。
+- 顺序:session 按创建时间新的在前,同一个 session 里序号大的在前。
+- 没有命中,或还没有任何 session,返回 `{hits: [], truncated: false}`。
+- **增量索引**:daemon 在 session 的 JSONL 上建索引,只在内存里,记着每个 session 已处理到的字节位置;每次搜索只读各历史文件**新增**的部分,不重读旧内容。文件变短,或最后一个已索引的行不在原处(压缩改写过)的 session 重建它自己的那一份;读不了的 session 文件这一次跳过,不影响别的 session;已删除的 session 从索引里去掉。索引只存词到序号的对应,不存正文,命中的片段在搜索时分块地从历史里读。第一次搜索要先把所有 session 建进索引。内存和磁盘的量化上限等 CYC-107 的规模基线后再校准。
+- 不依赖 session 是否已加载,也不改变任何 session 的状态。
+- 能力 `search` 为 `true` 才有这个方法;旧 daemon 没有,客户端跳过对它的搜索,只搜元数据。
+- 埋点不在 daemon 里,由前端入口统一上报(只报次数和结果数,不报查询词)。
 
 ### 信任文件夹
 
