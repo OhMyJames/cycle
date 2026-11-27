@@ -30,7 +30,7 @@ import { findSecrets } from "../../secrets.ts";
 import { type ResearchState, type RunRecord, researchOf } from "../../store.ts";
 import { type Config, type Issue, SessionLost, type TurnResult } from "../../types.ts";
 import { judge, newQaSession, nextRound } from "../dev/qa.ts";
-import { blockTicket, ticketStillWanted } from "../ticket.ts";
+import { blockTicket, ticketStillMine, ticketStillWanted } from "../ticket.ts";
 import { checkResearch, parseResearch, replaceConclusion } from "./output.ts";
 
 export class ResearchFlow implements Flow {
@@ -111,6 +111,10 @@ export class ResearchFlow implements Flow {
 
   stillWanted(run: RunRecord) {
     return ticketStillWanted(this.#host, run);
+  }
+
+  stillMine(run: RunRecord) {
+    return ticketStillMine(this.#host, run);
   }
 
   /** A person's put-back changes nothing of its own: the record says how far publishing got. */
