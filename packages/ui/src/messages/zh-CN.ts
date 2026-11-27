@@ -1151,6 +1151,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "settings.open": "设置",
   "settings.title": "设置",
   "settings.back": "返回会话",
+  "settings.backToLoop": "返回 Loop",
   "settings.sections": "设置分区",
   "settings.section.general": "通用",
   "settings.section.appearance": "外观",

@@ -1,6 +1,7 @@
-// A page that takes the whole window in place of the sessions (CYCL-78): Settings (settings.tsx) and Connectors (connectors.tsx, CYCL-82).
-// It keeps the sessions' frame (CYCL-219): on the left, in the sidebar's place and as wide, the way back and the page's
-// sections; on the right the chosen section's name in the title bar, and the section under it.
+// A page over the sessions (CYCL-78): Settings (settings.tsx) and Connectors (connectors.tsx, CYCL-82). It is a place of
+// the shell (shell.tsx, CYC-530): in the sidebar, under its top row, the way back and the page's sections; in the title
+// bar the chosen section's name; under it the section. The sidebar is the window's own, so it keeps its width and
+// folds as it does over the sessions.
 // The sections are the SDK's tabs, set upright: the arrows move and select, Home and End, and only the chosen
 // section is in the page. Escape goes back, unless something opened over the page (a dialog, a menu) is what it closes.
 import { isComposing } from "@ui-sdk/core";
@@ -8,6 +9,7 @@ import { Button } from "@ui-sdk/react/button";
 import { Tabs, TabsList, TabsPanel, TabsTab } from "@ui-sdk/react/tabs";
 import { Fragment, type ReactNode, useEffect, useId, useRef } from "react";
 import { ChevronLeftIcon } from "./icons.tsx";
+import { ShellSidebar, ShellTitle } from "./shell.tsx";
 import { StateBlock } from "./state-block.tsx";
 
 /** The key that goes back, as it is printed on the keyboard: a name, not a word to translate. */
@@ -25,9 +27,9 @@ export type PageSection = {
   disabled?: boolean;
   /** A word kept at the end of the section's row (what a disabled section is waiting for). */
   note?: string;
-  /** Optional custom heading content in the right pane; defaults to `label`. */
+  /** Optional custom heading content in the title bar; defaults to `label`. */
   heading?: ReactNode;
-  /** `"full"` fills the content pane edge-to-edge without the centered reading column (used by the Loop board). */
+  /** `"full"` fills the content pane edge-to-edge without the centered reading column. */
   layout?: "column" | "full";
   content: ReactNode;
 };
@@ -37,7 +39,6 @@ export function PageLayout({
   sectionsLabel,
   backLabel,
   onBack,
-  banner,
   sections,
   value,
   onValueChange,
@@ -47,31 +48,34 @@ export function PageLayout({
   sectionsLabel: string;
   backLabel: string;
   onBack: () => void;
-  /** Said above the section, whichever is shown: what went wrong. */
-  banner?: ReactNode;
   sections: readonly PageSection[];
   value: string;
   onValueChange: (id: string) => void;
 }) {
-  const rootRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const back = useRef(onBack);
   back.current = onBack;
 
-  // The page opens with the keyboard on its sections: the arrows walk them at once.
+  // The page opens with the keyboard on its sections: the arrows walk them at once. Not while the sidebar is folded:
+  // its rows are out of reach then.
   useEffect(() => {
-    rootRef.current?.querySelector<HTMLElement>('[data-slot="tabs-tab"][data-selected]')?.focus();
+    const tab = listRef.current?.querySelector<HTMLElement>(
+      '[data-slot="tabs-tab"][data-selected]',
+    );
+    if (tab != null && tab.closest("[inert]") === null) tab.focus();
   }, []);
 
-  // On the window, not the page: Escape also goes back when nothing in the page has the focus. What is opened over the
-  // page is drawn outside it, so an Escape from there is that thing's own.
+  // On the window, not the page: Escape also goes back when nothing in the window has the focus. What is opened over
+  // the page is drawn outside the sidebar and the main area, so an Escape from there is that thing's own.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       // An Escape that cancels an input method's text is that text's own, not the page's.
       if (event.key !== "Escape" || event.defaultPrevented || isComposing(event)) return;
       const target = event.target as Node | null;
-      const root = rootRef.current;
-      if (root === null) return;
-      if (target !== null && target !== document.body && !root.contains(target)) return;
+      const inFrame =
+        target instanceof Element &&
+        target.closest('[data-slot="main"], [data-slot="sidebar"]') !== null;
+      if (target !== null && target !== document.body && !inFrame) return;
       event.preventDefault();
       back.current();
     };
@@ -84,26 +88,25 @@ export function PageLayout({
   const groupIdOf = (group: string) => `${groupIdPrefix}-${group.replace(/\s+/g, "-")}`;
 
   return (
-    <div data-slot="page" ref={rootRef}>
-      <Tabs
-        data-kind="page"
-        orientation="vertical"
-        value={value}
-        onValueChange={(next) => {
-          if (typeof next === "string") onValueChange(next);
-        }}
-      >
-        <nav data-slot="page-nav" aria-label={title}>
-          <div data-slot="titlebar" aria-hidden="true" />
-          <div data-slot="sidebar-actions">
-            <Button data-variant="ghost" data-kind="sidebar-action" onClick={onBack}>
-              <ChevronLeftIcon />
-              {backLabel}
-              <kbd>{ESCAPE_KEY}</kbd>
-            </Button>
-          </div>
-          <h1 data-slot="page-title">{title}</h1>
-          <TabsList aria-label={sectionsLabel}>
+    <Tabs
+      data-kind="page"
+      orientation="vertical"
+      value={value}
+      onValueChange={(next) => {
+        if (typeof next === "string") onValueChange(next);
+      }}
+    >
+      <ShellSidebar>
+        <div data-slot="sidebar-actions">
+          <Button data-variant="ghost" data-kind="sidebar-action" onClick={onBack}>
+            <ChevronLeftIcon />
+            {backLabel}
+            <kbd>{ESCAPE_KEY}</kbd>
+          </Button>
+        </div>
+        <h1 data-slot="page-title">{title}</h1>
+        <div data-slot="sidebar-scroll" data-mode="page">
+          <TabsList ref={listRef} data-kind="page-nav" aria-label={sectionsLabel}>
             {sections.map((section, index) => {
               const prevGroup = index > 0 ? sections[index - 1]?.group : undefined;
               const showGroup = section.group !== undefined && section.group !== prevGroup;
@@ -136,34 +139,30 @@ export function PageLayout({
               );
             })}
           </TabsList>
-        </nav>
-        {/* The conversation's place: the title bar with the section's name, what is wrong under it, then the section,
-            which alone scrolls. */}
-        <div data-slot="page-main">
-          <header data-slot="page-header">
-            <h2 data-slot="page-heading">{shown?.heading ?? shown?.label}</h2>
-          </header>
-          {banner}
-          <div data-slot="page-body" data-full={shown?.layout === "full" ? "" : undefined}>
-            {sections
-              .filter((section) => section.disabled !== true)
-              .map((section) => (
-                <TabsPanel
-                  key={section.id}
-                  value={section.id}
-                  data-layout={section.layout === "full" ? "full" : undefined}
-                >
-                  {section.layout === "full" ? (
-                    section.content
-                  ) : (
-                    <div data-slot="page-column">{section.content}</div>
-                  )}
-                </TabsPanel>
-              ))}
-          </div>
         </div>
-      </Tabs>
-    </div>
+      </ShellSidebar>
+      <ShellTitle>
+        <h2 data-slot="page-heading">{shown?.heading ?? shown?.label}</h2>
+      </ShellTitle>
+      {/* Only the section scrolls. */}
+      <div data-slot="page-body" data-full={shown?.layout === "full" ? "" : undefined}>
+        {sections
+          .filter((section) => section.disabled !== true)
+          .map((section) => (
+            <TabsPanel
+              key={section.id}
+              value={section.id}
+              data-layout={section.layout === "full" ? "full" : undefined}
+            >
+              {section.layout === "full" ? (
+                section.content
+              ) : (
+                <div data-slot="page-column">{section.content}</div>
+              )}
+            </TabsPanel>
+          ))}
+      </div>
+    </Tabs>
   );
 }
 

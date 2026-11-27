@@ -93,8 +93,8 @@ export type ConnectorsPageProps = {
   section: ConnectorsSection;
   onSection: (section: ConnectorsSection) => void;
   onClose: () => void;
-  /** What went wrong, said at the top of the page as it is at the top of the sessions. */
-  banner?: ReactNode;
+  /** What the way back says: where it goes (the sessions, or the Loop). */
+  backLabel: string;
   locations: LocationConfig[];
   status: Record<string, LocationStatus>;
   /** The location to show first, when it is one the page can manage: the one that is open. */
@@ -115,9 +115,8 @@ export function ConnectorsPage(props: ConnectorsPageProps) {
     <PageLayout
       title={t("connectors.title")}
       sectionsLabel={t("connectors.sections")}
-      backLabel={t("settings.back")}
+      backLabel={props.backLabel}
       onBack={props.onClose}
-      banner={props.banner}
       value={props.section}
       onValueChange={(id) => {
         if ((CONNECTORS_SECTIONS as readonly string[]).includes(id))

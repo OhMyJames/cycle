@@ -13,7 +13,7 @@ import { useSessionPanel, useSidebarFold } from "./app-layout.ts";
 import { NoSession, PendingRequest } from "./app-main.tsx";
 import { useMarkRead, useSessionNavigation, useWorkspaceTrust } from "./app-navigation.ts";
 import { AppNotices } from "./app-notices.tsx";
-import { usePages } from "./app-pages.ts";
+import { usePlaces } from "./app-pages.ts";
 import { useAppShortcuts } from "./app-shortcuts.ts";
 import { BlankConversationView } from "./blank.tsx";
 import { Composer } from "./composer.tsx";
@@ -30,8 +30,9 @@ import { SearchDialog } from "./search.tsx";
 import { SessionHeader } from "./session-header.tsx";
 import { SessionSettings } from "./session-settings.tsx";
 import { SettingsPage } from "./settings.tsx";
+import { AppShell, Place, ShellNotices, ShellSidebar } from "./shell.tsx";
 import { SidePanel } from "./side-panel.tsx";
-import { Sidebar } from "./sidebar.tsx";
+import { SessionsNav, SidebarActions } from "./sidebar.tsx";
 import { SplitLayout } from "./split-layout.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
@@ -161,7 +162,8 @@ function AppWindow() {
     selectedLocation !== undefined ? status[selectedLocation]?.state : undefined;
   const connected = locationState === "connected";
 
-  const pages = usePages(appRef);
+  const places = usePlaces(appRef);
+  const { place } = places;
   const loopNoticeCount = useAppState((s) =>
     s.loop.projects.reduce((sum, p) => {
       const answer = s.loop.notices[p.projectKey];
@@ -180,7 +182,7 @@ function AppWindow() {
     pinned,
   });
   const trust = useWorkspaceTrust(nav.current, status, panel !== "none");
-  useMarkRead(session, status, pages.loop === undefined);
+  useMarkRead(session, status, places.base === "sessions");
 
   const close = () => setPanel("none");
   // Opens a panel, and counts that it was opened (which one, and whether by a key).
@@ -213,7 +215,7 @@ function AppWindow() {
    * shown, else on the location that is open, else on the first that is connected.
    */
   const newSession = (via: "click" | "shortcut" = "click") => {
-    pages.closePage();
+    places.closePage();
     // One is open already: it stays as it is, with what was chosen and written on it.
     if (blank !== undefined) return store.openBlank({ locationId: blank.locationId });
     const { startOn } = nav;
@@ -239,10 +241,9 @@ function AppWindow() {
 
   useAppShortcuts({
     dialogOpen: panel !== "none",
-    pageOpen: pages.pageOpen,
-    loopOpen: pages.loop !== undefined,
+    elsewhere: place.id !== "sessions",
     toggleSettings: () =>
-      pages.settings === undefined ? pages.openSettings("shortcut") : pages.leaveSettings(),
+      place.id === "settings" ? places.leavePage() : places.openSettings("shortcut"),
     search: () => open("search", "shortcut"),
     newSession: connectedLocations.length > 0 ? () => newSession("shortcut") : undefined,
     toggleSidebar: () => toggleSidebar("shortcut"),
@@ -296,87 +297,83 @@ function AppWindow() {
       </div>
     ) : null;
 
-  // Under the title bar of what is shown: what is the matter with it. The pages over it say their errors themselves.
-  const notices = (
-    <>
-      {/* With the sidebar put away, what concerns the whole app comes first under the title bar. */}
-      {sidebarCollapsed && pages.loop === undefined ? <AppNotices at="top" /> : null}
-      <SessionNotices
-        locationId={selectedLocation}
-        shows={blank !== undefined ? "blank" : view !== undefined ? "session" : "nothing"}
-        errors={!pages.pageOpen && pages.loop === undefined}
-      />
-    </>
+  const sidebarLabel = t(
+    place.id === "loop"
+      ? "loop.title"
+      : place.id === "settings"
+        ? "settings.title"
+        : place.id === "connectors"
+          ? "connectors.title"
+          : "sessions.label",
   );
+  // The way back from a page says where it goes.
+  const backLabel = t(places.base === "loop" ? "settings.backToLoop" : "settings.back");
+  // The sidebar's actions: the same in the sessions and in the Loop, with the mode that is shown.
+  const sidebarActions = (mode: "sessions" | "loop") => (
+    <SidebarActions
+      locations={locations}
+      status={status}
+      onNewSession={() => newSession()}
+      onSearch={() => open("search")}
+      onConnectors={places.openConnectors}
+      onLoop={places.openLoop}
+      onSessions={() => {
+        if (place.id !== "loop") return;
+        store.track("sessions_mode_shown", {});
+        places.leaveLoop();
+      }}
+      mode={mode}
+      loopNoticeCount={loopNoticeCount}
+    />
+  );
+  const { loopView } = places;
 
   return (
     <div data-slot="app" ref={appRef}>
-      {pages.settings !== undefined ? (
-        <SettingsPage
-          section={pages.settings}
-          onSection={pages.showSection}
-          harnessAgent={pages.harnessAgent}
-          harnessFrom={pages.harnessFrom}
-          onHarnessAgent={pages.showHarnessAgent}
-          onClose={pages.leaveSettings}
-          banner={errorBanner}
-          locations={locations}
-          status={status}
-          agents={agentsByLocation}
-          locationId={pages.harnessLocation ?? selectedLocation}
-          onAddLocation={() => {
-            setTargetLocation(undefined);
-            open("add-location");
-          }}
-          onEditLocation={(id) => {
-            setTargetLocation(id);
-            open("edit-location");
-          }}
-          onRemoveLocation={(id) => {
-            setTargetLocation(id);
-            open("remove-location");
-          }}
-        />
-      ) : null}
-      {pages.connectors !== undefined ? (
-        <ConnectorsPage
-          section={pages.connectors}
-          onSection={pages.showConnectorsSection}
-          onClose={pages.leaveConnectors}
-          banner={errorBanner}
-          locations={locations}
-          status={status}
-          locationId={selectedLocation}
-          onShowLocations={() => pages.openSettings("click", "locations")}
-        />
-      ) : null}
-      {/* Under a page the sessions are kept as they are, not drawn again: what was open and half-written is there on the way back. */}
-      <div data-slot="app-body" hidden={pages.pageOpen} inert={pages.pageOpen}>
-        <SplitLayout
-          controller={layout}
-          panelOf={panelKey}
-          onSidebarWidth={(width) =>
-            appRef.current?.style.setProperty("--cycle-sidebar-width", `${width}px`)
-          }
-          panelHidden={pages.loop !== undefined}
-          panel={
-            panelKey !== undefined && sidePanel?.open === true
-              ? {
-                  content: (
-                    <SidePanel
-                      locationId={session?.locationId ?? ""}
-                      sessionId={session?.sessionId ?? ""}
-                      state={sidePanel}
-                      onShow={sessionPanel.showTab}
-                    />
-                  ),
-                  onClose: () => sessionPanel.toggleSidePanel("handle"),
-                }
-              : undefined
-          }
-          sidebar={
-            <Sidebar
-              toggle={sidebarCollapsed ? undefined : sidebarToggle}
+      <AppShell
+        layout={({ sidebar, main }) => (
+          <SplitLayout
+            controller={layout}
+            panelOf={panelKey}
+            onSidebarWidth={(width) =>
+              appRef.current?.style.setProperty("--cycle-sidebar-width", `${width}px`)
+            }
+            panelHidden={place.id !== "sessions"}
+            panel={
+              panelKey !== undefined && sidePanel?.open === true
+                ? {
+                    content: (
+                      <SidePanel
+                        locationId={session?.locationId ?? ""}
+                        sessionId={session?.sessionId ?? ""}
+                        state={sidePanel}
+                        onShow={sessionPanel.showTab}
+                      />
+                    ),
+                    onClose: () => sessionPanel.toggleSidePanel("handle"),
+                  }
+                : undefined
+            }
+            sidebar={sidebar}
+            main={main}
+          />
+        )}
+        sidebarLabel={sidebarLabel}
+        sidebarCollapsed={sidebarCollapsed}
+        toggle={sidebarToggle}
+        sidebarActions={
+          place.id === "sessions" || place.id === "loop" ? sidebarActions(place.id) : null
+        }
+        sidebarNotices={<AppNotices />}
+        topNotices={<AppNotices at="top" />}
+        // The sessions say what failed in their own notices, with what is the matter with the open one.
+        banner={place.id === "sessions" ? null : errorBanner}
+        footer={<AccountMenu onSettings={() => places.openSettings()} />}
+      >
+        {/* Always here, under whatever else is shown: what was open and half-written is there on the way back. */}
+        <Place id="sessions" active={place.id === "sessions"}>
+          <ShellSidebar>
+            <SessionsNav
               locations={locations}
               status={status}
               workspaces={nav.workspaces}
@@ -412,22 +409,6 @@ function AppWindow() {
                     action satisfies never;
                 }
               }}
-              onNewSession={() => newSession()}
-              onSearch={() => open("search")}
-              onConnectors={pages.openConnectors}
-              onLoop={pages.openLoop}
-              onSessions={() => {
-                if (pages.loop === undefined) return;
-                store.track("sessions_mode_shown", {});
-                pages.leaveLoop();
-              }}
-              mode={pages.loop !== undefined ? "loop" : "sessions"}
-              loopNoticeCount={loopNoticeCount}
-              loopNav={
-                pages.loop !== undefined ? (
-                  <LoopNav view={pages.loop} onView={pages.showLoopView} />
-                ) : undefined
-              }
               onConnectLocation={(id) => void store.connectLocation(id)}
               onToggleArchived={() => nav.setShowArchived((v) => !v)}
               onShowAll={nav.showAllSessions}
@@ -436,126 +417,150 @@ function AppWindow() {
                 if (trusted) open("trust");
                 else void trust.changeTrust(false);
               }}
-              notices={sidebarCollapsed ? null : <AppNotices />}
-            >
-              <AccountMenu onSettings={() => pages.openSettings()} />
-            </Sidebar>
-          }
-          main={
-            <main data-slot="main">
-              {pages.loop !== undefined ? (
-                <LoopMain
-                  view={pages.loop}
-                  onView={pages.showLoopView}
-                  onBack={pages.loopBack}
-                  onClose={pages.leaveLoop}
-                  banner={
-                    <>
-                      {sidebarCollapsed ? <AppNotices at="top" /> : null}
-                      {errorBanner}
-                    </>
-                  }
-                  sidebarToggle={sidebarCollapsed ? sidebarToggle : undefined}
-                  active={!pages.pageOpen}
-                />
-              ) : null}
-              {/* Under the Loop the sessions are kept as they are, not drawn again: scroll and what was half-written stay. */}
-              <div
-                data-slot="session-body"
-                hidden={pages.loop !== undefined}
-                inert={pages.loop !== undefined}
-              >
-                {blank !== undefined ? (
-                  <BlankConversationView
-                    blank={blank}
-                    notices={notices}
-                    locations={connectedLocations}
-                    recent={nav.blankRecent}
-                    connected={connected}
-                    follow={sent}
-                    sidebarToggle={sidebarCollapsed ? sidebarToggle : undefined}
-                    onSent={() => setSent((n) => n + 1)}
-                    onOpenHarnessSettings={pages.openHarnessSettings}
-                  />
-                ) : null}
-                {blank === undefined && session !== undefined ? (
-                  <SessionHeader
-                    session={session}
-                    sidebarToggle={sidebarCollapsed ? sidebarToggle : null}
-                    renaming={renaming === sessionKey(session)}
-                    onRenaming={(editing) => setRenaming(editing ? sessionKey(session) : undefined)}
-                    pinned={pinned.has(sessionKey(session))}
-                    onPin={(on) => pin(session, on, "header")}
-                    onSettings={() => open("settings")}
-                    onDelete={() => askDelete(session)}
-                    panel={sessionPanel}
-                  />
-                ) : null}
-                {blank === undefined && session === undefined && sidebarCollapsed ? (
-                  <header data-slot="session-header" data-empty-header="">
-                    {sidebarToggle}
-                  </header>
-                ) : null}
-                {/* Under whichever title bar is drawn; the blank page draws its own, with these under it. */}
-                {blank === undefined ? notices : null}
-                {blank === undefined ? <WorktreeSetupNotice worktree={session?.worktree} /> : null}
-                {blank !== undefined ? null : view !== undefined ? (
-                  <ConversationView
-                    key={viewKey(view.locationId, view.sessionId)}
-                    sessionKey={viewKey(view.locationId, view.sessionId)}
-                    follow={sent}
-                    conversation={view.conversation}
-                    loading={view.loading}
-                    awaitingApproval={activity === "requires_action"}
-                  />
-                ) : (
-                  <NoSession
-                    locationId={selectedLocation}
-                    state={locationState}
-                    error={
-                      selectedLocation !== undefined ? status[selectedLocation]?.error : undefined
-                    }
-                    incompatible={
-                      selectedLocation !== undefined &&
-                      status[selectedLocation]?.incompatible !== undefined
-                    }
-                    onNewSession={connectedLocations.length > 0 ? () => newSession() : undefined}
-                  />
-                )}
-                <PendingRequest
-                  permissions={view?.permissions ?? []}
-                  conversation={conversation}
-                  connected={connected}
-                />
-                {view !== undefined ? (
-                  <Composer
-                    key={`composer:${viewKey(view.locationId, view.sessionId)}`}
-                    locationId={view.locationId}
-                    sessionId={view.sessionId}
-                    sessionKey={viewKey(view.locationId, view.sessionId)}
-                    canAttach={agent?.promptCapabilities?.image != null}
-                    canAttachFiles={agent?.promptCapabilities?.embeddedContext != null}
-                    settings={
-                      sessionSchema !== undefined && session !== undefined
-                        ? { schema: sessionSchema, value: session.config ?? {}, live: true }
-                        : undefined
-                    }
-                    onSetting={(key, value) => store.setSessionConfig(key, value)}
-                    canSteer={agent?.steer === true}
-                    enabled={!view.loading}
-                    connected={connected}
-                    activity={activity}
-                    plan={plan}
-                    context={context}
-                    planUsage={planUsage}
-                    onSent={() => setSent((n) => n + 1)}
-                  />
-                ) : null}
+            />
+          </ShellSidebar>
+          <ShellNotices>
+            <SessionNotices
+              locationId={selectedLocation}
+              shows={blank !== undefined ? "blank" : view !== undefined ? "session" : "nothing"}
+            />
+            {blank === undefined ? <WorktreeSetupNotice worktree={session?.worktree} /> : null}
+          </ShellNotices>
+          {blank !== undefined ? (
+            <BlankConversationView
+              blank={blank}
+              locations={connectedLocations}
+              recent={nav.blankRecent}
+              connected={connected}
+              follow={sent}
+              onSent={() => setSent((n) => n + 1)}
+              onOpenHarnessSettings={places.openHarnessSettings}
+            />
+          ) : null}
+          {blank === undefined && session !== undefined ? (
+            <SessionHeader
+              session={session}
+              renaming={renaming === sessionKey(session)}
+              onRenaming={(editing) => setRenaming(editing ? sessionKey(session) : undefined)}
+              pinned={pinned.has(sessionKey(session))}
+              onPin={(on) => pin(session, on, "header")}
+              onSettings={() => open("settings")}
+              onDelete={() => askDelete(session)}
+              panel={sessionPanel}
+            />
+          ) : null}
+          {blank !== undefined ? null : view !== undefined ? (
+            <ConversationView
+              key={viewKey(view.locationId, view.sessionId)}
+              sessionKey={viewKey(view.locationId, view.sessionId)}
+              follow={sent}
+              conversation={view.conversation}
+              loading={view.loading}
+              awaitingApproval={activity === "requires_action"}
+            />
+          ) : (
+            <NoSession
+              locationId={selectedLocation}
+              state={locationState}
+              error={selectedLocation !== undefined ? status[selectedLocation]?.error : undefined}
+              incompatible={
+                selectedLocation !== undefined &&
+                status[selectedLocation]?.incompatible !== undefined
+              }
+              onNewSession={connectedLocations.length > 0 ? () => newSession() : undefined}
+            />
+          )}
+          <PendingRequest
+            permissions={view?.permissions ?? []}
+            conversation={conversation}
+            connected={connected}
+          />
+          {view !== undefined ? (
+            <Composer
+              key={`composer:${viewKey(view.locationId, view.sessionId)}`}
+              locationId={view.locationId}
+              sessionId={view.sessionId}
+              sessionKey={viewKey(view.locationId, view.sessionId)}
+              canAttach={agent?.promptCapabilities?.image != null}
+              canAttachFiles={agent?.promptCapabilities?.embeddedContext != null}
+              settings={
+                sessionSchema !== undefined && session !== undefined
+                  ? { schema: sessionSchema, value: session.config ?? {}, live: true }
+                  : undefined
+              }
+              onSetting={(key, value) => store.setSessionConfig(key, value)}
+              canSteer={agent?.steer === true}
+              enabled={!view.loading}
+              connected={connected}
+              activity={activity}
+              plan={plan}
+              context={context}
+              planUsage={planUsage}
+              onSent={() => setSent((n) => n + 1)}
+            />
+          ) : null}
+        </Place>
+        {/* Kept under a page opened from it, as the sessions are. */}
+        {loopView !== undefined ? (
+          <Place id="loop" active={place.id === "loop"}>
+            <ShellSidebar>
+              <div data-slot="sidebar-scroll" data-mode="loop">
+                <LoopNav view={loopView} onView={places.showLoopView} />
               </div>
-            </main>
-          }
-        />
-      </div>
+            </ShellSidebar>
+            <LoopMain
+              view={loopView}
+              onView={places.showLoopView}
+              onBack={places.loopBack}
+              onClose={places.leaveLoop}
+              active={place.id === "loop"}
+            />
+          </Place>
+        ) : null}
+        {place.id === "settings" ? (
+          <Place id="settings" active>
+            <SettingsPage
+              section={place.section}
+              onSection={places.showSection}
+              harnessAgent={place.harness.agent}
+              harnessFrom={place.harness.from}
+              onHarnessAgent={places.showHarnessAgent}
+              onClose={places.leavePage}
+              backLabel={backLabel}
+              locations={locations}
+              status={status}
+              agents={agentsByLocation}
+              locationId={place.harness.location ?? selectedLocation}
+              onAddLocation={() => {
+                setTargetLocation(undefined);
+                open("add-location");
+              }}
+              onEditLocation={(id) => {
+                setTargetLocation(id);
+                open("edit-location");
+              }}
+              onRemoveLocation={(id) => {
+                setTargetLocation(id);
+                open("remove-location");
+              }}
+            />
+          </Place>
+        ) : null}
+        {place.id === "connectors" ? (
+          <Place id="connectors" active>
+            <ConnectorsPage
+              section={place.section}
+              onSection={places.showConnectorsSection}
+              onClose={places.leavePage}
+              backLabel={backLabel}
+              locations={locations}
+              status={status}
+              locationId={selectedLocation}
+              onShowLocations={() => places.openSettings("click", "locations")}
+            />
+          </Place>
+        ) : null}
+      </AppShell>
 
       <SearchDialog
         open={panel === "search"}
@@ -570,7 +575,7 @@ function AppWindow() {
             nav.setShowArchived(true);
           // What was found is shown with its workspace, also when it is the session that is open.
           nav.followOpen();
-          pages.closePage();
+          places.closePage();
           await store.selectSession(locationId, sessionId);
         }}
         onNewSession={() => {

@@ -1164,7 +1164,7 @@ test("the sidebar folds in the Loop and the title bar then has the button to sho
   const { user } = await mount(overviewScript());
   await screen.findByRole("region", { name: "Projects" });
   await user.click(screen.getByRole("button", { name: "Hide sidebar" }));
-  const header = document.querySelector<HTMLElement>('[data-kind="loop-header"]');
+  const header = document.querySelector<HTMLElement>('[data-slot="main-header"]');
   expect(header?.querySelector('[data-kind="sidebar-toggle"]')).not.toBeNull();
   const root = document.documentElement;
   expect(root.scrollWidth).toBeLessThanOrEqual(root.clientWidth);

@@ -117,9 +117,7 @@ test("the header's six actions sit close together, one line of 28px buttons even
     await user.click(await screen.findByRole("button", { name: "Show panel" }));
     await waitFor(() => expect(panel()).not.toBeNull());
     expect(document.querySelector('[data-slot="split"]')?.getBoundingClientRect().width).toBe(720);
-    const row = document.querySelector<HTMLElement>(
-      '[data-slot="session-header"] [data-slot="row"]',
-    );
+    const row = document.querySelector<HTMLElement>('[data-slot="main-header"] [data-slot="row"]');
     const buttons = [...(row?.querySelectorAll("button") ?? [])].map((x) =>
       x.getBoundingClientRect(),
     );

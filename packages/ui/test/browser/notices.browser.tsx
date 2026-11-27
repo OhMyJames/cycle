@@ -28,7 +28,7 @@ const mount = async (
   return { store, user, ...script, emit };
 };
 
-const header = () => document.querySelector('[data-slot="session-header"]') as HTMLElement;
+const header = () => document.querySelector('[data-slot="main-header"]') as HTMLElement;
 const lines = () => [...document.querySelectorAll<HTMLElement>('[data-slot="notice-line"]')];
 /** Where a node is, against the title bar: after it in the page, and below it on screen. */
 const underTitleBar = (node: HTMLElement) => {

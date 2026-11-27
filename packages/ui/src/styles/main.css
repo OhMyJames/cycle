@@ -1,11 +1,17 @@
 /* The main column: its header, the notices, the search palette, the account menu. */
 
 /* Main */
-[data-slot="session-body"] {
+/* The shell (shell.tsx): a place and what it says in the sidebar and the title bar are laid out as if they were the
+   frame's own children; a place that is not shown is not drawn. */
+[data-slot="place"],
+[data-slot="place-part"],
+[data-slot="sidebar-place"],
+[data-slot="place-notices"] {
   display: contents;
 }
 
-[data-slot="session-body"][hidden] {
+[data-slot="place"][hidden],
+[data-slot="place-part"][hidden] {
   display: none;
 }
 
@@ -32,9 +38,9 @@ html[data-platform="darwin"] [data-slot="titlebar"] {
 }
 
 /* The session sidebar's top row (every platform): as tall as the session header (2.625rem), from the sidebar's top
-   edge (its padding is --cycle-gap, the gap below it 0.5rem), so the fold button sits level with the header's. A page's
-   nav has the same row, so what is under it starts where the sidebar's rows do. */
-html :is([data-slot="sidebar"], [data-slot="page-nav"]) > [data-slot="titlebar"] {
+   edge (its padding is --cycle-gap, the gap below it 0.5rem), so the fold button sits level with the header's. The
+   same in every place (shell.tsx). */
+html [data-slot="sidebar"] > [data-slot="titlebar"] {
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -95,20 +101,18 @@ html[data-platform="darwin"] [data-slot="titlebar"] button {
 }
 
 /* The room kept for the traffic lights comes and goes with the slide, not before it. */
-html[data-platform="darwin"]
-  [data-slot="split"][data-animate]
-  :is([data-slot="main"] > :first-child, [data-slot="session-body"] > :first-child) {
+html[data-platform="darwin"] [data-slot="split"][data-animate] [data-slot="main-header"] {
   transition: padding-left var(--cycle-motion-disclosure) var(--cycle-ease);
 }
 
 html[data-platform="darwin"]
-  :is([data-slot="session-header"], [data-slot="empty"], [data-slot="blank-stage"]) {
+  :is([data-slot="main-header"], [data-slot="empty"], [data-slot="blank-stage"]) {
   -webkit-app-region: drag;
 }
 
 /* What can be clicked or selected is not a place to drag from: the error's reason has to be selectable. */
 html[data-platform="darwin"]
-  :is([data-slot="session-header"], [data-slot="empty"], [data-slot="blank-stage"])
+  :is([data-slot="main-header"], [data-slot="empty"], [data-slot="blank-stage"])
   :is(
     button,
     a,
@@ -131,10 +135,10 @@ html[data-platform="darwin"] :is([data-slot$="-backdrop"], [data-slot$="-content
   -webkit-app-region: no-drag;
 }
 
-/* With the sidebar folded the traffic lights sit in the main area's top-left corner: clear them on whatever is at the top. */
+/* With the sidebar folded the traffic lights sit in the main area's top-left corner: the title bar clears them. */
 html[data-platform="darwin"]
   [data-slot="app"]:has([data-slot="resizable-panel"]#sidebar[data-collapsed])
-  :is([data-slot="main"] > :first-child, [data-slot="session-body"] > :first-child) {
+  [data-slot="main-header"] {
   padding-left: 5.5rem;
 }
 
@@ -583,20 +587,29 @@ nav:has([data-slot="app-notice"]) [data-slot="sidebar-scroll"] {
   font-variant-numeric: tabular-nums;
 }
 
-/* The session's title bar: one row of 42px, the title and where it runs on one line, actions at the end. No rule under
-   it: the conversation scrolls up to it (old-cycle's title row). */
-[data-slot="session-header"] {
+/* The title bar of every place (shell.tsx): one row of 42px, level with the traffic lights. The place's title at its
+   start (after the button that unfolds the sidebar, while it is folded), its actions at the end. No rule under it: what
+   is under it scrolls up to it (old-cycle's title row). What the window is dragged by on a Mac. */
+[data-slot="main-header"] {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 0.5rem;
   height: 2.625rem;
   flex: none;
   padding: 0 0.5rem 0 var(--cycle-gap);
 }
 
-[data-slot="session-header"][data-empty-header] {
-  justify-content: flex-start;
+[data-slot="main-title"] {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+}
+
+[data-slot="main-tools"] {
+  display: flex;
+  flex: none;
+  align-items: center;
 }
 
 /* A tab's button while its tab is what the panel shows: the selected surface, as a chosen tab has. */
@@ -623,7 +636,7 @@ nav:has([data-slot="app-notice"]) [data-slot="sidebar-scroll"] {
 }
 
 /* The title gives way last: where it runs shrinks first, then the title. Paths truncate from the start so the repo/folder name at the end stays readable. */
-[data-slot="session-header"] h1 {
+[data-slot="main-title"] h1 {
   flex: 0 1 auto;
   min-width: 0;
   margin: 0;
@@ -694,7 +707,7 @@ nav:has([data-slot="app-notice"]) [data-slot="sidebar-scroll"] {
 }
 
 /* The actions at the end: close together, so they read as one group (CYCL-213). */
-[data-slot="session-header"] [data-slot="row"] {
+[data-slot="main-tools"] [data-slot="row"] {
   flex: none;
   flex-wrap: nowrap;
   gap: 0.25rem;

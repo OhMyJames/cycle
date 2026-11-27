@@ -1276,6 +1276,7 @@ export const enUS = {
   "settings.open": "Settings",
   "settings.title": "Settings",
   "settings.back": "Back to sessions",
+  "settings.backToLoop": "Back to Loop",
   "settings.sections": "Settings sections",
   "settings.section.general": "General",
   "settings.section.appearance": "Appearance",

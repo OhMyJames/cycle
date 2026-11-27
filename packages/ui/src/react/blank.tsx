@@ -24,7 +24,7 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "@ui-sdk/react/menu";
-import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { LocationConfig } from "../api.ts";
 import { applyUpdate, emptyConversation } from "../model/index.ts";
 import { BLANK_KEY, type BlankConversation } from "../store/index.ts";
@@ -36,6 +36,7 @@ import { EnvironmentPicker } from "./environments.tsx";
 import { FolderBrowser } from "./folder-browser.tsx";
 import { useI18n } from "./i18n.tsx";
 import { CheckIcon } from "./icons.tsx";
+import { ShellTitle } from "./shell.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
 import { Tip } from "./tip.tsx";
@@ -73,8 +74,6 @@ export function BlankConversationView({
   recent,
   connected,
   follow,
-  sidebarToggle,
-  notices,
   onSent,
   onOpenHarnessSettings,
 }: {
@@ -86,9 +85,6 @@ export function BlankConversationView({
   /** The blank conversation's location is connected. */
   connected: boolean;
   follow: number;
-  sidebarToggle?: ReactNode;
-  /** What is the matter with this page, under its title bar. */
-  notices?: ReactNode;
   onSent: () => void;
   /** Navigates directly to Settings → Harness for this location & agent when `agentSetup` is supported. */
   onOpenHarnessSettings?: (
@@ -575,13 +571,11 @@ export function BlankConversationView({
   })();
   return (
     <>
-      <header data-slot="session-header">
-        {sidebarToggle}
+      <ShellTitle>
         <div data-slot="session-heading">
           <h1>{t("blank.title")}</h1>
         </div>
-      </header>
-      {notices}
+      </ShellTitle>
       {/* One tree before and after the first message is sent, so the box and the choices keep their focus and state when a
           start fails and they come back: only the stage's layout changes (data-starting). */}
       <div data-slot="blank-stage" data-starting={shown !== undefined || undefined}>

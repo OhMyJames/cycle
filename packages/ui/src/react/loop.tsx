@@ -6,13 +6,14 @@
 import { isComposing } from "@ui-sdk/core";
 import { Button } from "@ui-sdk/react/button";
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import type { LoopBoardColumn, LoopProjectInfo, LoopRunsAnswer } from "../api.ts";
+import type { LoopBoardColumn, LoopNotice, LoopProjectInfo, LoopRunsAnswer } from "../api.ts";
 import { useI18n } from "./i18n.tsx";
 import { ChevronRightIcon, RefreshIcon } from "./icons.tsx";
 import { Board } from "./loop-board.tsx";
 import { type LoopView, up, viewProject } from "./loop-nav.ts";
 import { Notices, noticeUrgency, type RetryIntents } from "./loop-notices.tsx";
 import { PageGroup, PageRows } from "./page-layout.tsx";
+import { ShellNotices, ShellTitle } from "./shell.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
 
@@ -272,8 +273,6 @@ export function LoopMain({
   onView,
   onBack,
   onClose,
-  banner,
-  sidebarToggle,
   active = true,
 }: {
   view: LoopView;
@@ -282,9 +281,6 @@ export function LoopMain({
   onBack: () => void;
   /** Out of the Loop: a conversation about a ticket was started. */
   onClose: () => void;
-  banner?: ReactNode;
-  /** The button that shows the sidebar again, in the title bar, while it is put away. */
-  sidebarToggle?: ReactNode;
   /** False while Settings or Connectors is over the window: Escape is theirs then. */
   active?: boolean;
 }) {
@@ -413,21 +409,19 @@ export function LoopMain({
 
   return (
     <>
-      <header data-slot="session-header" data-empty-header="" data-kind="loop-header">
-        {sidebarToggle}
-        {heading}
-      </header>
-      {banner}
+      <ShellTitle>{heading}</ShellTitle>
       {away ? (
-        <div data-slot="loop-offline-banner">
-          <StateBlock
-            tone="away"
-            size="inline"
-            title={t("loop.offline.title")}
-            body={t("loop.offline.body")}
-            action={{ label: t("loop.reload"), onAction: () => void store.loadLoopProjects() }}
-          />
-        </div>
+        <ShellNotices>
+          <div data-slot="loop-offline-banner">
+            <StateBlock
+              tone="away"
+              size="inline"
+              title={t("loop.offline.title")}
+              body={t("loop.offline.body")}
+              action={{ label: t("loop.reload"), onAction: () => void store.loadLoopProjects() }}
+            />
+          </div>
+        </ShellNotices>
       ) : null}
       <div
         data-slot="page-body"

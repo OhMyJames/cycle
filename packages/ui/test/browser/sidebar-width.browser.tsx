@@ -54,8 +54,8 @@ const box = (selector: string) => {
 const fontSize = (selector: string) =>
   getComputedStyle(document.querySelector(selector) as Element).fontSize;
 
-// Settings and Connectors keep the sessions' frame (CYCL-219): the sidebar's edge, its first row and the title bar stay
-// where they are going from a session to a page, and from one page to the other.
+// Settings and Connectors are places of the same shell (CYCL-219, CYC-530): the sidebar's edge, its first row and the
+// title bar stay where they are going from a session to a page, and from one page to the other.
 test("a page keeps the sidebar's width as the user left it, its first row and the session's title bar", async () => {
   await page.viewport(1400, 800);
   const script = fakeBridge({ connected: true });
@@ -69,31 +69,49 @@ test("a page keeps the sidebar's width as the user left it, its first row and th
   await settle();
   expect(sidebarWidth()).toBeGreaterThan(256);
 
-  const session = {
+  const frame = (title: string) => ({
     main: box('[data-slot="resizable-panel"]#main')?.left,
-    header: box('[data-slot="session-header"]'),
+    header: box('[data-slot="main-header"]'),
     firstRow: box('[data-slot="sidebar"] [data-kind="sidebar-action"]')?.top,
-    title: fontSize('[data-slot="session-header"] h1'),
-  };
-  const shown = () => ({
-    main: box('[data-slot="page-main"]')?.left,
-    header: box('[data-slot="page-header"]'),
-    firstRow: box('[data-slot="page-nav"] [data-kind="sidebar-action"]')?.top,
-    title: fontSize('[data-slot="page-heading"]'),
+    title: fontSize(title),
   });
+  const session = frame('[data-slot="main-title"] h1');
   expect(session.header?.height).toBeGreaterThan(0);
 
   await user.click(screen.getByRole("button", { name: "Connectors" }));
   await screen.findByRole("heading", { name: "Plugins", level: 2 });
-  expect(shown()).toEqual(session);
+  expect(frame('[data-slot="page-heading"]')).toEqual(session);
 
   const mod = /Mac/.test(navigator.userAgent) ? "Meta" : "Control";
   await user.keyboard(`{${mod}>},{/${mod}}`);
   await screen.findByRole("heading", { name: "General", level: 2 });
-  expect(shown()).toEqual(session);
+  expect(frame('[data-slot="page-heading"]')).toEqual(session);
 
-  // A window too narrow for both: the nav gives way so the section keeps the conversation's least width.
+  // A window too narrow for both: the sidebar folds as it does over the sessions, and the section keeps the
+  // conversation's least width.
   await page.viewport(640, 800);
   await settle();
-  expect(box('[data-slot="page-main"]')?.left).toBe(640 - 400);
+  // Only the 1px handle is left of it.
+  expect(box('[data-slot="resizable-panel"]#main')?.left).toBeLessThanOrEqual(1);
+  expect(screen.getByRole("button", { name: "Show sidebar" })).toBeTruthy();
+});
+
+// The sidebar folds over a page as it does over the sessions (⌘B), and the title bar then has the button to show it.
+test("a page's sidebar folds with the shortcut and comes back from the title bar", async () => {
+  await page.viewport(1200, 800);
+  const script = fakeBridge({ connected: true });
+  await renderApp(script.bridge);
+  const user = userEvent.setup();
+  const mod = /Mac/.test(navigator.userAgent) ? "Meta" : "Control";
+  await screen.findByRole("button", { name: "Connectors" });
+  await user.keyboard(`{${mod}>},{/${mod}}`);
+  await screen.findByRole("heading", { name: "General", level: 2 });
+  await user.keyboard(`{${mod}>}b{/${mod}}`);
+  await settle();
+  expect(sidebarWidth()).toBe(0);
+  const header = document.querySelector('[data-slot="main-header"]') as HTMLElement;
+  await user.click(header.querySelector('[data-kind="sidebar-toggle"]') as HTMLElement);
+  await settle();
+  expect(sidebarWidth()).toBeGreaterThan(0);
+  expect(screen.getByRole("tab", { name: "General" }).getAttribute("aria-selected")).toBe("true");
 });
