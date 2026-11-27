@@ -486,6 +486,8 @@ type Reading = {
 };
 const readings = new Map<string, Reading>();
 const MAX_READINGS = 50;
+/** Drops remembered per-session scroll positions and block heights (for test isolation between cases reusing a key). */
+export const clearReadings = () => readings.clear();
 const remember = (key: string, reading: Reading) => {
   // The blank page is one place for every conversation started there: nothing of one is the next one's.
   if (key === BLANK_KEY) return;
