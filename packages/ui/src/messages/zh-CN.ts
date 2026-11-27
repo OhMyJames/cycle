@@ -588,8 +588,6 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "loop.col.todo": "待办",
   "loop.col.backlog": "待整理",
   "loop.col.done": "已完成",
-  "loop.done.show": "显示已完成",
-  "loop.done.hide": "隐藏已完成",
   "loop.column.empty": "这里没有工单",
   "loop.subtasks": "子任务",
   "loop.parent": "所属父工单",
