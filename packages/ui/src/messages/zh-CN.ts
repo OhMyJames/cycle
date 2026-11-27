@@ -590,9 +590,9 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "loop.col.todo": "待办",
   "loop.col.backlog": "待整理",
   "loop.col.done": "已完成",
-  "loop.done.show": "显示已完成",
-  "loop.done.hide": "隐藏已完成",
   "loop.column.empty": "这里没有工单",
+  "loop.subtasks": "子任务",
+  "loop.parent": "所属父工单",
   "loop.offline.title": "Loop 服务没有运行",
   "loop.offline.body": "在这台电脑上启动它，就能看到它的项目。下面是它上次有的项目。",
   "loop.offline.note": "离线",
@@ -995,6 +995,8 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "providers.problem.failed": "改动没有到达 {location}:{reason}",
 
   "config.nextTurn": "改动从下一轮开始生效，正在进行的这一轮仍按开始时的设置。",
+  "config.providerLimits":
+    "同一会话不能在 Codex 自有模型与服务商模型之间、或不同服务商之间切换模型。服务商模型没有联网搜索和图片生成，apply_patch 只有部分模型可用。",
   "config.recommended": "推荐",
   "config.caution": "注意",
   "config.notSet": "未设置",

@@ -51,7 +51,13 @@ const board = (stale = false) => ({
       id: 3,
       name: "Doing",
       stateType: "started",
-      cards: [card("CYC-3", { phase: { name: "qa", since: "2026-11-26T00:00:00.000Z" } })],
+      cards: [
+        card("CYC-3", {
+          parent: { key: "CYC-1", title: "Epic" },
+          type: "Task",
+          phase: { name: "qa", since: "2026-11-26T00:00:00.000Z" },
+        }),
+      ],
     },
   ],
 });
@@ -72,6 +78,11 @@ describe("the board comes from the Loop server and nowhere else", () => {
       pending: { reason: "ready" },
     });
     expect(answer.columns[1]?.tickets[0]?.phase?.name).toBe("qa");
+    expect(answer.columns[1]?.tickets[0]).toMatchObject({
+      type: "Task",
+      parent: { identifier: "CYC-1", title: "Epic" },
+    });
+    expect(answer.columns[0]?.tickets[0]).toMatchObject({ type: null, parent: null });
     expect(events).toEqual([["loop_board_read", { result: "ok" }]]);
     expect(JSON.stringify(events)).not.toContain("Ticket");
   });

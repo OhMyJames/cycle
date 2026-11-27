@@ -37,9 +37,12 @@ const parseOptionalInt = (value: unknown): number | null => {
 /** The parent's number and title, when the reply carries them; nothing otherwise (CYC-322). */
 const parentOf = (raw: unknown, projectKey: string): Pick<Issue, "parent"> => {
   const p = asRecord(raw);
-  const number = parseOptionalInt(p.sequenceNumber);
+  // list_issues gives `identifier` ("CYC-12"); get_issue gives `sequenceNumber`.
+  const ident = typeof p.identifier === "string" ? /^(.+)-(\d+)$/.exec(p.identifier.trim()) : null;
+  const number = parseOptionalInt(p.sequenceNumber) ?? (ident ? Number(ident[2]) : null);
   if (number === null) return {};
-  return { parent: { number, key: `${projectKey}-${number}`, title: String(p.title ?? "") } };
+  const key = ident ? `${ident[1]}-${ident[2]}` : `${projectKey}-${number}`;
+  return { parent: { number, key, title: String(p.title ?? "") } };
 };
 
 /** The links with the other issue's key and title, when the reply carries them; nothing otherwise (CYC-322). */

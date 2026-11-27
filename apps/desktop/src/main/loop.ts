@@ -346,6 +346,10 @@ export const answerBoard = async (
                 title: card.title,
                 priority: card.priority,
                 column: c.name,
+                type: card.type,
+                parent: card.parent
+                  ? { identifier: card.parent.key, title: card.parent.title }
+                  : null,
                 ...(card.pendingReason !== null ? { pending: { reason: card.pendingReason } } : {}),
                 ...(card.phase !== null ? { phase: card.phase } : {}),
               })),

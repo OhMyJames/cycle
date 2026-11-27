@@ -84,6 +84,9 @@ function SettingPickerChip({
     setAsked(undefined);
   }
 
+  // Only a Codex session lists the owner's providers' models (`cycle/provider`): their limits are noted under the list.
+  const hasProviders = options.some((o) => o.provider !== undefined);
+
   const choose = (value: string) => {
     setAsked(value);
     // Settled with no change (refused, say): nothing is on its way any more, so the same choice can be made again.
@@ -174,6 +177,11 @@ function SettingPickerChip({
             );
           })}
         </MenuRadioGroup>
+        {hasProviders ? (
+          <p data-slot="setting-note" data-kind="provider-note">
+            {t("config.providerLimits")}
+          </p>
+        ) : null}
       </MenuContent>
     </Menu>
   );

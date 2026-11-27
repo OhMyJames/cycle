@@ -60,8 +60,87 @@ const columnRoleOf = (
   return nth === 0 ? "progress" : nth === 1 ? "review" : nth === 2 ? "blocked" : undefined;
 };
 
+/** One sub-ticket of a parent card, with the state of the column it sits in. */
+type Child = {
+  identifier: string;
+  title: string;
+  stateType: string;
+  role: ColumnRole | undefined;
+  done: boolean;
+};
+
+/** `parent identifier -> its sub-tickets`, from every column (not only the ones shown), in board order. */
+const childrenByParent = (columns: readonly LoopBoardColumn[]): ReadonlyMap<string, Child[]> => {
+  const map = new Map<string, Child[]>();
+  for (const c of columns) {
+    const role = columnRoleOf(columns, c);
+    for (const tk of c.tickets) {
+      const parent = tk.parent?.identifier;
+      if (parent === undefined) continue;
+      const list = map.get(parent) ?? [];
+      list.push({
+        identifier: tk.identifier,
+        title: tk.title,
+        stateType: c.stateType,
+        role,
+        done: c.stateType === "completed",
+      });
+      map.set(parent, list);
+    }
+  }
+  return map;
+};
+
+/** The foldable sub-ticket list at the bottom of a parent card. Its controls sit above the card-wide title button. */
+function SubtaskList({ items, onOpen }: { items: readonly Child[]; onOpen: (id: string) => void }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const done = items.filter((x) => x.done).length;
+  return (
+    <div data-slot="loop-subtasks" data-open={open || undefined}>
+      <button
+        type="button"
+        data-slot="loop-subtasks-toggle"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {open ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
+        <span>{t("loop.subtasks")}</span>
+        <span data-slot="loop-subtasks-count">
+          {done}/{items.length}
+        </span>
+      </button>
+      {open ? (
+        <ul data-slot="loop-subtask-list">
+          {items.map((c) => (
+            <li key={c.identifier}>
+              <button
+                type="button"
+                data-slot="loop-subtask"
+                data-id={c.identifier}
+                data-state-type={c.stateType}
+                data-role={c.role}
+                data-done={c.done ? "" : undefined}
+                title={c.title}
+                onClick={() => onOpen(c.identifier)}
+              >
+                <span data-slot="loop-subtask-dot" aria-hidden="true">
+                  {c.done ? <CheckIcon size={10} /> : null}
+                </span>
+                <span data-slot="loop-subtask-id">{c.identifier}</span>
+                <span data-slot="loop-subtask-title">{c.title}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 function TicketCard({
   ticket,
+  subtasks,
   act,
   busyAction,
   active,
@@ -70,6 +149,7 @@ function TicketCard({
   onOpen,
 }: {
   ticket: LoopTicket;
+  subtasks?: readonly Child[] | undefined;
   act: Act;
   busyAction?: string | undefined;
   active: boolean;
@@ -102,6 +182,17 @@ function TicketCard({
             />
           ) : null}
           <span data-slot="loop-ticket-id">{ticket.identifier}</span>
+          {ticket.parent ? (
+            <button
+              type="button"
+              data-slot="loop-ticket-parent"
+              title={ticket.parent.title}
+              aria-label={`${t("loop.parent")} ${ticket.parent.identifier}`}
+              onClick={() => onOpen(ticket.parent?.identifier ?? "")}
+            >
+              ↑ {ticket.parent.identifier}
+            </button>
+          ) : null}
         </span>
         <span data-slot="loop-ticket-badges">
           {isPending ? (
@@ -142,6 +233,9 @@ function TicketCard({
           ) : null}
         </div>
       ) : null}
+      {subtasks !== undefined && subtasks.length > 0 ? (
+        <SubtaskList items={subtasks} onOpen={onOpen} />
+      ) : null}
     </li>
   );
 }
@@ -155,7 +249,6 @@ function Column({
   totalCount,
   more,
   filtered,
-  collapsible,
   pageSize,
   openIdentifier,
   picked,
@@ -163,6 +256,7 @@ function Column({
   onSelectAllPending,
   allPendingSelected,
   pendingCount,
+  childrenOf,
   act,
   busyAction,
   onOpen,
@@ -175,7 +269,6 @@ function Column({
   totalCount: number;
   more?: boolean;
   filtered?: boolean;
-  collapsible?: boolean;
   pageSize?: number;
   openIdentifier?: string | undefined;
   picked?: ReadonlySet<string> | undefined;
@@ -183,12 +276,12 @@ function Column({
   onSelectAllPending?: (() => void) | undefined;
   allPendingSelected?: boolean | undefined;
   pendingCount?: number | undefined;
+  childrenOf?: ReadonlyMap<string, Child[]> | undefined;
   act: Act;
   busyAction?: string | undefined;
   onOpen: (identifier: string) => void;
 }) {
   const { t } = useI18n();
-  const [open, setOpen] = useState(collapsible !== true);
   const [shown, setShown] = useState(pageSize ?? Number.POSITIVE_INFINITY);
   const visible = tickets.slice(0, shown);
   const countLabel =
@@ -203,34 +296,13 @@ function Column({
       data-column={id}
       data-state-type={stateType}
       data-role={role}
-      data-open={open || undefined}
-      data-folded={open ? undefined : ""}
       aria-label={title}
     >
       <header data-slot="loop-column-head">
-        {collapsible === true ? (
-          <Button
-            data-variant="ghost"
-            data-kind="loop-toggle"
-            aria-expanded={open}
-            aria-label={open ? t("loop.done.hide") : t("loop.done.show")}
-            onClick={() => setOpen((v) => !v)}
-          >
-            {open ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
-            <span data-slot="loop-column-dot" aria-hidden="true" />
-            {open ? <span data-slot="loop-column-title">{title}</span> : null}
-          </Button>
-        ) : (
-          <>
-            <span data-slot="loop-column-dot" aria-hidden="true" />
-            <h3 data-slot="loop-column-title">{title}</h3>
-          </>
-        )}
+        <span data-slot="loop-column-dot" aria-hidden="true" />
+        <h3 data-slot="loop-column-title">{title}</h3>
         <span data-slot="loop-column-count">{countLabel}</span>
-        {open &&
-        pendingCount !== undefined &&
-        pendingCount > 0 &&
-        onSelectAllPending !== undefined ? (
+        {pendingCount !== undefined && pendingCount > 0 && onSelectAllPending !== undefined ? (
           <label data-slot="loop-column-select-all">
             <input
               type="checkbox"
@@ -241,46 +313,45 @@ function Column({
           </label>
         ) : null}
       </header>
-      {open ? (
-        <div data-slot="loop-column-body">
-          {tickets.length === 0 ? (
-            <p data-slot="loop-column-empty">
-              {filtered === true ? t("loop.filter.empty") : t("loop.column.empty")}
-            </p>
-          ) : (
-            <ul data-slot="loop-tickets">
-              {visible.map((ticket) => (
-                <TicketCard
-                  key={ticket.identifier}
-                  ticket={ticket}
-                  act={act}
-                  busyAction={busyAction}
-                  active={openIdentifier === ticket.identifier}
-                  selected={picked?.has(ticket.identifier) === true}
-                  onTogglePick={
-                    ticket.pending !== undefined && onTogglePick !== undefined
-                      ? () => onTogglePick(ticket.identifier)
-                      : undefined
-                  }
-                  onOpen={onOpen}
-                />
-              ))}
-            </ul>
-          )}
-          {visible.length < tickets.length && pageSize !== undefined ? (
-            <Button
-              data-variant="ghost"
-              data-kind="loop-more"
-              onClick={() => setShown((n) => n + pageSize)}
-            >
-              {t("loop.more", { count: tickets.length - visible.length })}
-            </Button>
-          ) : null}
-          {more === true && pendingCount !== undefined && pendingCount > 0 ? (
-            <p data-slot="loop-column-note">{t("loop.pending.more")}</p>
-          ) : null}
-        </div>
-      ) : null}
+      <div data-slot="loop-column-body">
+        {tickets.length === 0 ? (
+          <p data-slot="loop-column-empty">
+            {filtered === true ? t("loop.filter.empty") : t("loop.column.empty")}
+          </p>
+        ) : (
+          <ul data-slot="loop-tickets">
+            {visible.map((ticket) => (
+              <TicketCard
+                key={ticket.identifier}
+                ticket={ticket}
+                subtasks={childrenOf?.get(ticket.identifier)}
+                act={act}
+                busyAction={busyAction}
+                active={openIdentifier === ticket.identifier}
+                selected={picked?.has(ticket.identifier) === true}
+                onTogglePick={
+                  ticket.pending !== undefined && onTogglePick !== undefined
+                    ? () => onTogglePick(ticket.identifier)
+                    : undefined
+                }
+                onOpen={onOpen}
+              />
+            ))}
+          </ul>
+        )}
+        {visible.length < tickets.length && pageSize !== undefined ? (
+          <Button
+            data-variant="ghost"
+            data-kind="loop-more"
+            onClick={() => setShown((n) => n + pageSize)}
+          >
+            {t("loop.more", { count: tickets.length - visible.length })}
+          </Button>
+        ) : null}
+        {more === true && pendingCount !== undefined && pendingCount > 0 ? (
+          <p data-slot="loop-column-note">{t("loop.pending.more")}</p>
+        ) : null}
+      </div>
     </section>
   );
 }
@@ -418,6 +489,17 @@ export function Board({
 
   const columns =
     answer !== undefined && answer !== "loading" && answer.kind === "ok" ? answer.columns : [];
+  // Done (completed) columns sit last; every other column keeps the server's order.
+  // Other consumers (pending counts, ticket lookup) deliberately use server order.
+  const displayColumns = useMemo(
+    () => [
+      ...columns.filter((c) => c.stateType !== "completed"),
+      ...columns.filter((c) => c.stateType === "completed"),
+    ],
+    [columns],
+  );
+
+  const childrenOf = useMemo(() => childrenByParent(columns), [columns]);
 
   const allPending = useMemo(() => {
     const list: LoopTicket[] = [];
@@ -446,6 +528,19 @@ export function Board({
     }
     return undefined;
   }, [columns, openIdentifier]);
+
+  // The drawer stays mounted after it is closed until its slide-out has played (CYC-506); a new ticket picked
+  // meanwhile replaces it at once.
+  const [held, setHeld] = useState<{ identifier: string; summary: LoopTicket | undefined }>();
+  if (
+    openIdentifier !== undefined &&
+    (held?.identifier !== openIdentifier || held.summary !== openSummary)
+  ) {
+    setHeld({ identifier: openIdentifier, summary: openSummary });
+  }
+  const drawerId = openIdentifier ?? held?.identifier;
+  const drawerSummary = openIdentifier !== undefined ? openSummary : held?.summary;
+  const drawerClosing = openIdentifier === undefined;
 
   const togglePick = (identifier: string) =>
     setPicked((prev) => {
@@ -686,7 +781,7 @@ export function Board({
       ) : null}
 
       <div data-slot="loop-columns">
-        {columns.map((c) => {
+        {displayColumns.map((c) => {
           const isBacklog = c.stateType === "backlog";
           // In Backlog, keep awaiting-approval tickets pinned at the top sorted by priority,
           // followed by ordinary Backlog tickets — marked by card badge, never wrapped in a box.
@@ -725,7 +820,7 @@ export function Board({
                     pendingCount: colPending,
                   }
                 : {})}
-              {...(c.stateType === "completed" ? { collapsible: true } : {})}
+              childrenOf={childrenOf}
               act={act}
               busyAction={busyAction}
               onOpen={openTicket}
@@ -758,12 +853,14 @@ export function Board({
         />
       ) : null}
 
-      {openIdentifier !== undefined ? (
+      {drawerId !== undefined ? (
         <TicketDrawer
-          key={openIdentifier}
+          key={drawerId}
           projectKey={projectKey}
-          identifier={openIdentifier}
-          summary={openSummary}
+          identifier={drawerId}
+          summary={drawerSummary}
+          closing={drawerClosing}
+          onExited={() => setHeld(undefined)}
           act={act}
           busyAction={busyAction}
           onChatStarted={onChatStarted}

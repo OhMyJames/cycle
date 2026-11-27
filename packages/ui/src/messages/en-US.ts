@@ -652,9 +652,9 @@ export const enUS = {
   "loop.col.todo": "Todo",
   "loop.col.backlog": "Backlog",
   "loop.col.done": "Done",
-  "loop.done.show": "Show done",
-  "loop.done.hide": "Hide done",
   "loop.column.empty": "Nothing here",
+  "loop.subtasks": "Subtasks",
+  "loop.parent": "Parent",
   "loop.offline.title": "The Loop server is not running",
   "loop.offline.body":
     "Start it on this computer to see its Projects. The Projects below are the ones it had last time.",
@@ -1101,6 +1101,8 @@ export const enUS = {
   // A setting the agent offers: the choice it suggests, and high-risk options
   "config.nextTurn":
     "Changes take effect from the next turn. A turn already running keeps the setting it started with.",
+  "config.providerLimits":
+    "A session cannot switch between Codex's own models and a provider's, or between providers. Provider models have no web search or image generation, and apply_patch only for some.",
   "config.recommended": "Recommended",
   "config.caution": "Caution",
   // A session's setting the daemon has no record of yet: not today's default, which it may not have

@@ -104,6 +104,7 @@ import { AgentOptionsCache, choicesFromConfigOptions } from "./options-cache.ts"
 import { type BuiltinBundle, type PluginProvider, PluginService } from "./plugins.ts";
 import { ModelProviders } from "./providers.ts";
 import { redactParams, redactRecord } from "./redact.ts";
+import { SearchIndex } from "./search.ts";
 import {
   type Attachment,
   type ClientConn,
@@ -221,6 +222,7 @@ export class Daemon {
   readonly #configFile: ConfigFileSnapshotOptions;
   readonly #agents: Map<string, AgentDefinition>;
   readonly #store: LogStore;
+  readonly #search: SearchIndex;
   readonly #index: SessionIndex;
   readonly #defaults: AgentDefaults;
   readonly #agentSettings: AgentSettings;
@@ -294,6 +296,9 @@ export class Daemon {
         new JsonlLogStore({ dir: sessionsDir(options.dataDir) }),
         blobsDir(options.dataDir),
       );
+    this.#search = new SearchIndex(sessionsDir(options.dataDir), (sessionId, error) =>
+      this.#log.warn("search_index_failed", { sessionId, error: String(error) }),
+    );
     this.#index = index;
     this.#defaults = defaults;
     this.#agentSettings = agentSettings;
@@ -506,6 +511,11 @@ export class Daemon {
       status === "requires_action" ||
       session.pending.size > 0
     );
+  }
+
+  /** For tests: how many history records the search index has read so far (a record is read once). */
+  get searchProcessed(): number {
+    return this.#search.processed;
   }
 
   async close(): Promise<void> {
@@ -2142,6 +2152,7 @@ export class Daemon {
       log: this.#log,
       agents: this.#agents,
       store: this.#store,
+      search: this.#search,
       index: this.#index,
       sessions: this.#sessions,
       defaults: this.#defaults,

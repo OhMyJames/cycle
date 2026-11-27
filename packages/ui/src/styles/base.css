@@ -277,6 +277,7 @@
   --cycle-motion-state: 100ms;
   --cycle-motion-disclosure: 160ms;
   --cycle-motion-enter: 200ms;
+  --cycle-motion-drawer: 280ms;
 
   /* ui-sdk, remapped. Its primary is what solid buttons, selection and checked states use. */
   --ui-background: var(--cycle-surface-workspace);
@@ -366,6 +367,8 @@
   [data-slot="command-list"],
   [data-slot="picker"],
   [data-slot="sidebar-scroll"],
+  [data-slot="loop-column-body"],
+  [data-slot="loop-columns"],
   [data-slot="panel-tabs-bar"] > [data-slot="tabs-list"],
   [data-slot="composer-extensions"]
 )::-webkit-scrollbar {

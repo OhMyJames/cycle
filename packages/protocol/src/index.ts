@@ -15,6 +15,7 @@ export * from "./prompt.ts";
 export * from "./prompt-suggestion.ts";
 export * from "./providers.ts";
 export * from "./queue.ts";
+export * from "./search.ts";
 export * from "./session-state.ts";
 export * from "./storage.ts";
 export * from "./terminal.ts";

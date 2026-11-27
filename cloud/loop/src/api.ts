@@ -417,6 +417,7 @@ export class LoopApiHandler {
           priority: issue.priority,
           labels: issue.labelIds.flatMap((id) => setup.labels.get(id) ?? []),
           pendingReason,
+          parent: issue.parent ? { key: issue.parent.key, title: issue.parent.title } : null,
           phase:
             run !== undefined && !finished(run) && column.stateType === "started"
               ? { name: run.phase, since: run.updatedAt }
