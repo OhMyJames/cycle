@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ensureHomeKeychain } from "../src/home-keychain.ts";
 
 // An installed app and a run from source are two daemons on one machine. They are told apart by their
 // data directory alone (CYCLE_HOME), so the test is that two of them do not see each other: their own
@@ -57,6 +58,8 @@ test("a daemon for the installed app and one for a checkout run side by side, ea
   const stable = join(home, ".cycle");
   const dev = join(home, ".cycle-dev");
   await mkdir(home, { recursive: true });
+  // The daemons hand this HOME to Claude, which keeps its key with `security`: no keychain, a window on the screen.
+  ensureHomeKeychain(home);
   started.push(cycle(home, stable, "serve"), cycle(home, dev, "serve"));
   await until(
     "both to be up",

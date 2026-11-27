@@ -12,6 +12,7 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readlink, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ensureHomeKeychain } from "../../../daemon/src/home-keychain.ts";
 import { packageApp } from "../../scripts/package.ts";
 import { AGENT_BINS } from "../../src/main/layout.ts";
 import { evaluate } from "./cdp.ts";
@@ -24,6 +25,8 @@ const ready = mac || (linux && Bun.which("xvfb-run") !== null);
 let root: string;
 beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), "cv1-packaged-"));
+  // The agents get this as HOME and keep keys with `security`: without a keychain, a window on the screen.
+  ensureHomeKeychain(root);
 });
 afterAll(() => rm(root, { recursive: true, force: true }));
 
@@ -48,7 +51,7 @@ test.skipIf(!ready)(
     const flags = [
       "--no-sandbox", // the test machine has no setuid chrome-sandbox; the window itself stays sandboxed
       "--disable-gpu",
-      "--use-mock-keychain", // its HOME is the test's, without a keychain: no "Keychain Not Found" window
+      "--use-mock-keychain", // Electron's own secrets stay out of the test HOME's keychain
       `--remote-debugging-port=${port}`,
       `--user-data-dir=${join(root, "electron")}`,
     ];

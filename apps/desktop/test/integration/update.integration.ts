@@ -13,6 +13,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CycleClient, connectUnix } from "@cycle/client";
+import { ensureHomeKeychain } from "../../../daemon/src/home-keychain.ts";
 import { scanBundle } from "../../src/main/delta.ts";
 import {
   archiveName,
@@ -38,6 +39,8 @@ const ready = process.platform === "darwin" && (signed || given !== undefined);
 let root: string;
 beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), "cv1-update-"));
+  // The agents get this as HOME and keep keys with `security`: without a keychain, a window on the screen.
+  ensureHomeKeychain(root);
 });
 afterAll(() => rm(root, { recursive: true, force: true }));
 

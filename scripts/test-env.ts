@@ -3,9 +3,12 @@
 // `agy plugin list`, and sets up agy's keychain with /usr/bin/security, which on a Mac pops up keychain and agy
 // sign-in windows. So HOME is a fresh empty folder and PATH loses every directory that holds an `agy`.
 // `bun run test:integration` starts real agents on purpose and sets CYCLE_TEST_REAL_AGENTS=1 to keep the real ones.
+// On a Mac that empty HOME gets a keychain of its own: the Claude a test starts stores its key with `security`, and in a
+// HOME with no keychain macOS answers with a "Keychain Not Found" window on the person's screen.
 import { accessSync, constants, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
+import { ensureHomeKeychain } from "../apps/daemon/src/home-keychain.ts";
 
 const AGENT_PROGRAMS = ["agy"];
 
@@ -30,6 +33,7 @@ if (process.env.CYCLE_TEST_REAL_AGENTS !== "1") {
   const home = mkdtempSync(join(tmpdir(), "cycle-test-home-"));
   process.on("exit", () => rmSync(home, { recursive: true, force: true }));
   process.env.HOME = home;
+  ensureHomeKeychain(home);
   process.env.PATH = withoutAgents(process.env.PATH ?? "");
   // Git still needs a name to commit with once the person's ~/.gitconfig is out of sight.
   process.env.GIT_AUTHOR_NAME ??= "test";

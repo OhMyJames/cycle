@@ -16,6 +16,7 @@ import { META } from "@cycle/protocol";
 import { claudeEffectiveRuntime, createClaudeSetupProvider } from "./agent-setup.ts";
 import type { Config } from "./config.ts";
 import type { Harness } from "./harness.ts";
+import { ensureHomeKeychain } from "./home-keychain.ts";
 import { processAgent } from "./process-agent.ts";
 import { hasSecrets, protectedFiles } from "./secrets.ts";
 import { shippedExecutable } from "./self.ts";
@@ -160,6 +161,11 @@ export const claudeEnv = (
   return merged;
 };
 
+/** When `claudeEnv` made HOME up (it is the config directory), that HOME gets a keychain before Claude runs in it. */
+const keychainIfMadeUp = (env: Record<string, string>): void => {
+  if (env.HOME === env.CLAUDE_CONFIG_DIR) ensureHomeKeychain(env.HOME);
+};
+
 export const claudeHarness: Harness = {
   id: "claude",
   name: "Claude",
@@ -173,8 +179,11 @@ export const claudeHarness: Harness = {
     env: ({ config, dataDir, inherited }) => claudeEnv(config.claude, dataDir, inherited),
     login: ["auth", "login"],
     directories: ["CLAUDE_CONFIG_DIR"],
+    prepare: async (_context, env) => keychainIfMadeUp(env),
   },
   definition: ({ config, dataDir, inherited, self, log, agentSettings }) => {
+    // Before anything here starts Claude: sessions, plugins and the setup page all run it with this HOME.
+    keychainIfMadeUp(claudeEnv(config.claude, dataDir, inherited));
     // The session's variables, for Claude's commands only (harness/claude env-file.ts). What a former daemon wrote has
     // no process left to read it.
     const envFiles = join(dataDir, "claude-env");
