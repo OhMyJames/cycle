@@ -1,9 +1,6 @@
-// What every run shares, whatever it does: the lock and the runs under way, the workers, the sessions, the events, the
-// phase field, the network retries, and the loop that drives a run from phase to phase (CYC-318, CYC-479).
-//
-// A run is driven by its flow (flows/): the phases it goes through, how it starts again, how it stops. This file knows
-// nothing of pull requests, CI or git: that is the dev flow's. Each step ends by writing where the run is, so a loop
-// that is killed, or a work item a person put back, goes on from the same place.
+// What every run shares, whatever it does: the lock and the runs under way, the workers, the sessions, the events,
+// the phase field, the network retries, and the loop that drives a run from phase to phase (CYC-318, CYC-479). It
+// knows nothing of pull requests, CI or git: that is the flow's (flows/). Each step ends by writing where the run is.
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { type Tuning, tuningToConfig } from "../config-file.ts";
@@ -11,7 +8,7 @@ import { CriteriaBook } from "../criteria.ts";
 import type { PlanFlow } from "../flows/plan.ts";
 import { isNetworkError } from "../network.ts";
 import type { At } from "../ports/forge.ts";
-import { applyPatch, type RunPatch, type RunRecord } from "../store.ts";
+import { applyPatch, type RunRecord } from "../store.ts";
 import type { Config, ExecResult, Issue, LoopPhase, SessionRole, TurnResult } from "../types.ts";
 import {
   Blocked,
@@ -25,7 +22,9 @@ import {
   type Opening,
   type OwnRun,
   type RunKind,
+  type Save,
   type StepResult,
+  saveWith,
 } from "./flow.ts";
 import { stopIfMoved, waitingForBlockers } from "./person.ts";
 import { Reconciler, writeIntent } from "./reconcile.ts";
@@ -474,8 +473,9 @@ export class Engine {
     byPerson: boolean,
   ): Promise<StepResult> {
     let run = start;
-    const save = async (patch: RunPatch) => {
-      run = await this.#d.store.save(applyPatch(run, patch));
+    const save: Save = async (patch, also) => {
+      run = await saveWith(this.#d.store, applyPatch(run, patch), also);
+      if (also) await this.#reconcile.flush(issue.id, { capMs: this.#d.mirrorCapMs ?? 10_000 });
     };
     const flow = this.#flowOf(start);
     try {

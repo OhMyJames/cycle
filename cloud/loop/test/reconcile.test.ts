@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { CriteriaBook } from "../src/criteria.ts";
 import { openLoopStore, SqliteStore } from "../src/db/store.ts";
 import { MAX_ATTEMPTS, marker, Reconciler, writeIntent } from "../src/engine/reconcile.ts";
 import { Pipeline } from "../src/pipeline.ts";
@@ -26,7 +27,11 @@ afterEach(async () => {
 
 const NOW = new Date("2026-11-25T00:00:00Z");
 
-const setup = (issues = [issue({ description: readyDescription })], script: Script) => {
+const setup = (
+  issues = [issue({ description: readyDescription })],
+  script: Script,
+  world: { prState?: string } = {},
+) => {
   const cfg = config({ stateDir: dir });
   const tracker = new FakeTracker(issues);
   const store = SqliteStore.open(dir, () => NOW);
@@ -42,7 +47,7 @@ const setup = (issues = [issue({ description: readyDescription })], script: Scri
       headSha: "abc",
       ciResponses: [],
       ciLogs: {},
-      prState: "OPEN",
+      prState: world.prState ?? "OPEN",
       prMerge: [["MERGED", "UNKNOWN"]],
       mergeTreeOutput: "",
       ignoredDirs: "",
@@ -346,4 +351,72 @@ test("a rejected-preflight move, and one without `from`, is not made for a work 
   moveIntent(s, { to: "blocked", from: "todo" }, "again");
   await reconciler(s).flush();
   expect(s.tracker.moves).toEqual(["CYC-1:blocked"]);
+});
+
+test("a PR merged outside the loop: the move fails, the next step does not comment again, and the run is done", async () => {
+  const s = setup(undefined, { dev: [], qa: [] }, { prState: "MERGED" });
+  await s.store.saveCriteria("CYC-1", CriteriaBook.fromSpecs([{ text: "x", verify: [["true"]] }]));
+  await s.store.save({
+    key: "CYC-1",
+    issueId: 1,
+    issueNumber: 1,
+    title: "t",
+    phase: "ci",
+    round: 0,
+    worktree: "/tmp/wt",
+    localBranch: "worktree-auto/cyc-1",
+    remoteBranch: "auto/cyc-1",
+    devSessionId: "dev-1",
+    qaSessionId: "qa-1",
+    replacedSessions: [],
+    blockedReason: null,
+    resumeFrom: null,
+    findings: null,
+    cleanedAt: null,
+    cleanupNote: null,
+    kind: "dev",
+    startedAt: NOW.toISOString(),
+    updatedAt: NOW.toISOString(),
+    dev: {
+      ciRound: 0,
+      ciFailedSha: null,
+      nodeModulesReleased: false,
+      fullFlowDocs: [],
+      conflictRound: 0,
+      conflict: null,
+      resolvedFiles: [],
+      reviewSessionId: null,
+      prUrl: "https://github.com/o/r/pull/9",
+    },
+  });
+  for (const i of s.tracker.issues) i.columnId = 23;
+  const move = s.tracker.move.bind(s.tracker);
+  let failing = true;
+  s.tracker.move = async (i, stage) => {
+    if (failing) throw new Error("tracker down");
+    return move(i, stage);
+  };
+  expect((await s.pipeline.step()).status).toBe("delivered");
+  expect((await s.store.load("CYC-1"))?.phase).toBe("done");
+  expect(s.tracker.comments).toHaveLength(1);
+  expect(pending(s.store).map((i) => i.kind)).toEqual(["move"]);
+
+  failing = false;
+  await s.pipeline.step();
+  expect(pending(s.store)).toEqual([]);
+  expect(s.tracker.issues[0]?.columnId).toBe(34);
+  expect(s.tracker.comments).toHaveLength(1);
+});
+
+test("flows write the tracker through intents: no direct comment or move, but the planning node", async () => {
+  const { readdir, readFile } = await import("node:fs/promises");
+  const root = new URL("../src/flows/", import.meta.url).pathname;
+  const files = (await readdir(root, { recursive: true })).filter((f) => f.endsWith(".ts"));
+  const direct: string[] = [];
+  for (const f of files) {
+    if (f === "plan.ts") continue;
+    const text = await readFile(join(root, f), "utf8");
+    if (/tracker\s*\.\s*(comment|move)\s*\(/.test(text)) direct.push(f);
+  }
+  expect(direct).toEqual([]);
 });

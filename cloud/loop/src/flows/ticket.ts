@@ -1,6 +1,7 @@
 // What the flows of one work item in the tracker share: dev and research runs both come from the `Todo` column, go
 // on when a person puts them back, and stop in Blocked with a comment.
 
+import type { StoreOps } from "../db/store.ts";
 import {
   type BlockArgs,
   type FlowHost,
@@ -176,4 +177,38 @@ export const blockTicket = async (
   });
   await host.reconcile.flush(issue.id, { capMs: host.d.mirrorCapMs ?? 10_000 });
   return { status: "blocked" as const, key: run.key, reason };
+};
+
+/**
+ * What a run that goes on to a stop (delivered, researched) says in the tracker: a comment and a move, written inside
+ * the transaction of the run's own save. `what` tells this one from the next (a PR, a head and a decision); the
+ * comment is one per `what`, however often the step runs. The move may come from where a claim still waiting left it.
+ */
+export const tellTicket = (
+  tx: StoreOps,
+  run: Pick<RunRecord, "key">,
+  issue: Issue,
+  what: string,
+  say: { body?: string; to?: Stage },
+): void => {
+  if (say.body !== undefined)
+    writeIntent(tx, {
+      run: run.key,
+      issue,
+      kind: "comment",
+      dedupe: `${what}`,
+      payload: { body: say.body },
+    });
+  if (say.to === undefined) return;
+  const waitingFrom = tx
+    .pendingIntents()
+    .filter((i) => i.kind === "move" && i.runKey === run.key)
+    .flatMap((i) => [(i.payload as { from?: Stage | Stage[] }).from ?? []].flat());
+  writeIntent(tx, {
+    run: run.key,
+    issue,
+    kind: "move",
+    dedupe: `move:${what}`,
+    payload: { to: say.to, from: ["inProgress", ...waitingFrom] },
+  });
 };
