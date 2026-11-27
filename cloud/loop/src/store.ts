@@ -98,6 +98,8 @@ export const DevStateSchema = z.object({
   /** The files a Dev conflict turn resolved: QA is told to look at them. */
   resolvedFiles: z.array(z.string()).default([]),
   reviewSessionId: z.string().nullable().default(null),
+  /** `<headSha>:<decision>` of the review comment last posted on the pull request: the same one is not posted twice. */
+  reviewCommented: z.string().optional(),
   /** The pull request; `runs.pr_url` keeps a copy as a column. */
   prUrl: z.string().nullable().default(null),
   /** 大档 (CYC-328): the Intent / Spec / Design / Plan documents and the versions the run started on; empty for a small one. */
