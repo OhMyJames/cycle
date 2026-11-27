@@ -98,10 +98,14 @@ export type EventData = Record<string, string | number | boolean>;
  * A run cannot go on without a person. The message is what the person is told. `resumeFrom` is where to go on once
  * they put it back, when that is not the phase it stopped in.
  */
+export type Asked = { comment: string; notice: string; session: { kind: string; id: string } };
+
 export class Blocked extends Error {
   constructor(
     message: string,
     readonly resumeFrom?: Phase,
+    /** A session asked a person to decide (CYC-494): the comment says so in its own words, and a Notice is written. */
+    readonly asked?: Asked,
   ) {
     super(message);
   }
@@ -196,6 +200,7 @@ export type BlockArgs = {
   said: string;
   save: Save;
   resumeFrom: Phase | undefined;
+  asked?: Asked | undefined;
 };
 
 export interface Flow {

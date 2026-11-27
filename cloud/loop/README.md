@@ -215,3 +215,5 @@ Loop 推进一张工单时，把当前阶段和进入时间写进工单的两个
 - 测量失败（`df` 不可用、非零退出、输出读不出、只读到一次）、或可用块数反而变多（别的 worker 或会话在同卷释放了空间）：只记 `{ measured: false }`，不阻断 `bun install` 和后续流程。分析时丢掉 `measured: false` 的行。
 - 局限：差值是整个卷的变化，同卷上别的写入（`--workers N` 的其他 worker、会话写文件）会让 `usedKb` 偏大；取多个样本里的低值，并丢掉明显偏离的。
 - 结论：测量结果要在 Loop 实际跑过几张单之后，从 `events.jsonl` 里读 `usedKb`。`usedKb` 明显小于 `du` 的 1.4G，说明已经在克隆；接近 1.4G，才把 `bunfig.toml` 的 `[install] backend` 固定为 `clonefile`（bun 在 macOS 上默认就是 clonefile，固定只在默认被改动或回退到复制时才有意义）。在拿到数据前不改 `bunfig.toml`，也不做 worktree 共享 `node_modules`。
+
+**Dev 提问（CYC-494）**：Dev 回复里带非空 `<question>` 时，Loop 不验证、不计轮次，checkpoint 后转 Blocked（`blockedReason` 为「等人决定」），评论以「Loop 的 Dev 会话需要你决定：」开头并附问题原文，另写一条 `blocked` Notice（带 Dev 会话的种类和 id）；事件 `dev_asked` 只记字数。人回答后把工单放回 Todo，从原会话继续，提示要求先读最新评论。同一 run 连续第 3 次提问（中间没有通过验证）评论加「已多次提问，建议重写工单」。`stats.devAsked` 记提问次数和涉及的 run 数。

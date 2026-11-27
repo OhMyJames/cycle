@@ -49,6 +49,12 @@ export const criterionSpecs = (
 export const parseProgress = (text: string): string | undefined =>
   last(text, "progress") ?? undefined;
 
+/** The question Dev asks a person in its reply; an empty block is none. */
+export const parseQuestion = (text: string): string | undefined => {
+  const block = last(text, "question");
+  return block === null || block === "" ? undefined : block;
+};
+
 const VerdictSchema = z.object({
   pass: z.boolean(),
   findings: z

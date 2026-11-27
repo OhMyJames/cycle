@@ -102,13 +102,15 @@ export const ticketStillWanted = async (
  */
 export const blockTicket = async (
   host: FlowHost,
-  { run, issue, said, resumeFrom }: BlockArgs,
+  { run, issue, said, resumeFrom, asked }: BlockArgs,
   how: { firstPhase: Phase; session: string; redact: (said: string) => string },
 ) => {
   const { store } = host.d;
   const reason = how.redact(said);
   const from = run.phase === "blocked" || run.phase === "done" ? how.firstPhase : run.phase;
-  const body = `自动化在「${PHASE_NAMES[from]}」卡住了：${reason}\n\n现场已保留：${how.session}可在 Cycle 桌面端打开接管。处理后把工单放回 Todo，自动化会在原会话里继续。`;
+  const body =
+    asked?.comment ??
+    `自动化在「${PHASE_NAMES[from]}」卡住了：${reason}\n\n现场已保留：${how.session}可在 Cycle 桌面端打开接管。处理后把工单放回 Todo，自动化会在原会话里继续。`;
   // The run and what the tracker should show are written together; the reconciler brings the tracker to it, now or on
   // a later step. `blockSeq` is which Blocked this is for the run: one comment each, the next Blocked comments again.
   store.transaction((tx) => {
@@ -131,6 +133,8 @@ export const blockTicket = async (
       payload: { to: "blocked" },
     });
     tx.event(run.key, "blocked", { phase: from, round: run.round });
+    if (asked !== undefined)
+      tx.notice(run.key, "blocked", asked.notice, `blocked:${run.key}:${blockSeq}`, asked.session);
   });
   await host.reconcile.flush(issue.id, { capMs: host.d.mirrorCapMs ?? 10_000 });
   return { status: "blocked" as const, key: run.key, reason };
