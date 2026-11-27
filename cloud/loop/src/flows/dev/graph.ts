@@ -7,7 +7,7 @@
 import type { CriteriaBook } from "../../criteria.ts";
 import { parseVerify, readSummary, withStrict } from "../../criteria.ts";
 import type { StoreOps } from "../../db/store.ts";
-import { Blocked, branchOf, tail } from "../../engine/flow.ts";
+import { Blocked, branchOf, NetworkWait, tail } from "../../engine/flow.ts";
 import { writeIntent } from "../../engine/reconcile.ts";
 import { verifyEnv } from "../../env.ts";
 import { summarizeFailure } from "../../failure.ts";
@@ -20,11 +20,15 @@ import {
   parsePlanGraph,
   type TaskGraph,
   type TaskNode,
+  type TaskNodeSpec,
   updateGraphNode,
 } from "../../graph.ts";
+import { checkPlannerReply, PLANNER_MAX_TURNS, routeSmallItem } from "../../graph-plan.ts";
 import {
   bodyChangedNotice,
   continueBrief,
+  graphPlannerBrief,
+  graphPlannerFixBrief,
   nodeDevBrief,
   nodeFixBrief,
   nodeHandoffBrief,
@@ -107,6 +111,84 @@ const ensureNodeSession = async (
 };
 
 /**
+ * 小档 sizing (CYC-509): a simple Bug or a one-package Feature with few criteria goes straight to one node; anything
+ * else gets a read-only planner session that must return 2–4 valid nodes. Returns the new graph (first node still
+ * `pending`, reusing the claim's Dev session), or undefined for the single-node path. Never blocks the run.
+ */
+async function sizeSmallItem(
+  h: FlowHost,
+  run: DevRun,
+  issue: Issue,
+): Promise<TaskGraph | undefined> {
+  const { config, store, clock } = h.d;
+  const route = routeSmallItem(issue, config);
+  if (route.route === "single") {
+    await store.event(run.key, "graph_plan_single", { reason: route.reason });
+    return undefined;
+  }
+  const worktree = h.need(run.worktree ?? undefined);
+  let specs: TaskNodeSpec[] | undefined;
+  let failure = "";
+  let turns = 0;
+  try {
+    const created = await h.d.sessions.create({
+      role: "graph_planner",
+      agent: config.devAgent,
+      ...(config.devModel ? { model: config.devModel } : {}),
+      ...(config.devEffort ? { effort: config.devEffort } : {}),
+      title: `[${run.key}] Graph Planner`,
+      cwd: config.repoRoot,
+      worktree: { base: config.baseRef, name: branchOf(issue.number) },
+    });
+    let prompt = graphPlannerBrief(issue);
+    while (turns < PLANNER_MAX_TURNS) {
+      turns++;
+      const result = await h.turn(run.key, created.sessionId, prompt, {
+        role: "graph_planner",
+        worktree,
+        timeoutMs: config.turnTimeoutMs,
+      });
+      await store.event(run.key, "graph_planner_turn", { turn: turns, stop: result.stopReason });
+      if (result.timedOut || result.stopReason !== "end_turn") {
+        failure = `planner turn ended abnormally (${result.timedOut ? "timeout" : result.stopReason})`;
+        break;
+      }
+      const checked = await checkPlannerReply(result.text, worktree);
+      if (checked.ok) {
+        specs = checked.specs;
+        break;
+      }
+      failure = checked.reasons.join(" | ");
+      prompt = graphPlannerFixBrief(checked.reasons, turns + 1, PLANNER_MAX_TURNS);
+    }
+  } catch (error) {
+    if (error instanceof NetworkWait) throw error;
+    failure = `planner failed: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  if (specs === undefined) {
+    await store.event(run.key, "graph_plan_fallback", {
+      reason: tail(failure, 400),
+      turns,
+      criteria: route.criteria,
+      packages: route.packages,
+    });
+    return undefined;
+  }
+  const nowIso = clock.now().toISOString();
+  const built = buildGraph(run.key, "auto_planner", specs, nowIso);
+  const first = built.nodes[0] as TaskNode;
+  // The first node continues in the Dev session the claim already made on this worktree.
+  const planned = updateGraphNode(built, first.id, { sessionId: run.devSessionId }, nowIso, null);
+  await store.event(run.key, "graph_plan_auto", {
+    nodes: planned.nodes.length,
+    turns,
+    criteria: route.criteria,
+    packages: route.packages,
+  });
+  return planned;
+}
+
+/**
  * `graph_plan` phase: loads (or initializes from Plan docs) the run's Task Graph and advances to the first ready
  * node, or directly to whole-item `verify` if every node is already complete.
  */
@@ -119,6 +201,9 @@ export async function graphPlan(h: FlowHost, run: DevRun, issue: Issue, save: Sa
     if (parsed.found && parsed.ok) {
       graph = buildGraph(run.key, "plan_doc", parsed.specs, clock.now().toISOString());
     }
+  }
+  if (graph === undefined && run.dev.fullFlowDocs.length === 0) {
+    graph = await sizeSmallItem(h, run, issue);
   }
   if (graph === undefined) {
     await save({ phase: "dev", dev: { activeNodeId: null } });

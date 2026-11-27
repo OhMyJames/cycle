@@ -17,7 +17,13 @@ export const MAX_TOTAL_NODES = 12;
 export const NODE_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 const FIX_PREFIX = /^fix-/i;
 
-export const TaskGraphSourceSchema = z.enum(["single", "plan_doc", "auto_plan", "edited"]);
+export const TaskGraphSourceSchema = z.enum([
+  "single",
+  "plan_doc",
+  "auto_plan",
+  "auto_planner",
+  "edited",
+]);
 export type TaskGraphSource = z.infer<typeof TaskGraphSourceSchema>;
 
 export const TaskNodeOriginSchema = z.enum(["planned", "fix"]);
