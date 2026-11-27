@@ -1013,3 +1013,59 @@ test("an older board read that lands last does not replace a newer one", async (
   await new Promise((r) => setTimeout(r, 50));
   expect(projects.querySelector('[data-project="CYC"]')?.textContent).toContain("Todo 2");
 });
+
+test("a parent card folds a sub-ticket list; children keep their cards and name the parent", async () => {
+  const child = (n: number, column: string): LoopTicket => ({
+    ...ticket(n, column),
+    parent: { identifier: "CYC-381", title: "The Epic" },
+  });
+  const user = userEvent.setup();
+  const fake = fakeBridge({
+    connected: true,
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: {
+      CYC: withTickets({
+        Todo: [ticket(381, "Todo"), child(390, "Todo")],
+        Done: [child(391, "Done")],
+      }),
+    },
+  });
+  await renderApp(fake.bridge);
+  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  const todo = await screen.findByRole("region", { name: "Todo" });
+  const toggle = within(todo).getByRole("button", { name: /Subtasks/ });
+  expect(toggle.textContent).toContain("1/2");
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  // The children stay in their own columns, with the parent named on the card.
+  expect(within(todo).getByText("Ticket 390")).toBeTruthy();
+  expect(within(todo).getByRole("button", { name: "Parent CYC-381" })).toBeTruthy();
+  await user.click(toggle);
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  expect(document.querySelector('[data-slot="loop-drawer"], [role="dialog"]')).toBeNull();
+  const done = document.querySelector<HTMLElement>('[data-slot="loop-subtask"][data-id="CYC-391"]');
+  expect(done?.hasAttribute("data-done")).toBe(true);
+  expect(done?.textContent).toContain("Ticket 391");
+  await user.click(done as HTMLElement);
+  await waitFor(() =>
+    expect(fake.calls.some(([n, , id]) => n === "loopTicket" && id === "CYC-391")).toBe(true),
+  );
+});
+
+test("the parent id on a child card opens the parent", async () => {
+  const user = userEvent.setup();
+  const fake = fakeBridge({
+    connected: true,
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: {
+      CYC: withTickets({
+        Todo: [{ ...ticket(390, "Todo"), parent: { identifier: "CYC-381", title: "The Epic" } }],
+      }),
+    },
+  });
+  await renderApp(fake.bridge);
+  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  await user.click(await screen.findByRole("button", { name: "Parent CYC-381" }));
+  await waitFor(() =>
+    expect(fake.calls.some(([n, , id]) => n === "loopTicket" && id === "CYC-381")).toBe(true),
+  );
+});

@@ -651,6 +651,8 @@ export const enUS = {
   "loop.col.backlog": "Backlog",
   "loop.col.done": "Done",
   "loop.column.empty": "Nothing here",
+  "loop.subtasks": "Subtasks",
+  "loop.parent": "Parent",
   "loop.offline.title": "The Loop server is not running",
   "loop.offline.body":
     "Start it on this computer to see its Projects. The Projects below are the ones it had last time.",
