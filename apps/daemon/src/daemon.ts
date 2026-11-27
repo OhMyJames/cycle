@@ -296,7 +296,9 @@ export class Daemon {
         new JsonlLogStore({ dir: sessionsDir(options.dataDir) }),
         blobsDir(options.dataDir),
       );
-    this.#search = new SearchIndex(sessionsDir(options.dataDir));
+    this.#search = new SearchIndex(sessionsDir(options.dataDir), (sessionId, error) =>
+      this.#log.warn("search_index_failed", { sessionId, error: String(error) }),
+    );
     this.#index = index;
     this.#defaults = defaults;
     this.#agentSettings = agentSettings;

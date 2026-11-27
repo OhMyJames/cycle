@@ -38,10 +38,7 @@ export const registerFiles = (app: AgentApp, core: Core): void => {
   });
   cycle(search, (params) =>
     core.search.search(
-      core.index
-        .createdOrder()
-        .map(([, id]) => id)
-        .reverse(),
+      core.index.createdOrder().map(([, id]) => id),
       params.query,
       params.limit ?? SEARCH_LIMITS.defaultLimit,
     ),

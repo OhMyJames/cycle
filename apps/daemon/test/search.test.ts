@@ -170,3 +170,17 @@ test("a file rewritten and grown past the old offset is indexed again", async ()
   expect((await find("alpha")).hits.length).toBe(0);
   expect((await find("beta")).hits.length).toBe(3);
 });
+
+test("when the limit cuts the hits, the newest session's come first", async () => {
+  const { c, sessionId: older, find } = await start();
+  await Bun.sleep(5);
+  const { sessionId: newer } = await c.agent.request(methods.agent.session.new, { cwd: "/tmp" });
+  const { appendFile } = await import("node:fs/promises");
+  const line = (text: string) =>
+    `${JSON.stringify({ seq: 1, ts: "2026-11-26T00:00:00.000Z", kind: "update", data: { sessionUpdate: "user_message", messageId: "u1", content: [{ type: "text", text }] } })}\n`;
+  for (const id of [older, newer])
+    await appendFile(join(dir, "sessions", `${id}.jsonl`), line("shared platypus"));
+  const found = await find("platypus", 1);
+  expect(found.truncated).toBe(true);
+  expect(found.hits.map((h) => h.sessionId)).toEqual([newer]);
+});

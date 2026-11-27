@@ -71,53 +71,82 @@ export const sayingOf = (data: unknown): Saying | undefined => {
 
 /** Puts the chunks of one reply together: says which message (by first seq) each saying belongs to. */
 class Grouper {
-  #open: { messageId: string; key: number; tail: string } | undefined;
+  #open: { messageId: string; key: number; tail: string; chars: number } | undefined;
 
-  /** `joined` is the end of what came before in this message, then this chunk: the words that cross a chunk. */
-  feed(seq: number, saying: Saying): { key: number; joined: string } {
+  /**
+   * `part` is what of this chunk is within the message's first `MAX_INDEXED_CHARS` characters; `joined` is the end of
+   * what came before in the message, then `part`: the words that cross a chunk.
+   */
+  feed(seq: number, saying: Saying): { key: number; part: string; joined: string } {
     if (saying.from === "user" || saying.messageId === undefined) {
       this.#open = undefined;
-      return { key: seq, joined: saying.text };
+      const part = saying.text.slice(0, MAX_INDEXED_CHARS);
+      return { key: seq, part, joined: part };
     }
     const same = this.#open?.messageId === saying.messageId ? this.#open : undefined;
-    const joined = (same?.tail ?? "") + saying.text;
+    const chars = same?.chars ?? 0;
+    const part = saying.text.slice(0, Math.max(0, MAX_INDEXED_CHARS - chars));
+    const joined = (same?.tail ?? "") + part;
     this.#open = {
       messageId: saying.messageId,
       key: same?.key ?? seq,
       tail: joined.slice(-MAX_TOKEN),
+      chars: chars + part.length,
     };
-    return { key: this.#open.key, joined };
+    return { key: this.#open.key, part, joined };
   }
 }
 
 type Line = { text: string; start: number; end: number; bytes: Buffer };
 
-/** The complete lines of a file from a byte, read a piece at a time. A half line at the end is not given. */
+/** A line longer than this is not read: it is passed over, and says nothing. */
+const MAX_LINE_BYTES = 8 << 20;
+
+/**
+ * The complete lines of a file from a byte, read a piece at a time; each piece is scanned once. A half line at the end
+ * is not given. A line past `MAX_LINE_BYTES` is given with no text, and its first bytes only.
+ */
 async function* linesOf(path: string, from: number, size: number): AsyncGenerator<Line> {
   const handle = await open(path, "r");
   try {
     let at = from;
-    let pending = Buffer.alloc(0);
-    let pendingStart = from;
+    let lineStart = from;
+    let parts: Buffer[] = [];
+    let length = 0;
+    let head = Buffer.alloc(0);
+    let tooLong = false;
     while (at < size) {
       const buffer = Buffer.alloc(Math.min(READ_BYTES, size - at));
       const { bytesRead } = await handle.read(buffer, 0, buffer.length, at);
       if (bytesRead === 0) break;
+      const piece = buffer.subarray(0, bytesRead);
       at += bytesRead;
-      pending = Buffer.concat([pending, buffer.subarray(0, bytesRead)]);
-      let from0 = 0;
-      for (let nl = pending.indexOf(10, from0); nl >= 0; nl = pending.indexOf(10, from0)) {
-        const bytes = pending.subarray(from0, nl);
+      let begin = 0;
+      while (begin < piece.length) {
+        const nl = piece.indexOf(10, begin);
+        const stop = nl < 0 ? piece.length : nl;
+        const chunk = piece.subarray(begin, stop);
+        if (head.length < FINGERPRINT_BYTES)
+          head = Buffer.concat([head, chunk.subarray(0, FINGERPRINT_BYTES - head.length)]);
+        length += chunk.length;
+        if (length > MAX_LINE_BYTES) {
+          tooLong = true;
+          parts = [];
+        } else if (!tooLong) parts.push(chunk);
+        if (nl < 0) break;
         yield {
-          text: bytes.toString("utf8"),
-          start: pendingStart + from0,
-          end: pendingStart + nl + 1,
-          bytes,
+          text: tooLong ? "" : Buffer.concat(parts).toString("utf8"),
+          start: lineStart,
+          end: lineStart + length + 1,
+          bytes: tooLong ? head : Buffer.concat(parts),
         };
-        from0 = nl + 1;
+        lineStart += length + 1;
+        parts = [];
+        length = 0;
+        head = Buffer.alloc(0);
+        tooLong = false;
+        begin = nl + 1;
       }
-      pendingStart += from0;
-      pending = pending.subarray(from0);
     }
   } finally {
     await handle.close();
@@ -137,14 +166,29 @@ const parse = (text: string): { seq: number; saying: Saying | undefined } | unde
   }
 };
 
-const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
+/** A window of the text around a place, cut between characters, never empty. */
 const around = (text: string, at: number, length: number): string => {
-  const flat = (s: string) => s.replace(/\s+/g, " ");
-  const before = Math.max(0, at - Math.floor((SNIPPET_CHARS - length) / 3));
-  const after = Math.min(text.length, before + SNIPPET_CHARS);
-  const cut = flat(text.slice(before, after)).trim();
+  const isLow = (i: number) => {
+    const c = text.charCodeAt(i);
+    return c >= 0xdc00 && c <= 0xdfff;
+  };
+  let before = Math.max(0, at - Math.floor((SNIPPET_CHARS - Math.min(length, SNIPPET_CHARS)) / 3));
+  if (before > 0 && isLow(before)) before -= 1;
+  let after = Math.min(text.length, before + SNIPPET_CHARS);
+  if (after < text.length && isLow(after)) after += 1;
+  const cut = text.slice(before, after).replace(/\s+/g, " ").trim();
+  if (cut === "") return text.trim().slice(0, SNIPPET_CHARS) || "…";
   return `${before > 0 ? "…" : ""}${cut}${after < text.length ? "…" : ""}`;
+};
+
+/** Where in the text the first word that is one of the query's tokens is, as the index counts words. */
+const locate = (text: string, tokens: ReadonlySet<string>): { at: number; length: number } => {
+  for (const found of text.matchAll(WORD)) {
+    for (const token of tokensOf(found[0])) {
+      if (tokens.has(token)) return { at: found.index, length: found[0].length };
+    }
+  }
+  return { at: 0, length: 0 };
 };
 
 type Progress = {
@@ -152,6 +196,8 @@ type Progress = {
   done: number;
   /** The last indexed line: where it is and what it starts with, to tell a rewritten file from a longer one. */
   last: { start: number; hash: bigint } | undefined;
+  /** The first line, the same way: a rewrite that leaves the last line in place still changes the start. */
+  first: { length: number; hash: bigint } | undefined;
   grouper: Grouper;
 };
 
@@ -167,8 +213,12 @@ export class SearchIndex {
   #queue: Promise<unknown> = Promise.resolve();
   #processed = 0;
 
-  constructor(dir: string) {
+  readonly #failed: (sessionId: string, error: unknown) => void;
+
+  /** `failed` is told of a session file that could not be read; what was indexed of it stays. */
+  constructor(dir: string, failed: (sessionId: string, error: unknown) => void = () => {}) {
     this.#dir = dir;
+    this.#failed = failed;
   }
 
   /** How many records have been read into the index since it was made: a record is read once. */
@@ -190,20 +240,24 @@ export class SearchIndex {
     this.#progress.delete(sessionId);
   }
 
-  /** Whether the file still starts with what was indexed: its last indexed line is where it was. */
+  /** Whether the file is still what was indexed: its first and its last indexed lines are where they were. */
   async #unchanged(path: string, progress: Progress): Promise<boolean> {
-    if (progress.last === undefined) return true;
+    if (progress.last === undefined || progress.first === undefined) return true;
     const handle = await open(path, "r");
     try {
-      const length = Math.min(FINGERPRINT_BYTES, progress.done - 1 - progress.last.start);
-      const buffer = Buffer.alloc(length + 1);
-      const probe = Buffer.alloc(1);
-      const { bytesRead } = await handle.read(buffer, 0, length, progress.last.start);
-      await handle.read(probe, 0, 1, progress.done - 1);
+      const matches = async (at: number, length: number, hash: bigint): Promise<boolean> => {
+        const buffer = Buffer.alloc(length);
+        const { bytesRead } = await handle.read(buffer, 0, length, at);
+        return bytesRead === length && fingerprint(buffer) === hash;
+      };
+      const { start, hash } = progress.last;
+      const length = Math.min(FINGERPRINT_BYTES, progress.done - 1 - start);
+      const newline = Buffer.alloc(1);
+      await handle.read(newline, 0, 1, progress.done - 1);
       return (
-        bytesRead === length &&
-        probe[0] === 10 &&
-        fingerprint(buffer.subarray(0, length)) === progress.last.hash
+        newline[0] === 10 &&
+        (await matches(0, progress.first.length, progress.first.hash)) &&
+        (await matches(start, length, hash))
       );
     } finally {
       await handle.close();
@@ -227,7 +281,7 @@ export class SearchIndex {
       progress = undefined;
     }
     if (progress === undefined) {
-      progress = { done: 0, last: undefined, grouper: new Grouper() };
+      progress = { done: 0, last: undefined, first: undefined, grouper: new Grouper() };
       this.#progress.set(sessionId, progress);
     }
     if (size === progress.done) return;
@@ -236,12 +290,16 @@ export class SearchIndex {
     for await (const line of linesOf(path, progress.done, size)) {
       progress.done = line.end;
       progress.last = { start: line.start, hash: fingerprint(line.bytes) };
+      progress.first ??= {
+        length: Math.min(FINGERPRINT_BYTES, line.bytes.length),
+        hash: fingerprint(line.bytes),
+      };
       const record = parse(line.text);
       if (record === undefined) continue;
       this.#processed += 1;
       if (record.saying === undefined) continue;
       const { key, joined } = progress.grouper.feed(record.seq, record.saying);
-      for (const word of tokensOf(joined.slice(0, MAX_INDEXED_CHARS))) {
+      for (const word of tokensOf(joined)) {
         const sessions = this.#postings.get(word) ?? new Map<string, number[]>();
         this.#postings.set(word, sessions);
         const keys = sessions.get(sessionId);
@@ -258,8 +316,8 @@ export class SearchIndex {
       const wanted = new Set(sessionIds.filter((id) => SAFE_ID.test(id)));
       for (const id of [...this.#progress.keys()]) if (!wanted.has(id)) this.#forget(id);
       for (const id of wanted) {
-        // A file that cannot be read is left out of this search; the others are still searched.
-        await this.#sync(id).catch(() => this.#forget(id));
+        // A file that cannot be read is searched as far as it was read; the others are searched in full.
+        await this.#sync(id).catch((error: unknown) => this.#failed(id, error));
       }
     });
     this.#queue = run.catch(() => undefined);
@@ -282,31 +340,27 @@ export class SearchIndex {
       const [first, ...rest] = (lists as number[][]).sort((a, b) => a.length - b.length);
       const sets = rest.map((l) => new Set(l));
       const keys = (first ?? []).filter((s) => sets.every((set) => set.has(s))).reverse();
-      if (keys.length === 0) continue;
-      const said = await this.#read(sessionId, new Set(keys));
-      for (const key of keys) {
-        const saying = said.get(key);
-        if (saying === undefined) continue;
-        // The same words the index saw, over the whole message: what the index found is only a likely.
-        const words = tokensOf(saying.text);
-        if (!tokens.every((t) => words.has(t))) continue;
-        if (hits.length === limit) return { hits, truncated: true };
-        let at = 0;
-        let length = 0;
-        for (const token of tokens) {
-          const found = new RegExp(escapeRegExp(token), "iu").exec(saying.text);
-          if (found !== null) {
-            at = found.index;
-            length = token.length;
-            break;
-          }
+      const wanted = new Set(tokens);
+      // Newest first, a few at a time: only as many messages are read as the limit needs.
+      for (let from = 0; from < keys.length; ) {
+        const batch = keys.slice(from, from + Math.max(2 * (limit - hits.length), 20));
+        from += batch.length;
+        const said = await this.#read(sessionId, new Set(batch));
+        for (const key of batch) {
+          const saying = said.get(key);
+          if (saying === undefined) continue;
+          // The same words the index saw, over the whole message: what the index found is only a likely.
+          const words = tokensOf(saying.text);
+          if (!tokens.every((t) => words.has(t))) continue;
+          if (hits.length === limit) return { hits, truncated: true };
+          const { at, length } = locate(saying.text, wanted);
+          hits.push({
+            sessionId,
+            seq: key,
+            from: saying.from,
+            snippet: around(saying.text, at, length),
+          });
         }
-        hits.push({
-          sessionId,
-          seq: key,
-          from: saying.from,
-          snippet: around(saying.text, at, length),
-        });
       }
     }
     return { hits, truncated: false };
@@ -324,19 +378,19 @@ export class SearchIndex {
       () => 0,
     );
     const grouper = new Grouper();
-    const last = Math.max(...keys);
+    let last = 0;
+    for (const key of keys) if (key > last) last = key;
     try {
       for await (const line of linesOf(path, 0, size)) {
         const record = parse(line.text);
         if (record?.saying === undefined) continue;
-        const { key } = grouper.feed(record.seq, record.saying);
+        const { key, part } = grouper.feed(record.seq, record.saying);
         // Nothing after the last message asked for belongs to one.
         if (key > last) break;
         if (!keys.has(key)) continue;
         const had = found.get(key);
-        if (had === undefined)
-          found.set(key, { from: record.saying.from, text: record.saying.text });
-        else if (had.text.length < MAX_INDEXED_CHARS) had.text += record.saying.text;
+        if (had === undefined) found.set(key, { from: record.saying.from, text: part });
+        else had.text += part;
       }
     } catch {}
     return found;
