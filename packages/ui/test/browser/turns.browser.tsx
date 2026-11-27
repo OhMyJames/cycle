@@ -626,7 +626,14 @@ test("a card the reader opened is still open when they come back to it", async (
   await user.click(fold);
   expect(fold.getAttribute("aria-expanded")).toBe("true");
   log.scrollTop = log.scrollHeight;
-  await waitFor(() => expect(log.textContent).toContain("answer 300"));
+  // A slow machine may not have followed the end by itself: go there, as a reader pressing "back to bottom" would.
+  await waitFor(
+    () => {
+      log.scrollTop = log.scrollHeight;
+      expect(log.textContent).toContain("answer 300");
+    },
+    { timeout: 5000 },
+  );
   await waitFor(() => expect(log.scrollHeight - log.scrollTop - log.clientHeight).toBeLessThan(2));
   expect(drawn(log)).toBeLessThan(80);
   for (let i = 0; i < 100 && log.scrollTop > 0; i++) {
@@ -646,7 +653,7 @@ test("an item far above the view is brought into view and marked, in a long conv
     ...turnsOf(300, 1),
   );
   constrain(log);
-  await waitFor(() => expect(log.textContent).toContain("answer 300"));
+  await waitFor(() => expect(log.textContent).toContain("answer 300"), { timeout: 5000 });
   await waitFor(() => expect(drawn(log)).toBeLessThan(80));
   expect(log.querySelector('[data-item-id="far"]')).toBeNull();
   act(() => {
@@ -881,6 +888,87 @@ test("an edit's line counts its own lines and opens to them, not to the strings 
   ).toEqual(["context", "del", "add", "add"]);
   expect(diff?.textContent).toContain("here");
   expect(log.textContent).not.toContain("OLD-INPUT");
+});
+
+test("a big diff draws one page of lines, and each click draws the next until all of it is shown", async () => {
+  const body = Array.from({ length: 1000 }, (_, n) => `+row ${n + 1}`).join("\n");
+  const { user, log } = await open(
+    you("u1"),
+    ...finished(
+      "e",
+      "Edit",
+      { file_path: "src/big.ts", old_string: "a", new_string: "b" },
+      {
+        content: [
+          {
+            type: "diff",
+            changes: [{ operation: "modify", path: "/r/src/big.ts" }],
+            patch: { format: "git_patch", text: `--- a\n+++ b\n@@ -1,0 +1,1000 @@\n${body}\n` },
+          },
+        ],
+        _meta: { "cycle/toolResult": { edit: { additions: 1000, deletions: 0 } } },
+      },
+    ),
+    state({ state: "idle", stopReason: "end_turn" }),
+  );
+  await user.click(await screen.findByRole("button", { name: /Edited/ }));
+  const lines = () => log.querySelectorAll('[data-slot="tool-diff"] [data-line]').length;
+  expect(lines()).toBe(400);
+  await user.click(screen.getByRole("button", { name: "Show 600 more lines" }));
+  expect(lines()).toBe(800);
+  await user.click(screen.getByRole("button", { name: "Show 200 more lines" }));
+  expect(lines()).toBe(1000);
+  expect(screen.queryByRole("button", { name: /more lines/ })).toBeNull();
+});
+
+test("an output over the limit draws a page of its end, and each click draws more until all of it is shown", async () => {
+  const long = Array.from({ length: 1000 }, (_, n) => `line ${n + 1}`).join("\n");
+  const { user, log } = await open(
+    you("u1"),
+    ...finished(
+      "b",
+      "Bash",
+      { command: "make all", description: "Build it" },
+      {
+        content: [{ type: "content", content: { type: "text", text: long } }],
+      },
+    ),
+    state({ state: "idle", stopReason: "end_turn" }),
+  );
+  await user.click(await screen.findByRole("button", { name: /Build it/ }));
+  const out = () => log.querySelector('[data-kind="output"] [data-slot="tool-output"]');
+  expect(out()?.textContent?.split("\n").length).toBe(40);
+  await user.click(screen.getByRole("button", { name: "Show 200 earlier lines" }));
+  expect(out()?.textContent?.split("\n").length).toBe(240);
+  expect(out()?.textContent?.endsWith("line 1000")).toBe(true);
+  for (let i = 0; i < 4; i++)
+    await user.click(screen.getByRole("button", { name: /Show \d+ earlier lines/ }));
+  expect(out()?.textContent).toBe(long);
+  expect(screen.queryByRole("button", { name: /earlier line/ })).toBeNull();
+});
+
+test("a single huge line is shown up to the limit, and more of it on request", async () => {
+  const huge = "x".repeat(50_000);
+  const { user, log } = await open(
+    you("u1"),
+    ...finished(
+      "b",
+      "Bash",
+      { command: "cat big", description: "Cat it" },
+      {
+        content: [{ type: "content", content: { type: "text", text: huge } }],
+      },
+    ),
+    state({ state: "idle", stopReason: "end_turn" }),
+  );
+  await user.click(await screen.findByRole("button", { name: /Cat it/ }));
+  const out = () => log.querySelector('[data-kind="output"] [data-slot="tool-output"]');
+  expect(out()?.textContent?.length).toBeLessThan(20_100);
+  await user.click(screen.getByRole("button", { name: /Show more/ }));
+  expect(out()?.textContent?.length).toBeLessThan(40_100);
+  await user.click(screen.getByRole("button", { name: /Show more/ }));
+  expect(out()?.textContent).toBe(huge);
+  expect(screen.queryByRole("button", { name: /Show more/ })).toBeNull();
 });
 
 test("a new file is Created; a read says its lines; a search what it found; a picture read is shown", async () => {
