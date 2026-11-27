@@ -19,6 +19,7 @@ import type {
   LoopManyResult,
   LoopNoticesAnswer,
   LoopProjectsAnswer,
+  LoopRunsAnswer,
   LoopTicketAnswer,
   PlanUsage,
   PluginFailure,
@@ -80,6 +81,7 @@ export const fakeBridge = (
     /** Whether usage statistics are on. Default: nowhere to report to. */
     analytics?: AnalyticsStatus;
     loopProjects?: LoopProjectsAnswer;
+    loopRuns?: LoopRunsAnswer;
     loopBoards?: Record<string, LoopBoardAnswer>;
     loopTickets?: Record<string, LoopTicketAnswer>;
     /** What a state button comes to. Default: it worked. */
@@ -692,6 +694,10 @@ export const fakeBridge = (
     loopProjects: record(
       "loopProjects",
       async (): Promise<LoopProjectsAnswer> => options.loopProjects ?? { kind: "disconnected" },
+    ),
+    loopRuns: record(
+      "loopRuns",
+      async (): Promise<LoopRunsAnswer> => options.loopRuns ?? { kind: "disconnected" },
     ),
     loopBoard: record(
       "loopBoard",

@@ -195,6 +195,9 @@ export class AppStore extends StoreBase {
         this.set((s) => ({ focusRequests: s.focusRequests + 1 }));
         void this.focusSession(event.locationId, event.sessionId);
         return;
+      case "loop-runs":
+        this.#loop.setRuns(event.runs);
+        return;
       case "open-loop-ticket":
         this.#loop.requestTicket(event.projectKey, event.identifier);
         return;
@@ -343,6 +346,7 @@ export class AppStore extends StoreBase {
 
   loadLoopProjects = this.#loop.loadProjects;
   loadLoopBoard = this.#loop.loadBoard;
+  loadLoopRuns = this.#loop.loadRuns;
   loadLoopTicket = this.#loop.loadTicket;
   actOnLoopTicket = this.#loop.act;
   actOnLoopMany = this.#loop.actMany;

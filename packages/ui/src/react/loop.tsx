@@ -4,7 +4,7 @@
 // Notices) and asks it to approve or return a batch (`loop-board.tsx`, `loop-ticket.tsx`, `loop-notices.tsx`).
 import { Button } from "@ui-sdk/react/button";
 import { useEffect, useState } from "react";
-import type { LoopBoardColumn, LoopNotice, LoopProjectInfo } from "../api.ts";
+import type { LoopBoardColumn, LoopNotice, LoopProjectInfo, LoopRunsAnswer } from "../api.ts";
 import { useI18n } from "./i18n.tsx";
 import { ChevronRightIcon, RefreshIcon } from "./icons.tsx";
 import { Board } from "./loop-board.tsx";
@@ -54,6 +54,7 @@ function Overview({
   const store = useAppStore();
   const boards = useAppState((s) => s.loop.boards);
   const noticeAnswers = useAppState((s) => s.loop.notices);
+  const runs = useAppState((s) => s.loop.runs);
   const [refreshing, setRefreshing] = useState(false);
 
   const notices = projects
@@ -128,6 +129,7 @@ function Overview({
                         <span data-slot="loop-project-title">
                           <span data-slot="loop-project-name">{p.name}</span>
                           <span data-slot="loop-project-key">{p.projectKey}</span>
+                          <RunState runs={runs} projectKey={p.projectKey} />
                         </span>
                         <span data-slot="loop-repo">{p.repo.displayName}</span>
                       </span>
@@ -180,6 +182,22 @@ function Overview({
   );
 }
 
+/**
+ * Whether Loop is running a Project: read-only, from the run data (CYC-458), never from a board column. Said in words, not
+ * by colour alone. Before the first read it says nothing; a server that did not answer is "not running", never "running".
+ */
+function RunState({ runs, projectKey }: { runs: LoopRunsAnswer | undefined; projectKey: string }) {
+  const { t } = useI18n();
+  if (runs === undefined) return null;
+  const running = runs.kind === "ok" && (runs.running[projectKey]?.length ?? 0) > 0;
+  const state = running ? "running" : "idle";
+  return (
+    <span data-slot="loop-run" data-kind="loop-run" data-state={state}>
+      {t(`loop.run.${state}`)}
+    </span>
+  );
+}
+
 export function LoopPage({
   view,
   onView,
@@ -200,8 +218,10 @@ export function LoopPage({
   const loop = useAppState((s) => s.loop);
   const { projects, connected } = loop;
 
+  // The run state is read once; after that main pushes it when Loop's events change it, so it is not read again here.
   useEffect(() => {
     void store.loadLoopProjects();
+    void store.loadLoopRuns();
   }, [store]);
 
   // What is shown: the overview, or the Project asked for (when the server has it).

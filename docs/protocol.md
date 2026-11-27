@@ -1194,7 +1194,7 @@ Loop 服务(`cloud/loop`)是独立于 daemon 的进程:一个进程服务多个 
 - 数据位置:读 `<stateDir>/runs/<KEY>/run.json`。服务配置格式不变,不含 `stateDir`;各 Project 的 `stateDir` 由启动服务的一方提供,配置合并(CYC-455)后改读合并后的配置。不发给客户端。
 - 每个配置里的 Project 都有一项,顺序同 `projects/list`;`runs/` 下还没有记录的 Project 返回 `runs: []`。某个 `run.json` 损坏或读不出来、或键与目录名不符时,该条被跳过,服务在日志里写固定原因和 Project 键,不写路径。某个 Project 的 `stateDir` 未知、不存在或 `runs/` 读不了时,整个调用返回 `-32603`(`Internal error`),不返回空列表,客户端不要把它当成"没在跑"。`runs` 按 `key` 排序;符号链接不跟随。
 - `kind`:`dev` 或 `research`。`state`:`done`(阶段为 done)、`blocked`(阶段为 blocked)、其余为 `active`。含已结束的记录,客户端自己按 `state` 过滤。
-- **`active` 不保证进程还活着**:Loop 异常退出后 `run.json` 还在,仍是 `active`。怎样判断运行仍然活着(待确认,心跳或锁)还没定,定了再加字段;在此之前客户端用 `updatedAt` 的新旧自行判断,不要把 `active` 当成"正在跑"的证明。
+- **`active` 不保证进程还活着**:Loop 异常退出后 `run.json` 还在,仍是 `active`。服务没有给出活着的证据(心跳或锁,待确认)。桌面端的做法见下文"Loop 运行态":服务连不上就是未运行,不靠 `active` 记录。**已知限制**:Loop 异常退出后又被拉起,而某张工单的 `run.json` 仍留着 `active`、却没有进程在做它,桌面端会一直显示"运行中",直到服务加上心跳或锁这类活着的证据;那时再改判据。
 - 字段逐个挑出,不含工单标题、阶段细节、worktree、分支、会话、PR 地址和阻塞原因。响应里没有令牌、仓库完整地址和本地路径。
 - 不提供 `loop/start`、`loop/stop`;事件流见下一节。
 
@@ -1223,6 +1223,17 @@ Loop 服务(`cloud/loop`)是独立于 daemon 的进程:一个进程服务多个 
 - 每条事件只有 `seq`、`ts`、`run`(工单号或 `plan-<轮次>`)、`kind` 四个字段,其余字段一律不发(行里的附加字段可能含路径或地址)。响应里没有令牌、仓库完整地址和本地路径。
 - 不提供 `loop/start`、`loop/stop`;阶段显示归 CYC-442、CYC-443。
 
+### Loop 运行态(桌面端,CYC-458)
+
+页面按 Project 只读显示 Loop 的运行态,不提供启停。
+
+- **判据**:桌面端读 `runs/list`,某 Project 有 `state` 为 `active` 的记录,**且** Loop 服务答了这次读,才算"运行中";否则"未运行"。Loop 进程和 `loop.sock` 同生共死,所以异常退出后连不上服务,运行态是"未运行",不会被 `run.json` 里遗留的 `active` 骗到。`runs/list` 读失败(连不上或 `-32603`)是未知,按"未运行"显示,绝不显示成"运行中"。In Progress 列不再是判据(纠正 CYC-389 的误判)。不用 `updatedAt` 的新旧判断:一步可以很长,没有依据的阈值只会误判("`active` 不保证进程还活着"一条里的已知限制由此而来)。
+- **实时**:桌面主进程对每个 Project 按 `afterSeq = 最后收到的 seq` 短间隔轮询 `events/list`;`hasMore` 为真时立刻再取。`seq <= 已收到的最后 seq` 的事件丢弃,同一个 `seq` 只应用一次。收到新事件后重读 `runs/list`,运行态变了才通知页面(app 事件 `loop-runs`)。页面不用手动刷新。
+- **断线重连**:连不上或读失败时保留最后收到的 `seq`,不清零;下一次轮询带着它请求。`seq_ahead`、`seq_gone`(`-32602`)时从 0 重取,已应用过的 `seq` 同样只应用一次。
+- **看板和工单页随之刷新**(监督者的默认决定,可在 PR 里推翻):某 Project 正在跑的工单集合变了,页面重读它的看板,打开着的工单页也重读,所以 `chat: "watch"` 跟着运行态更新。集合没变的重复推送不触发读取。
+- **退避和冷启动**:轮询只在"有新事件"或"服务连不上"时强制重读 `runs/list`;某个 Project 的 `events/list` 持续报错(非连接问题)不触发重读,只对这个 Project 按 1、2、4…个周期(最多 30)退避,其他 Project 照常。单次读不到 `runs/list` 不翻转运行态,连续 3 次读不到才算连不上。`runs/list` 的任何错误(含某个 Project 的 `-32603`)都按读不到处理,不细分到 Project。`chat` 由 Loop 服务决定,桌面端不读 `runs/list` 来判断它;运行态变了,桌面端只重读看板和当前工单页。页面第一次读运行态之后才开始轮询。第一次把某 Project 的日志读到末尾,那之前的事件算历史,不当新事件。
+- **埋点**:`loop_runs_read`(`result`: `ok`/`disconnected`)。
+
 ### 工单状态按钮(桌面端写 itsaplan,CYC-387)
 
 写入不经过 Loop 服务:桌面主进程用使用者自己的 key 直接写 itsaplan,审计上分得清是人批准的。页面只有三个按钮,不支持拖动:
@@ -1238,7 +1249,7 @@ Loop 服务(`cloud/loop`)是独立于 daemon 的进程:一个进程服务多个 
 工单页的"与 agent 对话"按钮:桌面主进程再读一次工单,按列的状态类型决定,然后用本机 daemon 新开会话。
 
 - Backlog / Todo(`chat: "new"`;Todo 里带 `auto` 的是排给 Loop 的,Loop 会自己接手,所以为 `none`,要细化先退回 Backlog):新开 codex 会话,模型取该 agent 在设置里的默认模型;第一条消息带工单号,agent 通过 itsaplan connector 读写工单,凭据由网关注入。不限制 agent 的工具(CYC-375 的强制部分推迟)。
-- In Progress(按启动列的角色,第一个启动列;`chat: "watch"`):只读旁观,不提供对话。这一列暂时被当作"Loop 正在跑"的判据;已知误差:Loop 异常退出留在 In Progress 的工单会被误判为在跑,CYC-390 用运行数据纠正。其余列(In Review、Blocked,接入原会话见 CYC-388)为 `none`。
+- In Progress(按启动列的角色,第一个启动列;`chat: "watch"`):只读旁观,不提供对话,由 Loop 服务按运行数据决定。其余列(In Review、Blocked,接入原会话见 CYC-388)为 `none`。
 - **工作目录**:ticket 对话的会话跑在专用目录 `<Cycle 数据目录>/ticket-chat/`(安装版是 `~/.cycle/ticket-chat/`),首次使用时创建;不用用户的主目录,也没有默认回退(没配置目录就不创建会话)。
 - 会话已创建但第一条消息没发出去:失败结果带上 `sessionId`,页面给出"打开这个会话"。
 - 默认模型没设:不创建会话,返回 `needs_model`,页面提示去设置里配置,而不是创建失败。
