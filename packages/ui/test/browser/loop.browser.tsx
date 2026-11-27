@@ -68,7 +68,7 @@ const mount = async (script: NonNullable<Parameters<typeof fakeBridge>[0]>) => {
   return { user, options, ...fake };
 };
 
-test("the Loop page shows a full-width board as a row of columns, with Done collapsed", async () => {
+test("the Loop page shows a full-width board as a row of columns, with Done open at the end", async () => {
   const { user, calls } = await mount({
     loopProjects: { kind: "ok", projects: [cycle, docs] },
     loopBoards: { CYC: board },
@@ -93,10 +93,9 @@ test("the Loop page shows a full-width board as a row of columns, with Done coll
   expect(main && boardEl && boardEl.getBoundingClientRect().width >= main.clientWidth - 2).toBe(
     true,
   );
-  // Done is collapsed until asked for.
-  expect(screen.queryByText("Ticket 300")).toBeNull();
-  await user.click(screen.getByRole("button", { name: "Show done" }));
+  // Done is open like the others.
   expect(await screen.findByText("Ticket 300")).toBeTruthy();
+  expect(document.querySelector("[data-folded]")).toBeNull();
   expect(calls.some(([name, key]) => name === "loopBoard" && key === "CYC")).toBe(true);
 });
 
@@ -422,16 +421,16 @@ test("opening a ticket drawer updates breadcrumbs to Project / ticket and clicki
   expect(screen.getByRole("region", { name: "In Progress" })).toBeTruthy();
 });
 
-test("the board shows the columns by name, in the order they come", async () => {
+test("the board shows the columns by name, with Done last, the rest in the order they come", async () => {
   await mount({ loopProjects: { kind: "ok", projects: [cycle] }, loopBoards: { CYC: board } });
   await screen.findByRole("region", { name: "In Review" });
   const names = [...document.querySelectorAll('[data-slot="loop-column"]')].map((e) =>
     e.getAttribute("aria-label"),
   );
-  expect(names).toEqual(["Backlog", "Todo", "In Progress", "Done", "In Review", "Blocked"]);
+  expect(names).toEqual(["Backlog", "Todo", "In Progress", "In Review", "Blocked", "Done"]);
 });
 
-test("the board is a row of columns: cards are not draggable, there is no move menu, and Done shows its count folded", async () => {
+test("the board is a row of columns: cards are not draggable, there is no move menu, and Done is open with its card", async () => {
   await mount({ loopProjects: { kind: "ok", projects: [cycle] }, loopBoards: { CYC: board } });
   await screen.findByRole("region", { name: "In Review" });
   expect(document.querySelectorAll("[draggable='true']")).toHaveLength(0);
@@ -439,7 +438,7 @@ test("the board is a row of columns: cards are not draggable, there is no move m
   expect(screen.queryByRole("menu")).toBeNull();
   const done = screen.getByRole("region", { name: "Done" });
   expect(within(done).getByText("1")).toBeTruthy();
-  expect(within(done).queryByRole("listitem")).toBeNull();
+  expect(within(done).getAllByRole("listitem")).toHaveLength(1);
   const tops = [...document.querySelectorAll('[data-slot="loop-column"]')].map(
     (e) => e.getBoundingClientRect().top,
   );
@@ -483,12 +482,53 @@ const checkNarrow = async () => {
   expect(strip.scrollWidth).toBeGreaterThan(strip.clientWidth);
   strip.scrollLeft = 40;
   expect(strip.scrollLeft).toBeGreaterThan(0);
-  const done = screen.getByRole("region", { name: "Done" });
-  const folded = done.getBoundingClientRect().width;
-  expect(folded).toBeLessThan(16 * 16 * 0.5);
-  await userEvent.click(screen.getByRole("button", { name: "Show done" }));
-  expect(done.getBoundingClientRect().width).toBeGreaterThan(folded);
+  const columns = [...document.querySelectorAll<HTMLElement>('[data-slot="loop-column"]')];
+  for (const c of columns) expect(c.getBoundingClientRect().width).toBeGreaterThanOrEqual(320);
+  expect(document.querySelector("[data-folded]")).toBeNull();
 };
+
+test("a column header lays its dot, title and count on one row", async () => {
+  await mount({ loopProjects: { kind: "ok", projects: [cycle] }, loopBoards: { CYC: board } });
+  const todo = await screen.findByRole("region", { name: "Todo" });
+  const head = todo.querySelector<HTMLElement>('[data-slot="loop-column-head"]') as HTMLElement;
+  expect(getComputedStyle(head).flexDirection).toBe("row");
+  const tops = ["dot", "title", "count"].map((n) =>
+    Math.round(
+      (head.querySelector(`[data-slot="loop-column-${n}"]`) as HTMLElement).getBoundingClientRect()
+        .top,
+    ),
+  );
+  expect(Math.abs((tops[0] ?? 0) - (tops[1] ?? 99))).toBeLessThan(8);
+  expect(Math.abs((tops[2] ?? 0) - (tops[1] ?? 99))).toBeLessThan(8);
+});
+
+test("a column's cards sit symmetrically whether or not the column scrolls", async () => {
+  const many = Array.from({ length: 30 }, (_, i) => ticket(700 + i, "Backlog"));
+  await mount({
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: { CYC: withTickets({ Backlog: many }) },
+  });
+  const backlog = await screen.findByRole("region", { name: "Backlog" });
+  const todo = screen.getByRole("region", { name: "Todo" });
+  // Give the strip a fixed height so the 20 loaded Backlog cards overflow their column.
+  const strip = document.querySelector<HTMLElement>('[data-slot="loop-columns"]');
+  if (strip === null) throw new Error("no columns");
+  strip.style.flex = "none";
+  strip.style.height = "400px";
+  const body = (c: HTMLElement) =>
+    c.querySelector<HTMLElement>('[data-slot="loop-column-body"]') as HTMLElement;
+  expect(body(backlog).scrollHeight).toBeGreaterThan(body(backlog).clientHeight);
+  const gap = (c: HTMLElement) => {
+    const b = body(c).getBoundingClientRect();
+    const k = (body(c).querySelector("li") as HTMLElement).getBoundingClientRect();
+    return [k.left - b.left, b.right - k.right] as [number, number];
+  };
+  const [l, r] = gap(backlog);
+  expect(Math.abs(l - r)).toBeLessThanOrEqual(0.5);
+  const [tl, tr] = gap(todo);
+  expect(Math.abs(tl - tr)).toBeLessThanOrEqual(0.5);
+  expect(l).toBeCloseTo(tl, 0);
+});
 
 test("while the board is read each column shows skeleton cards", async () => {
   const fake = fakeBridge({
