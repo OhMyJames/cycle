@@ -15,6 +15,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "search.open": "搜索会话",
 
   "session.away": "{location} · {state}",
+  "session.hasDraft": "有未发送的草稿",
   "notice.connecting": "正在连接 {location}…",
   "notice.draftKept": "草稿会保留。",
   "session.awayIncompatible":
