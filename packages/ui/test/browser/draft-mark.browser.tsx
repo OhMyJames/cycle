@@ -118,3 +118,18 @@ test("it sits beside the time or the status dot, and the title still gives way",
     expect(r.scrollWidth).toBeLessThanOrEqual(r.clientWidth);
   }
 });
+
+test("the open session's row does not show it; the row shows it again once another session is open", async () => {
+  const { store, row, draft } = await mount();
+  act(() => store.drafts.setText(draft("a"), "still writing"));
+  act(() => store.drafts.setText(draft("b"), "later"));
+  await waitFor(() => expect(mark(row("alpha"))).not.toBeNull());
+  const user = userEvent.setup();
+  await user.click(row("alpha"));
+  await waitFor(() => expect(mark(row("alpha"))).toBeNull());
+  expect(row("alpha").textContent).not.toContain("Unsent draft");
+  expect(mark(row("beta"))).not.toBeNull();
+  await user.click(row("beta"));
+  await waitFor(() => expect(mark(row("beta"))).toBeNull());
+  await waitFor(() => expect(mark(row("alpha"))).not.toBeNull());
+});

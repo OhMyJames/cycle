@@ -125,11 +125,14 @@ function Row({
   session,
   away,
   pinned,
+  open,
   onAction,
 }: {
   session: SessionSummary;
   away: Away | undefined;
   pinned: boolean;
+  /** The session open beside the list: its draft is in front of the person, so its row does not mark it. */
+  open: boolean;
   onAction: (session: SessionSummary, action: RowAction) => void;
 }) {
   const { t } = useI18n();
@@ -146,8 +149,9 @@ function Row({
   // One thing a row says. A session of a location that is away is the last list read: it says nothing.
   const mark = away !== undefined ? undefined : markOf(session);
   const style = mark !== undefined ? MARK_STYLE[mark] : undefined;
-  // Unsent text, kept per session. Like the mark, an away row says nothing of it.
-  const hasDraft = useHasDraft(sessionKey(session)) && away === undefined;
+  // Unsent text, kept per session. Like the mark, an away row says nothing of it; nor does the open session's row,
+  // whose draft is in the composer in front of the person.
+  const hasDraft = useHasDraft(sessionKey(session)) && away === undefined && !open;
   return (
     <ListboxItem
       ref={rowRef}
@@ -277,6 +281,7 @@ export function SessionListView({
                 session={session}
                 away={away.get(session.locationId)}
                 pinned={pinned.has(sessionKey(session))}
+                open={selected === sessionKey(session)}
                 onAction={onAction}
               />
             ))}
