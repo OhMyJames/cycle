@@ -153,6 +153,12 @@ export class DaemonSessions implements Sessions {
     return true;
   }
 
+  async updatePending(): Promise<boolean> {
+    if (this.#client.state !== "connected") return false;
+    const state = await this.#client.readDaemonUpdate().catch(() => undefined);
+    return state?.pending !== undefined;
+  }
+
   async close(): Promise<void> {
     await this.#client.close();
   }

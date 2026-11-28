@@ -40,6 +40,8 @@ import {
   connectorsList,
   connectorsRemove,
   connectorsUpdate,
+  type DaemonUpdateState,
+  daemonUpdateRead,
   diffFile,
   diffStatus,
   type FolderList,
@@ -597,6 +599,15 @@ export class CycleClient {
   async readPlanUsage(): Promise<Record<string, PlanUsage>> {
     if (this.#capabilities.planUsage !== true) return {};
     return (await this.#call(planUsageRead, {})).agents as Record<string, PlanUsage>;
+  }
+
+  /**
+   * The daemon's own update state (docs/protocol.md §3, CYC-538). A daemon that does not say it has one is older: it is
+   * not asked, and the answer is undefined, which means nothing is waiting to be installed.
+   */
+  async readDaemonUpdate(): Promise<DaemonUpdateState | undefined> {
+    if (this.#capabilities.selfUpdate !== true) return undefined;
+    return await this.#call(daemonUpdateRead, {});
   }
 
   /**

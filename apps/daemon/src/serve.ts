@@ -1,15 +1,28 @@
 import { writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { CYCLE_PROTOCOL_VERSION, type DaemonUpdateState } from "@cycle/protocol";
 import { captureConfigMtime } from "./agent-setup.ts";
 import { builtinPlugins } from "./builtin-plugins.ts";
 import { type Config, ConfigSchema, loadConfig, type Paths, secureConfigFile } from "./config.ts";
 import { Daemon, defaultTerminals } from "./daemon.ts";
 import { agentsFor, HARNESSES } from "./harnesses.ts";
 import { errorText, type FileLogger, fileLogger } from "./logger.ts";
-import { selfCommand } from "./self.ts";
+import { RELEASE_KEYS, verifySignature } from "./release-keys.ts";
+import { compiled, selfCommand } from "./self.ts";
+import {
+  QUIET_MS,
+  recordBad,
+  SelfUpdate,
+  type Staged,
+  swapBack,
+  swapIn,
+  whyNotUpdatable,
+} from "./self-update.ts";
+import { checkFolder, startAndWait } from "./self-update-host.ts";
 import { agentHomesOf } from "./storage.ts";
 import { listenUnix } from "./transport/server.ts";
+import { installOf } from "./update.ts";
 import { VERSION } from "./version.ts";
 
 export type ServeOptions = {
@@ -19,6 +32,8 @@ export type ServeOptions = {
   idleExit?: () => void;
   /** How often idle agents and an idle daemon are looked for. Default 30 s; tests make it short. */
   sweepMs?: number;
+  /** What is done once the daemon has handed over to another version (docs/daemon.md "自动更新"). Default: exit with 0. */
+  switched?: () => void;
 };
 
 /** Minutes from the config as ms, or undefined for 0: off. */
@@ -54,6 +69,25 @@ export const serve = async (paths: Paths, options: ServeOptions = {}) => {
     log.warn("config_mode_unsafe", { path: paths.config, error: errorText(error) });
   }
   let daemon: Daemon;
+  // Its own updates (docs/daemon.md "自动更新"): only an installed release with a key to check the channel's signature.
+  const executable = process.execPath;
+  const installDir = dirname(executable);
+  const notUpdating = whyNotUpdatable({
+    version: VERSION,
+    install: installOf(executable, compiled()),
+    keys: RELEASE_KEYS,
+    env: process.env,
+  });
+  let updater: SelfUpdate | undefined;
+  const updateState = (): DaemonUpdateState => {
+    const state = updater?.state;
+    if (state === undefined || state.updates === "off") return { version: VERSION, updates: "off" };
+    return {
+      version: VERSION,
+      updates: "on",
+      ...(state.pending !== undefined ? { pending: { version: state.pending.version } } : {}),
+    };
+  };
   const builtin = builtinPlugins();
   const agentIdleMs = minutes(config.idle.agentMinutes);
   const attachedAgentIdleMs = minutes(config.idle.attachedAgentMinutes);
@@ -80,6 +114,7 @@ export const serve = async (paths: Paths, options: ServeOptions = {}) => {
       },
       ...(agentIdleMs !== undefined ? { agentIdleMs } : {}),
       ...(attachedAgentIdleMs !== undefined ? { attachedAgentIdleMs } : {}),
+      updateState,
     });
     let clients = 0;
     server = await listenUnix({
@@ -103,11 +138,12 @@ export const serve = async (paths: Paths, options: ServeOptions = {}) => {
   log.info("listening", { socket: paths.socket });
   let closing: Promise<void> | undefined;
   // One stop, whoever asks for it (a signal, the idle exit): a second caller waits for the first.
-  const close = (): Promise<void> => {
+  const close = (beforeRelease?: () => Promise<void>): Promise<void> => {
     closing ??= (async () => {
       // Before anything is awaited: from here no client gets in to start something that would be cut short.
       refusing = true;
       clearInterval(sweep);
+      updater?.stop();
       const working = daemon.activity();
       log.info("daemon_stopping", {
         working: working.length,
@@ -116,6 +152,11 @@ export const serve = async (paths: Paths, options: ServeOptions = {}) => {
       // Everything is written while the socket is still held, so no second daemon can start on this data directory
       // (a client reconnecting through `cycle proxy`) until this one has finished with it.
       await daemon.close();
+      // A switch of version is made here: whatever starts a daemon on this socket meanwhile waits, and then runs the new.
+      if (beforeRelease !== undefined)
+        await beforeRelease().catch((error: unknown) =>
+          log.warn("self_update_swap_failed", { error: errorText(error) }),
+        );
       await rm(pidFile, { force: true });
       server.close();
       log.info("daemon_stopped");
@@ -133,7 +174,55 @@ export const serve = async (paths: Paths, options: ServeOptions = {}) => {
     log.info("idle_exit", { idleMinutes: Math.round((Date.now() - since) / 60_000) });
     void close().then(options.idleExit ?? (() => process.exit(0)));
   }, options.sweepMs ?? 30_000);
-  return { log, close };
+
+  /**
+   * Hands over to the staged version: stops, switches the folders, starts the new daemon. If it does not listen in time,
+   * it is thrown away, remembered as bad, and the version before is started again. Either way this process then ends.
+   */
+  const switchTo = async (staged: Staged): Promise<void> => {
+    const stateFile = join(paths.dataDir, "daemon-update.json");
+    let swapped = false;
+    await close(async () => {
+      await swapIn(installDir);
+      swapped = true;
+    });
+    const program = join(installDir, "cycle");
+    if (swapped && (await startAndWait(paths, program))) {
+      (options.switched ?? (() => process.exit(0)))();
+      return;
+    }
+    if (swapped) {
+      await swapBack(installDir).catch(() => {});
+      await recordBad(stateFile, staged.version).catch(() => {});
+    }
+    await startAndWait(paths, program).catch(() => false);
+    (options.switched ?? (() => process.exit(0)))();
+  };
+
+  if (notUpdating === undefined) {
+    updater = new SelfUpdate({
+      version: VERSION,
+      platform: process.platform,
+      arch: process.arch,
+      protocol: CYCLE_PROTOCOL_VERSION,
+      installDir,
+      keys: RELEASE_KEYS,
+      verify: verifySignature,
+      fetch,
+      stateFile: join(paths.dataDir, "daemon-update.json"),
+      check: checkFolder(executable),
+      idle: () => daemon.quietForUpdate(QUIET_MS),
+      apply: switchTo,
+      log,
+    });
+    await updater
+      .start()
+      .catch((error: unknown) => log.warn("self_update_start_failed", { error: errorText(error) }));
+    log.info("self_update_on", {});
+  } else {
+    log.info("self_update_off", { why: notUpdating });
+  }
+  return { log, close: () => close() };
 };
 
 /**

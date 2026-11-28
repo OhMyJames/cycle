@@ -1,13 +1,13 @@
 import { expect, test } from "bun:test";
 import { daemonCommand, loginShellPath } from "../src/main/layout.ts";
 
-const base = { platform: "darwin", arch: "arm64" };
+const base = { platform: "darwin", arch: "arm64", managedDir: "/Users/u/.cycle/daemon/bin" };
 const has =
   (...paths: string[]) =>
   (path: string) =>
     paths.includes(path);
 
-test("packaged: the bundled daemon, and never Bun or the source", () => {
+test("packaged: the daemon in its own folder, seeded from the app's, and never Bun or the source", () => {
   const files = has(
     "/App/Resources/app/build.json",
     "/App/Resources/app/bin/cycle",
@@ -22,7 +22,7 @@ test("packaged: the bundled daemon, and never Bun or the source", () => {
       env: { CYCLE_DAEMON_BIN: "/elsewhere" },
       exists: files,
     }),
-  ).toEqual(["/App/Resources/app/bin/cycle"]);
+  ).toEqual(["/Users/u/.cycle/daemon/bin/cycle"]);
 });
 
 test("packaged but missing a part: an error that names it, not a quiet fall back", () => {

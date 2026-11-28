@@ -7,6 +7,7 @@
 // On macOS the copy is a bundle with its Info.plist changed and an ad hoc signature, so that it runs
 // at all on Apple silicon; a release then signs it with a Developer ID and notarizes it (sign.ts).
 // On Linux the same files make a folder. That is what the tests launch.
+
 import {
   chmodSync,
   copyFileSync,
@@ -19,6 +20,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { daemonVersion as daemonVersionOf } from "../../daemon/scripts/version.ts";
 import {
   AGENT_BINS,
   APP_NAME,
@@ -98,6 +100,8 @@ export const packageApp = (outDir = BUILD_DIR): Packaged => {
   const electron = electronDist();
   // Which interface bundles this app can take (shared/ui-bundle.ts): bundles are for the shell they were built with.
   const uiVersion = Number(git("rev-list", "--count", "HEAD")) || 0;
+  // The version of the daemon the app carries, to put in `<CYCLE_HOME>/daemon/bin` when the one there is older (CYC-538).
+  const daemonVersion = daemonVersionOf();
 
   // The main process, preload and page; and the daemon with the agents' binaries beside it, for this platform.
   run([process.execPath, "scripts/build.ts"], DESKTOP);
@@ -129,7 +133,7 @@ export const packageApp = (outDir = BUILD_DIR): Packaged => {
   );
   writeFileSync(
     join(staging, BUILD_FILE),
-    `${JSON.stringify({ name: APP_NAME, identifier: BUNDLE_ID, version, ...(commit ? { commit } : {}), ...(subject ? { subject } : {}), platform, arch, electron: electron.version, shell, uiVersion, ...posthogProject() }, null, 2)}\n`,
+    `${JSON.stringify({ name: APP_NAME, identifier: BUNDLE_ID, version, ...(commit ? { commit } : {}), ...(subject ? { subject } : {}), platform, arch, electron: electron.version, shell, uiVersion, daemonVersion, ...posthogProject() }, null, 2)}\n`,
   );
 
   const app = join(outDir, platform === "darwin" ? MAC_BUNDLE : "Cycle");

@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 // What a packaged app is called and where its parts are. Paths are relative to the app's own folder,
 // `Contents/Resources/app` in a macOS bundle and `resources/app` elsewhere.
@@ -20,11 +20,15 @@ export const AGENT_BINS = ["bin/claude", "bin/codex", "bin/codex-code-mode-host"
 export const DIST_DIR = "dist";
 export const MAIN = `${DIST_DIR}/main.mjs`;
 
+/** The folder of the daemon the app carries (`<app>/bin`): the seed of the one that runs (main/daemon-home.ts). */
+export const bundledDaemonDir = (here: string): string => join(here, "..", dirname(DAEMON_BIN));
+
 /**
  * The command that runs the daemon for this computer. `here` is the folder the main process runs
- * from (`dist`). Packaged, it is the bundled executable and nothing else: a user's machine has no Bun,
- * so there is no fall back to source, only an error that says what is missing. In development, the
- * first that exists of CYCLE_DAEMON_BIN, the built executable, or the source run with bun.
+ * from (`dist`). Packaged, it is the daemon in `managedDir` (`<CYCLE_HOME>/daemon/bin`, CYC-538), which the app
+ * seeds from the one it carries; the app must carry one, and a user's machine has no Bun, so there is no fall back
+ * to source, only an error that says what is missing. In development, the first that exists of CYCLE_DAEMON_BIN, the
+ * built executable, or the source run with bun.
  */
 export const daemonCommand = (options: {
   here: string;
@@ -32,6 +36,8 @@ export const daemonCommand = (options: {
   platform: string;
   arch: string;
   exists: (path: string) => boolean;
+  /** Where the packaged app runs its daemon from. */
+  managedDir: string;
 }): string[] => {
   const { here, env, exists } = options;
   const appDir = join(here, "..");
@@ -42,7 +48,7 @@ export const daemonCommand = (options: {
       if (!exists(join(appDir, bin)))
         throw new Error(`The app is missing an agent's binary: ${join(appDir, bin)}`);
     }
-    return [bundled];
+    return [join(options.managedDir, "cycle")];
   }
   if (env.CYCLE_DAEMON_BIN !== undefined) return [env.CYCLE_DAEMON_BIN];
   const built = join(here, `../../daemon/dist/cycle-${options.platform}-${options.arch}/cycle`);

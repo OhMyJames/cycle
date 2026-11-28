@@ -71,7 +71,7 @@ agent 是 daemon 的子进程,daemon 停止时进行中的 turn 不会继续。�
 
 问用的是已有的 `session/list`,协议版本不同时按 daemon 说的版本再问一次,所以新的 `cycle` 可以这样停一个旧 daemon,升级时正是这样(`src/stop.ts`)。
 
-**`cycle update`**:一条命令更新到跟桌面端配套的版本,不用先 `cycle stop`。配套版本是桌面端最近一次连接时报的(`app-version` 文件,见 protocol.md §3);`--version <x.y.z>` 指定别的。步骤:下载该 release 的 `install.sh` 和 `.sha256` 并校验(不符就停,不替换);运行 `install.sh <tag>`(它再校验压缩包,装到本程序所在的 `<prefix>/share/cycle`);若 daemon 在运行,默认像 `stop --wait` 那样等没有会话在工作,再让旧进程退出并立即拉起新版本(不等下一次连接);`--now` 不等,像 `stop --force`。daemon 没在运行就只替换二进制。没记录过配套版本又没给 `--version` 退出码 2;目标等于本程序版本则什么也不做;二进制在桌面应用包里(`.app/Contents/`)或不在 `install.sh` 的位置时拒绝。只支持 Linux(`install.sh` 的限制),其他平台直接拒绝。新 daemon 从刚装好的 `<prefix>/share/cycle/cycle` 启动,不从正在运行的进程自己的路径(那个文件已被替换)。目标等于本程序版本但运行中的 daemon 版本不同时,不再安装,只把它换过去。目标低于当前版本会警告(降级)。sha256 只校验完整性:校验文件和脚本来自同一个 release,不证明发布者。每一步都会打印(`src/update.ts`)。
+**`cycle update`**:立刻装上发布通道上最新的 daemon,不用先 `cycle stop`(装好的 daemon 平时自己在空闲时做这件事,见下面"自动更新";这是给想马上换的人和太旧、不会自己更新的 daemon 的)。步骤和自动更新相同:读通道的清单、验签名、把新版本拼到 `<安装目录>.staged` 并检查;daemon 没在运行就直接换目录;在运行时默认像 `stop --wait` 那样等没有会话在工作,再换目录并从新目录拉起新版本;`--now` 不等,像 `stop --force`。已经是最新就什么也不做。`--version` 不再接受(通道上只有最新的),退出码 2。二进制在桌面应用包里(`.app/Contents/`)、从源码运行、或不在安装器放的位置(Linux 的 `<prefix>/share/cycle/cycle`,或应用放的 `<数据目录>/daemon/bin/cycle`)时拒绝。每一步都会打印(`src/update.ts`)。
 
 **daemon 停止时**(收到 `SIGTERM`/`SIGINT`):对每个有进行中 turn 的 session,先把等待中的权限请求和表单写成 `aborted`(按取消回给 agent),再写一条 turn 的终态:`state_update` 为 `idle`、`stopReason: "error"`、`error.code` 为 `-32018`(`daemon_stopped`),然后结束 agent。此后 agent 发来的更新不再记录。终态算"值得看",所以会话显示未读;客户端重连补发时看到它。
 
@@ -80,6 +80,22 @@ agent 是 daemon 的子进程,daemon 停止时进行中的 turn 不会继续。�
 **队列**:终态不退回队列。排队的 prompt 按"排队"的重启规则留着,下一次有客户端附着时以 `reason: "interrupted"` 退回输入框。
 
 **`Daemon.activity()`**:daemon 里同一个"有没有在工作"的判断(turn、待回答的请求、后台任务、排队数)。`cycle stop` 和下面的空闲退出都用它:只在它为空时停。
+
+## 自动更新(CYC-538)
+
+daemon 有自己的版本和自己的发布通道,不跟桌面端一起发版;装好的 daemon 在空闲时自己换到新版本,不问人。决定和理由见 [决定笔记](../.agents/notes/2026-11-27-daemon-releases-on-its-own-and-updates-itself-when-idle.md)。
+
+- **版本**:`<主>.<次>.<提交数>`,主和次取桌面端的版本,提交数是构建所在分支的 `git rev-list --count HEAD`(`scripts/version.ts`)。main 上每个提交都比前一个大,所以通道上的 daemon 和应用发版时带的 daemon 可以直接按数字比。浅克隆数不出提交数,构建出来是 `<主>.<次>.0`,比任何发布的都旧;发布的工作流检查它不是这样。`CYCLE_DAEMON_VERSION` 可以指定(测试用)。
+- **发布通道**:滚动的预发布 `daemon-latest`(tag 不以 `v` 开头,桌面端的更新器不读它)。每个平台一份清单 `daemon-<platform>-<arch>.json` 和它的签名 `.sig`;清单列出 daemon 目录里的每个文件(路径、SHA-256、大小、模式),文件本身按 SHA-256 存成 `daemon-blob-<sha256>.gz`。没变的文件不重新上传,也不重新下载。格式在 `src/channel.ts`。
+- **签名**:清单用界面包的同一把 CI 私钥签(GitHub 环境 `ui-release` 的 `UI_SIGNING_KEY`,只有 main 能用),公钥内置在 daemon 里(`src/release-keys.ts`,测试保证和桌面端的 `ui-keys.ts` 一样)。清单里有 `kind: "daemon"`,界面包的签名不能拿来冒充。没有内置公钥时不自动更新。macOS 上每个程序用 Developer ID 签名,保留应用里的 identifier(Claude、Codex 用它们原厂的,其他用文件名),entitlements 和应用的签名一样,所以钥匙串认得它,不会再问登录;签名带时间戳,每次字节都不同,所以清单另记签名前的哈希(`source`),签名前没变的文件沿用已发布的那份。
+- **发布**:`.github/workflows/daemon-release.yml`,main 上每个提交跑一次。三个平台(linux-x64、linux-arm64、darwin-arm64)各自构建,再算"构建读到的东西"的哈希(打包器的全部输入、构建脚本、Bun 的版本,加上 daemon 旁边每个文件签名前的哈希;不算可执行文件本身的字节,因为里面写着版本),和已发布的比,一样就到此为止。不一样:macOS 签名,然后跑和 release 一样的检查(`cycle status`、`cycle version`、各 agent 的 `--version`、用这个二进制跑 daemon 的集成测试),再组装清单。所有平台都过了才发布,先传文件,再传签名,最后传清单;比已发布的旧的不发(排队的旧提交不覆盖新的)。没有任何清单用到、而且超过一天的文件删掉。没人批准这一步,所以这些检查就是全部的关口。改这个工作流或发布脚本的 PR 会跑一遍除了签名和发布以外的全部步骤。macOS 的 job 在仓库变量 `RELEASE_RUNNER` 为 `self-hosted` 时用负责人的 Mac(PR 不用);仓库变量 `RELEASE_SIGN` 不是 `true` 时不发布 macOS 的 daemon(没签名的钥匙串不认)。
+- **谁会自己更新**:编译好的 release(版本是 `x.y.z`)、内置了公钥、装在安装器放的位置(Linux 的 `<prefix>/share/cycle`,或桌面端放的 `<数据目录>/daemon/bin`)、没有设 `CYCLE_DAEMON_UPDATES=off`。在应用包里、从源码运行的不会。日志里启动时写 `self_update_on` 或 `self_update_off`(带原因)。
+- **检查和下载**:启动后 2 分钟一次,之后每 30 分钟一次(带 `If-None-Match`)。清单要合格、签名由内置公钥签出、平台对、版本比自己新、协议主版本和自己一样(不一样只写日志 `self_update_needs_manual_update`,不自动换)、不是之前换过去起不来的版本(记在 `<数据目录>/daemon-update.json`)。然后在安装目录旁边的 `<安装目录>.staging` 拼出新版本:和已装的文件一样的直接复制(能克隆的卷上不占空间),其余从通道下载,边解压边算哈希,大小和哈希都要对。拼好后检查:新的 `cycle version` 要说出清单的版本;macOS 上这个 daemon 有团队签名时,新目录里每个程序都要签名有效且是同一个团队。都过了才改名成 `<安装目录>.staged`,旁边写 `<安装目录>.staged.json`。任何一步失败都只写日志,下次再试,正在跑的版本不动。
+- **什么时候换**:有待换的版本时每 30 秒问一次自己是不是空闲:没有会话在工作(turn、待回答的请求、后台任务,同 `Daemon.activity()`)、没有会话在加载或启动 agent、任何会话 2 分钟内没有动静,终端里没有在跑的命令(动作终端还没结束,或交互终端里 shell 之外还有进程;只开着 shell 不算,重启后面板会重新开一个)。连着的客户端不算:桌面端和 Loop 一直连着,换完会自己重连。
+- **怎么换**:像停止一样关掉 daemon(拒绝新连接、写完记录),在还占着 socket 的时候把安装目录改名成 `<安装目录>.old`、把 `.staged` 改名成安装目录,然后放开 socket、从安装目录拉起新的 daemon,等它在 30 秒内开始监听,旧进程退出。新的没起来:扔掉它、把 `.old` 改回来、把这个版本记成坏的、拉起旧的。新的跑满 10 分钟后删掉 `.old`。
+- **Loop 配合**:Loop 领新单前问 daemon(`_cycle/daemon/update/read`,protocol.md §3),有待换的版本就不领新单,正在进行的 run 照常,daemon 很快就空闲了;换完连接断开再连上,Loop 重新领单。
+- **桌面端放进来的版本**:桌面端带着一个 daemon(种子)。本机的 daemon 比它旧时,没在运行就直接替换,在运行就放进 `.staged`,由运行中的 daemon 在空闲时照上面的规则换过去(docs/desktop.md "本机 daemon")。
+- **远端**:装在远端 Linux 上的 daemon 一样自己更新。桌面端对低于最低版本的远端 daemon 仍显示"Update"按钮作为兜底(它装的是应用所在 release 里的 daemon,之后 daemon 再从通道更新)。
 
 ## 空闲回收和空闲退出
 

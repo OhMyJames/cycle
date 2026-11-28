@@ -20,6 +20,9 @@ jobs:
       PACKAGE: cycle-linux-${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The daemon's version is the number of commits (scripts/version.ts): a shallow clone would make it 0.
+          fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
@@ -38,7 +41,7 @@ jobs:
           sha256sum install.sh > install.sh.sha256
           CYCLE_PREFIX="$RUNNER_TEMP/install" sh ./install.sh
           D="$RUNNER_TEMP/install/share/cycle"
-          test "$(env -i PATH=/usr/bin:/bin "$D/cycle" version)" = "$(jq -r .version ../../desktop/package.json)"
+          test "$(env -i PATH=/usr/bin:/bin "$D/cycle" version)" = "$(bun ../scripts/version.ts)"
           env -i PATH=/usr/bin:/bin "$D/claude" --version
           env -i PATH=/usr/bin:/bin "$D/codex-code-mode-host" --help >/dev/null
           CYCLE_DAEMON_BIN="$D/cycle" bun test ../../../harness/codex/test/integration/adapter.integration.ts

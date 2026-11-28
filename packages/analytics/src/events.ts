@@ -235,6 +235,12 @@ export const EVENTS = {
   /** The person asked to check for an update. */
   update_checked: o({ result: z.enum(["available", "up_to_date", "error", "disabled"]) }),
   update_install_started: o({}),
+  /**
+   * At start, the installed app put the daemon it carries where the local daemon runs from (CYC-538): `installed` there
+   * was none or an older one not running, `staged` an older one is running and switches when idle, `current` the one
+   * there is as new or newer (it updated itself), `failed` it could not, and runs the one it carries.
+   */
+  local_daemon_seeded: o({ result: z.enum(["installed", "staged", "current", "failed"]) }),
   interface_update_applied: o({}),
   /** The person chose light, dark, or to follow the system. */
   theme_changed: o({ theme: z.enum(["system", "light", "dark"]) }),

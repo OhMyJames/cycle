@@ -1,0 +1,183 @@
+# Publishes the daemon to its release channel `daemon-latest` for each commit on main that changes it, so that installed
+# daemons update themselves when idle, without a new app (docs/daemon.md "自动更新", CYC-538).
+#
+#  push to main      builds each platform; where what the build read is the same as what is published, stops there.
+#                    Otherwise checks the binaries the way the release does, signs (macOS, Developer ID), and publishes.
+#  pull request      (to this workflow or the channel script) does everything but sign and publish: a dry run.
+#  run by hand       the same as a push, from the branch it is run on; publishes only from main.
+#
+# Nobody approves a publish: these checks are what stands between a commit and every installed daemon. The manifest is
+# signed with the interface bundles' key, a secret of the environment `ui-release`, which only main may use.
+name: daemon-release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".agents/**"
+  pull_request:
+    paths:
+      - ".github/workflows/daemon-release.yml"
+      - "apps/daemon/scripts/channel.ts"
+      - "apps/daemon/scripts/sign-mac.ts"
+      - "apps/daemon/scripts/version.ts"
+  workflow_dispatch:
+
+# One at a time, in order: a later commit's daemon must not be put over by an earlier one that was waiting.
+concurrency:
+  group: daemon-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux, arch: x64, runner: '"ubuntu-24.04"' }
+          - { platform: linux, arch: arm64, runner: '"ubuntu-24.04-arm"' }
+          # The owner's Mac when the repository says so (docs/decisions/0008), but never for a pull request.
+          - platform: darwin
+            arch: arm64
+            runner: ${{ github.event_name != 'pull_request' && vars.RELEASE_RUNNER == 'self-hosted' && '["self-hosted","macOS","ARM64"]' || '"macos-latest"' }}
+    runs-on: ${{ fromJSON(matrix.runner) }}
+    timeout-minutes: 60
+    env:
+      DIR: apps/daemon/dist/cycle-${{ matrix.platform }}-${{ matrix.arch }}
+      # Signed only where the app is (RELEASE_SIGN), and never for a pull request. An unsigned macOS daemon is not
+      # published: the keychain would not know it as the app's.
+      SIGN: ${{ matrix.platform == 'darwin' && github.event_name != 'pull_request' && vars.RELEASE_SIGN == 'true' }}
+      PUBLISHABLE: ${{ github.event_name != 'pull_request' && (matrix.platform != 'darwin' || vars.RELEASE_SIGN == 'true') }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The version is the number of commits: a shallow clone would make every daemon 0.
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Version
+        id: version
+        run: |
+          v=$(bun apps/daemon/scripts/version.ts)
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          test "${v##*.}" -ge 100
+      - name: Build
+        run: CYCLE_DAEMON_VERSION=${{ steps.version.outputs.version }} bun run --cwd apps/daemon build --no-tarball
+      - name: Has anything changed
+        id: plan
+        run: |
+          bun apps/daemon/scripts/channel.ts plan --dir "$DIR" --version ${{ steps.version.outputs.version }} \
+            --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --out "$RUNNER_TEMP/plan.json"
+      # A pull request goes on regardless: it is there to try the steps.
+      - name: Go on
+        id: go
+        run: echo "go=${{ steps.plan.outputs.changed == 'true' || github.event_name == 'pull_request' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Import the signing certificate
+        if: steps.go.outputs.go == 'true' && env.SIGN == 'true'
+        env:
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/cycle-signing.keychain-db"
+          PASSWORD=$(openssl rand -hex 16)
+          printf '%s' "$APPLE_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/cycle.p12"
+          security create-keychain -p "$PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cycle.p12" -k "$KEYCHAIN" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$PASSWORD" "$KEYCHAIN" > /dev/null
+          rm "$RUNNER_TEMP/cycle.p12"
+          EXISTING=$(security list-keychains -d user | sed -e 's/^[[:space:]]*"//' -e 's/"$//' | tr '\n' ' ')
+          security list-keychains -d user -s "$KEYCHAIN" $EXISTING
+          echo "CYCLE_KEYCHAINS_BEFORE=$EXISTING" >> "$GITHUB_ENV"
+          echo "CYCLE_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+      - name: Sign
+        if: steps.go.outputs.go == 'true' && env.SIGN == 'true'
+        run: bun apps/daemon/scripts/sign-mac.ts "$DIR"
+
+      - uses: ./.github/actions/codex-sandbox
+        if: steps.go.outputs.go == 'true' && matrix.platform == 'linux'
+      # The same checks the release makes of what it ships, on what is published.
+      - name: The daemon and the agents' binaries run
+        if: steps.go.outputs.go == 'true'
+        run: |
+          set +e
+          "$DIR/cycle" status --data-dir "$RUNNER_TEMP/d1"; test $? -eq 1 || exit 1
+          test "$(env -i PATH=/usr/bin:/bin "$DIR/cycle" version)" = "${{ steps.version.outputs.version }}" || exit 1
+          "$DIR/claude" --version || exit 1
+          "$DIR/codex" --version || exit 1
+          "$DIR/codex-code-mode-host" --help >/dev/null || exit 1
+          CYCLE_DAEMON_BIN="$PWD/$DIR/cycle" bun run --cwd apps/daemon test:integration || exit 1
+      - name: The signatures hold
+        if: steps.go.outputs.go == 'true' && env.SIGN == 'true'
+        run: |
+          for f in cycle claude codex codex-code-mode-host; do
+            codesign --verify --strict --verbose=2 "$DIR/$f"
+            codesign -dv "$DIR/$f" 2>&1 | grep -E '^(Identifier|TeamIdentifier)='
+          done
+
+      - name: Assemble
+        if: steps.go.outputs.go == 'true'
+        run: |
+          bun apps/daemon/scripts/channel.ts assemble --dir "$DIR" --plan "$RUNNER_TEMP/plan.json" \
+            --version ${{ steps.version.outputs.version }} --commit "$GITHUB_SHA" \
+            --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --signed ${{ env.SIGN }} \
+            --out "$RUNNER_TEMP/channel/${{ matrix.platform }}-${{ matrix.arch }}"
+      - uses: actions/upload-artifact@v7
+        if: steps.go.outputs.go == 'true' && env.PUBLISHABLE == 'true'
+        with:
+          name: channel-${{ matrix.platform }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/channel
+          retention-days: 3
+
+      - name: Remove the signing keychain
+        if: always() && env.SIGN == 'true'
+        run: |
+          if [ -n "$CYCLE_KEYCHAIN" ]; then
+            security list-keychains -d user -s ${CYCLE_KEYCHAINS_BEFORE:-"$HOME/Library/Keychains/login.keychain-db"} || true
+            security delete-keychain "$CYCLE_KEYCHAIN" || true
+          fi
+
+  publish:
+    needs: build
+    # Every platform that built went through its checks; a failed one stops all, so platforms do not drift apart.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ui-release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - run: bun install --frozen-lockfile --ignore-scripts
+      # No artifact at all when nothing changed.
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          pattern: channel-*
+          path: ${{ runner.temp }}/channel
+          merge-multiple: true
+      - name: Publish
+        env:
+          UI_SIGNING_KEY: ${{ secrets.UI_SIGNING_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ ! -d "$RUNNER_TEMP/channel" ] || [ -z "$(ls -A "$RUNNER_TEMP/channel")" ]; then
+            echo "Nothing changed in the daemon: nothing to publish."; exit 0
+          fi
+          if [ -z "$UI_SIGNING_KEY" ]; then
+            echo "::notice::UI_SIGNING_KEY is not set in the environment ui-release: no daemon is published."; exit 0
+          fi
+          bun apps/daemon/scripts/channel.ts publish --in "$RUNNER_TEMP/channel"

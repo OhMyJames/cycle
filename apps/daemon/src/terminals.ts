@@ -301,6 +301,8 @@ type ScreenState = { screen: Screen; backlog: number };
 type Entry = {
   info: TerminalInfo;
   pty: Pty;
+  /** Runs an environment's action (`shell -c`), not an interactive shell. */
+  action: boolean;
   screen: ScreenState;
   decoder: TextDecoder;
   /** The last piece of output made. */
@@ -344,6 +346,21 @@ export class Terminals {
     this.#spawn = options.spawn ?? bunPtySpawn;
     this.#screen = options.screen ?? xtermScreen;
     this.#log = options.log ?? silentLogger;
+  }
+
+  /**
+   * Whether a terminal is doing something a restart of the daemon would cut short (docs/daemon.md "自动更新"): an action
+   * still running, or an interactive shell with a command of its own in front or behind it. A shell at its prompt is not:
+   * the panel opens a new one after the restart.
+   */
+  async busy(): Promise<boolean> {
+    for (const entry of this.#terminals.values()) {
+      if (entry.gone || entry.info.status !== "running") continue;
+      if (entry.action) return true;
+      const pids = await entry.pty.processes().catch(() => []);
+      if (pids.some((pid) => pid !== entry.pty.pid)) return true;
+    }
+    return false;
   }
 
   list(sessionId: string): TerminalInfo[] {
@@ -434,6 +451,7 @@ export class Terminals {
     entry = {
       info,
       pty,
+      action: run.command !== undefined,
       screen: this.#newScreen(info),
       decoder: new TextDecoder(),
       seq: 0,

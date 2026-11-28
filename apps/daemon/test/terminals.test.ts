@@ -272,3 +272,33 @@ test("a stopped set of terminals opens no new one", async () => {
     data: { reason: "daemon_stopping" },
   });
 });
+
+test("a terminal holds a switch of version only while it runs a command (CYC-538)", async () => {
+  const shell = fakePty();
+  let running: number[] = [];
+  let shellPid = 0;
+  const spawn = (o: PtySpawnOptions) => {
+    const pty = shell.spawn(o);
+    shellPid = pty.pid;
+    return { ...pty, processes: async () => running };
+  };
+  const t = terminals(spawn);
+  expect(await t.busy()).toBe(false);
+  await t.create("s1", "/tmp", 80, 24, slowSink("c1").sink);
+  // A shell at its prompt: only its own process.
+  running = [shellPid];
+  expect(await t.busy()).toBe(false);
+  // A command in front of it.
+  running = [shellPid, 123456];
+  expect(await t.busy()).toBe(true);
+  await t.closeAll();
+
+  // An environment's action holds it for as long as it runs, whatever its processes.
+  const action = terminals(fakePty().spawn);
+  await action.create("s1", "/tmp", 80, 24, slowSink("c2").sink, {
+    command: { title: "dev", script: "sleep 100" },
+  });
+  expect(await action.busy()).toBe(true);
+  await action.closeAll();
+  expect(await action.busy()).toBe(false);
+});

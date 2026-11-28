@@ -187,6 +187,8 @@ export const CapabilitiesSchema = z.object({
   vault: z.boolean().optional(),
   /** `session/new` takes `_meta["cycle/worktree"]`, and `_cycle/git/branches` is there (docs/protocol.md §6 "Worktree"). */
   worktrees: z.boolean().optional(),
+  /** `_cycle/daemon/update/read` is there: the daemon's own update state (docs/protocol.md §3, CYC-538). */
+  selfUpdate: z.boolean().optional(),
 });
 export type Capabilities = z.infer<typeof CapabilitiesSchema>;
 

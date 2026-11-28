@@ -1,6 +1,7 @@
 // The app updating itself, for real, on macOS: an installed copy of the app that was just built finds
 // a newer release (served from this machine, standing in for GitHub), downloads it, swaps the bundle
-// and opens itself again as the new version, and the daemon the old one started is gone.
+// and opens itself again as the new version. The daemon runs from a folder of its own (CYC-538) and goes on through
+// the update; only one an older app started from inside itself is stopped first.
 //
 // The daemon uses a temporary data directory, set for the
 // relaunched app too through launchd (an app opened by `open` does not inherit this process's
@@ -177,6 +178,7 @@ test.skipIf(!ready)(
     const sso = await signedIn(userData);
     const environment = {
       CYCLE_HOME: data,
+      CYCLE_DAEMON_UPDATES: "off",
       CYCLE_UPDATE_URL: url,
       CYCLE_ANALYTICS: "off",
       CYCLE_USER_DATA: userData,
@@ -262,22 +264,31 @@ test.skipIf(!ready)(
         return Number.isInteger(pid) && pid > 0 && pid !== old?.pid ? pid : undefined;
       });
       expect(alive(reopened)).toBe(true);
-      // The daemon the old app started is gone (the new one may be starting its own).
-      await until("the old daemon to stop", 30_000, () => (alive(oldDaemon) ? undefined : true));
+      const managed = join(data, "daemon", "bin", "cycle");
+      let runningPid: number;
       if (previous) {
+        // An app from before CYC-538 ran the daemon from inside itself and stopped it for the update; the new app puts
+        // the daemon it carries in a folder of its own and starts it from there.
+        await until("the old daemon to stop", 30_000, () => (alive(oldDaemon) ? undefined : true));
+        const carried = (await Bun.file(join(installed, resources, "build.json")).json())
+          .daemonVersion as string;
         const version = await until("the relaunched app's daemon", 30_000, () =>
           daemonVersion(data),
         );
-        expect(version).toBe(newer);
+        expect(version).toBe(carried);
+        runningPid = await until("the replacement daemon", 30_000, async () => {
+          const pid = Number(await readFile(join(data, "daemon.pid"), "utf8"));
+          return Number.isInteger(pid) && pid > 0 && pid !== oldDaemon && alive(pid)
+            ? pid
+            : undefined;
+        });
+      } else {
+        // The daemon is not in the app: the update went on around it, and the new app took it as it was.
+        expect(alive(oldDaemon)).toBe(true);
+        runningPid = Number(await readFile(join(data, "daemon.pid"), "utf8"));
+        expect(runningPid).toBe(oldDaemon);
       }
-      const runningPid = await until("the replacement daemon", 30_000, async () => {
-        const pid = Number(await readFile(join(data, "daemon.pid"), "utf8"));
-        return Number.isInteger(pid) && pid > 0 && pid !== oldDaemon && alive(pid)
-          ? pid
-          : undefined;
-      });
-      // A synthetic release carries the same daemon version. Match its mapped executable to the
-      // installed file by inode, so a daemon restarted by the old desktop also fails that test.
+      // It runs from its own folder, not the app.
       const mapped = Bun.spawnSync([
         "/usr/sbin/lsof",
         "-nP",
@@ -286,12 +297,12 @@ test.skipIf(!ready)(
         String(runningPid),
         "-d",
         "txt",
-        join(installed, resources, "bin/cycle"),
+        managed,
       ]);
       expect(mapped.success).toBe(true);
       if (previous) {
         console.log(
-          `Signed update ${previous.manifest.version} -> ${newer}, team ${previous.team}; daemon ${runningPid} running from installed bundle; range bytes ${ranged}, whole downloads ${whole}.`,
+          `Signed update ${previous.manifest.version} -> ${newer}, team ${previous.team}; daemon ${runningPid} running from its own folder; range bytes ${ranged}, whole downloads ${whole}.`,
         );
       }
       // And nothing of the update is left beside the app.

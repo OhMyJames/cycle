@@ -13,6 +13,7 @@ import type {
   AgentAuthStartResult,
   AgentRuntimePatchValue,
   AgentSetupSnapshot,
+  DaemonUpdateState,
   PlanUsage,
   QueueEntry,
   QueueReason,
@@ -61,6 +62,8 @@ export type Core = {
   readonly clients: Clients;
   /** The latest plan usage each agent told. */
   readonly planUsage: ReadonlyMap<string, PlanUsage>;
+  /** The daemon's own update state (docs/protocol.md §3). */
+  updateState(): DaemonUpdateState;
   now(): number;
 
   // ---- sessions ----

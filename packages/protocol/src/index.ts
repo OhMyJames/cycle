@@ -1,5 +1,6 @@
 export * from "./agent-setup.ts";
 export * from "./connectors.ts";
+export * from "./daemon-update.ts";
 export * from "./diff.ts";
 export * from "./environment.ts";
 export * from "./errors.ts";

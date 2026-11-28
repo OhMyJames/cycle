@@ -90,7 +90,9 @@ jobs:
       - run: bun install --frozen-lockfile --ignore-scripts
       - run: bun run --cwd apps/desktop package
       - name: The build knows its place in history
-        run: test "$(jq -r .uiVersion "$BUNDLE/build.json")" -ge 100
+        run: |
+          test "$(jq -r .uiVersion "$BUNDLE/build.json")" -ge 100
+          dv=$(jq -r .daemonVersion "$BUNDLE/build.json"); test "${dv##*.}" -ge 100
 
       # What is inside the app has to work on this platform: the compiled daemon, and the Claude
       # binary of the darwin SDK package. Checked before signing and again after, because the hardened
@@ -102,7 +104,7 @@ jobs:
           "$BUNDLE/bin/claude" --version || exit 1
           "$BUNDLE/bin/codex" --version || exit 1
           "$BUNDLE/bin/codex-code-mode-host" --help >/dev/null || exit 1
-          test "$("$BUNDLE/bin/cycle" version)" = "$(jq -r .version apps/desktop/package.json)" || exit 1
+          test "$("$BUNDLE/bin/cycle" version)" = "$(jq -r .daemonVersion "$BUNDLE/build.json")" || exit 1
           CYCLE_DAEMON_BIN="$PWD/$BUNDLE/bin/cycle" bun run --cwd apps/daemon test:integration
 
       - name: The app opens a window that connects to its own daemon
@@ -159,7 +161,7 @@ jobs:
           "$BUNDLE/bin/claude" --version || exit 1
           "$BUNDLE/bin/codex" --version || exit 1
           "$BUNDLE/bin/codex-code-mode-host" --help >/dev/null || exit 1
-          test "$("$BUNDLE/bin/cycle" version)" = "$(jq -r .version apps/desktop/package.json)" || exit 1
+          test "$("$BUNDLE/bin/cycle" version)" = "$(jq -r .daemonVersion "$BUNDLE/build.json")" || exit 1
           CYCLE_DAEMON_BIN="$PWD/$BUNDLE/bin/cycle" bun run --cwd apps/daemon test:integration
 
       - name: The signed app still opens and connects

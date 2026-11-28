@@ -1,17 +1,20 @@
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
-import { CycleClient, connectUnix } from "@cycle/client";
+import { dirname, join } from "node:path";
+import { CYCLE_PROTOCOL_VERSION } from "@cycle/protocol";
 import { parseCli } from "./args.ts";
 import { defaultDataDir, loadConfig, pathsFor } from "./config.ts";
 import type { Harness } from "./harness.ts";
 import { tailLines } from "./logger.ts";
-import { logTail, proxy, startDetached } from "./proxy.ts";
+import { logTail, proxy } from "./proxy.ts";
+import { RELEASE_KEYS, verifySignature } from "./release-keys.ts";
 import { compiled } from "./self.ts";
+import { readStaged, SelfUpdate } from "./self-update.ts";
+import { checkFolder, startAndWait } from "./self-update-host.ts";
 import { onSignalsAndCrashes, serve } from "./serve.ts";
 import { askWorking, stopDaemon } from "./stop.ts";
 import { AlreadyRunningError, isListening, NotASocketError } from "./transport/server.ts";
-import { fetchBytes, installOf, recordedVersion, runInstallerScript, runUpdate } from "./update.ts";
+import { installOf, runUpdate } from "./update.ts";
 import { VERSION } from "./version.ts";
 
 const usage = (harnesses: readonly Harness[]): string => {
@@ -27,10 +30,9 @@ const usage = (harnesses: readonly Harness[]): string => {
   status  Say whether the daemon is running (exit 0) or not (exit 1), and where its log is.
   logs    Print the end of the daemon's log (what it did and what went wrong; never
           prompts, agent output or credentials). --lines <n>: how many, default 100.
-  update  Install the release that goes with the desktop app (the one it last connected as),
-          check it, replace this program, and move a running daemon onto it: it waits until no
-          session is working, then restarts the daemon, so there is no need to stop it first.
-          --version <x.y.z>  install this release instead
+  update  Install the newest version on the release channel now, check it, and move a running
+          daemon onto it: it waits until no session is working, then restarts the daemon. (An
+          installed daemon also does this by itself when it is idle.)
           --now              switch at once: working sessions end as interrupted
   stop    Stop the daemon if it is running. If sessions are working (a turn, a request
           waiting for an answer, background tasks) they are listed, and it asks whether
@@ -175,14 +177,34 @@ export const runCli = async (argv: string[], harnesses: readonly Harness[]): Pro
     process.exit(0);
   } else if (command === "update") {
     const pidFile = join(paths.dataDir, "daemon.pid");
+    const installDir = dirname(process.execPath);
     const code = await runUpdate({
       version: VERSION,
       requested: values.version,
       now: values.now === true,
       install: installOf(process.execPath, compiled()),
-      recorded: () => recordedVersion(paths.dataDir),
-      download: fetchBytes,
-      runInstaller: runInstallerScript,
+      installDir,
+      stage: async () => {
+        const updater = new SelfUpdate({
+          version: VERSION,
+          platform: process.platform,
+          arch: process.arch,
+          protocol: CYCLE_PROTOCOL_VERSION,
+          installDir,
+          keys: RELEASE_KEYS,
+          verify: verifySignature,
+          fetch,
+          stateFile: join(paths.dataDir, "daemon-update.json"),
+          check: checkFolder(process.execPath),
+          idle: async () => false,
+          apply: async () => {},
+          log: { info: () => {}, warn: (event) => console.log(`(${event})`) },
+        });
+        const state = await updater.check();
+        if (state.updates === "on" && state.error !== undefined) return { error: state.error };
+        const staged = await readStaged(installDir);
+        return staged !== undefined ? { staged } : {};
+      },
       isRunning: () => isListening(paths.socket),
       stop: async (force) => {
         const pid = Number(
@@ -207,25 +229,9 @@ export const runCli = async (argv: string[], harnesses: readonly Harness[]): Pro
           say: (line) => console.log(line),
         });
       },
-      runningVersion: async () => {
-        const client = new CycleClient({
-          connect: () => connectUnix(paths.socket),
-          name: "cycle-update",
-        });
-        try {
-          await client.start();
-          return client.serverVersion;
-        } finally {
-          await client.close();
-        }
-      },
-      // From the installed path, not this process's own: the installer has just replaced that file.
+      // From the folder just switched in, not this process's own path's old contents.
       start: async (installed) => {
-        const child = startDetached(paths, [installed]);
-        for (const at = Date.now(); Date.now() - at < 30_000; await Bun.sleep(100)) {
-          if (await isListening(paths.socket)) return true;
-          if (child.exited()) break;
-        }
+        if (await startAndWait(paths, installed)) return true;
         const said = logTail(paths);
         if (said !== "") console.log(said);
         return false;

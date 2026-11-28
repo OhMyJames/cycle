@@ -1,6 +1,8 @@
 // The app's entry. Everything is in app.ts; this says where things are.
 import { execFile, spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { readFile, rm } from "node:fs/promises";
+import { connect } from "node:net";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,8 +19,9 @@ import {
   startAnalytics,
 } from "./analytics.ts";
 import { startApp, stayInBackground } from "./app.ts";
+import { managedDaemonDir, seedAndReport } from "./daemon-home.ts";
 import { localHome } from "./home.ts";
-import { BUILD_FILE, daemonCommand, loginShellPath } from "./layout.ts";
+import { BUILD_FILE, bundledDaemonDir, daemonCommand, loginShellPath } from "./layout.ts";
 import { filePreferencesStore } from "./preferences.ts";
 import { stopRefusal } from "./stop-refused.ts";
 import { shellOfBuild, verifySignature } from "./ui-crypto.ts";
@@ -63,14 +66,17 @@ const main = async () => {
   // Started from Finder, the app has launchd's bare PATH. The user's own is what Claude's tools need.
   const path =
     packaged && process.platform === "darwin" ? await loginShellPath(env.SHELL, run) : undefined;
-  const daemon = daemonCommand({
+  const dataHome = localHome({ packaged, env, home: homedir() });
+  // The daemon's data directory, where the packaged app runs its daemon from too (`<it>/daemon/bin`, CYC-538).
+  const dataRoot = dataHome ?? join(homedir(), ".cycle");
+  let daemon = daemonCommand({
     here,
     env,
     platform: process.platform,
     arch: process.arch,
     exists: existsSync,
+    managedDir: managedDaemonDir(dataRoot),
   });
-  const dataHome = localHome({ packaged, env, home: homedir() });
   const localEnv = {
     PATH: path ?? env.PATH ?? "",
     ...(env.HOME !== undefined ? { HOME: env.HOME } : {}),
@@ -85,6 +91,8 @@ const main = async () => {
     // Where the daemon keeps its data: what the person chose, else (a run from source) a directory of its own,
     // else the daemon's default, which is the installed app's.
     ...(dataHome !== undefined ? { CYCLE_HOME: dataHome } : {}),
+    // Only a test sets it: a daemon that does not update itself from the channel (docs/daemon.md "自动更新").
+    ...(env.CYCLE_DAEMON_UPDATES === "off" ? { CYCLE_DAEMON_UPDATES: "off" } : {}),
   };
   const info = buildInfo();
   // Reported to only with a project (the build has one, or the environment names one), and never against what the person
@@ -103,6 +111,28 @@ const main = async () => {
     },
     onDrop: (name, reason) => console.warn(`[analytics] ${name} not sent: ${reason}`),
   });
+  // The daemon this app carries goes where the daemon runs from, when the one there is missing or older. When it cannot
+  // be put there, the app runs the one it carries, as before CYC-538.
+  if (packaged && info?.daemonVersion !== undefined) {
+    const seeded = await seedAndReport(
+      {
+        bundledDir: bundledDaemonDir(here),
+        bundledVersion: info.daemonVersion,
+        managedDir: managedDaemonDir(dataRoot),
+        versionOf: (dir) =>
+          run(join(dir, "cycle"), ["version"], 15_000, localEnv)
+            .then((out) => out.trim())
+            .catch(() => undefined),
+        running: () => listening(join(dataRoot, "daemon.sock")),
+        copy: copyDaemonFolder,
+      },
+      (name, props) => analytics.analytics.track(name, props),
+      (message) => console.warn(`[daemon] ${message}`),
+    );
+    if (seeded === "failed") daemon = [join(bundledDaemonDir(here), "cycle")];
+  } else if (packaged) {
+    daemon = [join(bundledDaemonDir(here), "cycle")];
+  }
   // The person's own login is sealed with the keychain in the installed app. A run from source, and a test (which names
   // its stand-in provider), keep theirs in a file of their own and never reach the keychain.
   const sso = ssoClientFor(env);
@@ -136,7 +166,7 @@ const main = async () => {
       oldKeyFile: join(userData, "itsaplan-key"),
       chatCwd: join(dataHome ?? join(homedir(), ".cycle"), "ticket-chat"),
     },
-    update: updateDeps(daemon, localEnv),
+    update: updateDeps(daemon, localEnv, dataRoot),
     interface: interfaceOptions(userData, info),
     ...(hidden ? { show: false } : {}),
   });
@@ -215,11 +245,50 @@ const buildInfo = ():
       version: string;
       shell?: string;
       uiVersion?: number;
+      daemonVersion?: string;
       posthogKey?: string;
       posthogHost?: string;
     }
   | undefined =>
   packaged ? JSON.parse(readFileSync(join(here, "..", BUILD_FILE), "utf8")) : undefined;
+
+/** Whether something listens on a unix socket. */
+const listening = (socket: string): Promise<boolean> =>
+  new Promise((resolve) => {
+    const probe = connect(socket);
+    const done = (up: boolean) => {
+      probe.destroy();
+      resolve(up);
+    };
+    probe.once("connect", () => done(true));
+    probe.once("error", () => done(false));
+    probe.setTimeout(2_000, () => done(false));
+  });
+
+/** Whether the daemon whose pid is in `pidFile` runs a program inside `appPath`. */
+const runsFromInside = async (pidFile: string, appPath: string): Promise<boolean> => {
+  const pid = Number((await readFile(pidFile, "utf8").catch(() => "")).trim());
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  const program = await run("/bin/ps", ["-o", "comm=", "-p", String(pid)], 5_000).catch(() => "");
+  return program.trim().startsWith(`${appPath}/`);
+};
+
+/**
+ * Copies the app's daemon folder: a clone on APFS (no space taken until a file changes), and without the quarantine
+ * mark a download from a browser leaves on the app, which would make Gatekeeper look at each program as downloaded.
+ */
+const copyDaemonFolder = async (from: string, to: string): Promise<void> => {
+  if (process.platform === "darwin") {
+    await run("/bin/cp", ["-c", "-R", from, to], 120_000).catch(async () => {
+      // A volume that cannot clone: a plain copy, over nothing a half-made clone left.
+      await rm(to, { recursive: true, force: true });
+      await run("/bin/cp", ["-R", from, to], 300_000);
+    });
+    await run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", to], 60_000).catch(() => "");
+    return;
+  }
+  await run("/bin/cp", ["-R", from, to], 300_000);
+};
 
 const localRelease = (url: string | undefined) => {
   if (url === undefined) return {};
@@ -231,7 +300,7 @@ const localRelease = (url: string | undefined) => {
 };
 
 /** What the updater needs from this machine. Only an installed macOS app can replace itself. */
-const updateDeps = (daemon: string[], localEnv: Record<string, string>) => {
+const updateDeps = (daemon: string[], localEnv: Record<string, string>, dataRoot: string) => {
   const info = packaged
     ? (JSON.parse(readFileSync(join(here, "..", BUILD_FILE), "utf8")) as {
         version: string;
@@ -263,13 +332,16 @@ const updateDeps = (daemon: string[], localEnv: Record<string, string>) => {
       run("/usr/bin/ditto", ["-x", "-k", zip, into], 300_000).then(() => {}),
     verifyBundle: verifySameTeam(codesign),
     log: (message: string) => console.warn(`[update] ${message}`),
-    // The daemon the old app started runs from inside it and would outlive the swap, with its Claude gone.
+    // The daemon runs from its own folder (CYC-538) and goes on working through the swap. Only one an older app started
+    // from inside this app would outlive the swap with its agents' binaries gone: that one is stopped first, as before.
     handOff: async (swap: { appPath: string; newApp: string; oldApp: string; staging: string }) => {
-      try {
-        await run(daemon[0] ?? "", [...daemon.slice(1), "stop"], 20_000, localEnv);
-      } catch (error) {
-        const refused = stopRefusal(error);
-        throw refused === undefined ? error : new Error(refused);
+      if (await runsFromInside(join(dataRoot, "daemon.pid"), swap.appPath)) {
+        try {
+          await run(daemon[0] ?? "", [...daemon.slice(1), "stop"], 20_000, localEnv);
+        } catch (error) {
+          const refused = stopRefusal(error);
+          throw refused === undefined ? error : new Error(refused);
+        }
       }
       const helper = spawn(
         "/bin/sh",
