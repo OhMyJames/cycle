@@ -12,6 +12,7 @@
       "!packages/clawdot-plugins/plugins/**/skills",
       "!packages/clawdot-plugins/plugins/**/assets",
       "!.agents/worktree",
+      "!.agents/plugins",
       "!.claude/worktrees",
       "!**/skills-lock.json",
       "!**/built.css"
