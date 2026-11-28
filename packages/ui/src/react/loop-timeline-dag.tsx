@@ -7,7 +7,7 @@ import { useI18n } from "./i18n.tsx";
 import { MessageIcon } from "./icons.tsx";
 
 export const NODE_W = 232;
-export const NODE_H = 96;
+export const NODE_H = 120;
 const GAP_X = 48;
 const GAP_Y = 12;
 
@@ -19,7 +19,7 @@ export type Dag = { nodes: DagNode[]; edges: DagEdge[]; width: number; height: n
 export const layoutDag = (steps: LoopTimelineStep[]): Dag => {
   const byId = new Map(steps.map((s) => [s.id, s]));
   const depsOf = (s: LoopTimelineStep) =>
-    (s.dependsOn ?? []).filter((d) => d !== s.id && byId.has(d));
+    [...new Set(s.dependsOn ?? [])].filter((d) => d !== s.id && byId.has(d));
 
   const depth = new Map<string, number>();
   const visiting = new Set<string>();
@@ -67,7 +67,13 @@ export const layoutDag = (steps: LoopTimelineStep[]): Dag => {
       nodes.push({ step, column: c, row: r, x: c * (NODE_W + GAP_X), y: r * (NODE_H + GAP_Y) });
     });
   });
-  const edges = steps.flatMap((s) => depsOf(s).map((from) => ({ from, to: s.id })));
+  // An edge must run to a later column; the one that would close a cycle does not.
+  const columnOf = new Map(nodes.map((n) => [n.step.id, n.column]));
+  const edges = steps.flatMap((s) =>
+    depsOf(s)
+      .filter((from) => (columnOf.get(from) ?? 0) < (columnOf.get(s.id) ?? 0))
+      .map((from) => ({ from, to: s.id })),
+  );
   const tallest = Math.max(0, ...rows.map((col) => col.length));
   return {
     nodes,
@@ -98,6 +104,8 @@ export function TimelineDag({
   const markerId = useId();
   const dag = layoutDag(steps);
   const at = new Map(dag.nodes.map((n) => [n.step.id, n]));
+  const waitsFor = (id: string) =>
+    dag.edges.filter((e) => e.to === id).map((e) => at.get(e.from)?.step.label ?? "");
 
   return (
     <div data-slot="loop-dag-scroll">
@@ -169,6 +177,11 @@ export function TimelineDag({
                   </span>
                   {dur !== null ? <span data-slot="loop-timeline-dur">{dur}</span> : null}
                 </span>
+                {waitsFor(step.id).length > 0 ? (
+                  <span data-slot="visually-hidden">
+                    {t("loop.timeline.waitsFor", { steps: waitsFor(step.id).join(", ") })}
+                  </span>
+                ) : null}
                 {note !== null ? (
                   <span
                     data-slot="loop-dag-node-note"

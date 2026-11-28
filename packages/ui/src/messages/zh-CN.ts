@@ -605,6 +605,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "loop.timeline.loadMore": "显示更多",
   "loop.timeline.openSession": "打开会话",
   "loop.timeline.graph": "任务图",
+  "loop.timeline.waitsFor": "等待：{steps}。",
   "loop.timeline.openSessionFor": "打开 {target}",
   "loop.timeline.backToTimeline": "返回时间轴",
   "loop.timeline.viewingLoopSession": "来自 Loop 时间轴的会话",

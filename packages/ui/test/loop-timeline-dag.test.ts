@@ -39,3 +39,12 @@ test("steps from an older app without dependsOn lay out in one column", () => {
   const old = { ...step("a"), dependsOn: undefined } as unknown as LoopTimelineStep;
   expect(layoutDag([old]).nodes).toHaveLength(1);
 });
+
+test("a dependency listed twice is one edge, and the edge that closes a cycle is dropped", () => {
+  expect(layoutDag([step("a"), step("b", ["a", "a"])]).edges).toHaveLength(1);
+  const cyclic = layoutDag([step("a", ["b"]), step("b", ["a"])]);
+  for (const e of cyclic.edges) {
+    const col = (id: string) => cyclic.nodes.find((n) => n.step.id === id)?.column ?? 0;
+    expect(col(e.from)).toBeLessThan(col(e.to));
+  }
+});

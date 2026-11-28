@@ -2339,6 +2339,7 @@ test("Timeline: a Task Graph is drawn as a graph, the page scrolls, and the sear
   expect(graph.parentElement?.querySelectorAll('[data-slot="loop-dag-edge"]')).toHaveLength(4);
   // The state is in words as well as in the colour of the dot.
   expect(within(graph).getAllByText(/\(Passed\)/)).toHaveLength(4);
+  expect(within(graph).getAllByText(/Waits for: Store, Tests\./)).toHaveLength(1);
   const left = (name: string) =>
     Number.parseFloat(within(graph).getByText(name).closest("li")?.style.left ?? "NaN");
   expect(left("Schema")).toBeLessThan(left("Store"));
