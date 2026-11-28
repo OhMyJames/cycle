@@ -267,8 +267,8 @@ export type Script = {
 };
 
 export class FakeSessions implements Sessions {
-  /** Set by a test: whether the daemon has an update waiting (CYC-538). Absent: a daemon that cannot say. */
-  updatePending?: () => Promise<boolean>;
+  /** Set by a test: the version the daemon has waiting, or null (CYC-538). Absent: a daemon that cannot say. */
+  updatePending?: () => Promise<string | null>;
   created: string[] = [];
   titles: { id: string; role: SessionRole; title: string }[] = [];
   inputs: { role: SessionRole; model: string | undefined; effort: string | undefined }[] = [];

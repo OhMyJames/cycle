@@ -402,8 +402,8 @@ export interface Sessions {
   /** Cancels an in-flight turn for `sessionId` when supported (CYC-484). */
   cancel?(sessionId: string): Promise<boolean>;
   /**
-   * Whether the daemon has a new version of itself waiting to switch to once idle (docs/protocol.md §3, CYC-538). The
-   * loop then takes no new work item, so the daemon gets to idle. False for a daemon that cannot say.
+   * The version the daemon has waiting to switch to once idle (docs/protocol.md §3, CYC-538), or null when none is
+   * waiting. The loop then takes no new work item, so the daemon gets to idle. Null for a daemon that cannot say.
    */
-  updatePending?(): Promise<boolean>;
+  updatePending?(): Promise<string | null>;
 }

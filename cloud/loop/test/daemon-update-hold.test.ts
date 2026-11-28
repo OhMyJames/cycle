@@ -33,7 +33,7 @@ test("a daemon update waiting holds new work items back, and they are taken once
     qa: [],
   });
   let pending = true;
-  sessions.updatePending = async () => pending;
+  sessions.updatePending = async () => (pending ? "0.3.1060" : null);
   const world: World = {
     fail: new Set(),
     calls: [],

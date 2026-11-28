@@ -276,7 +276,7 @@ export class Engine {
 
     if (this.#d.stopped?.() === true) return { result: { status: "idle" } };
     // The daemon has a new version waiting for it to be idle: nothing new is taken until it has switched (CYC-538).
-    const daemonUpdating = (await this.#d.sessions.updatePending?.().catch(() => false)) === true;
+    const daemonUpdating = (await this.#d.sessions.updatePending?.().catch(() => null)) != null;
     if (daemonUpdating !== this.#heldForDaemon)
       this.#d.log(
         daemonUpdating
