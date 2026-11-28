@@ -109,6 +109,19 @@ Loop 项目页的分工(CYC-556):
 - **Overview**:跨项目,每个项目一行汇总(运行状态、各列计数、待批准数、「要你处理 N 件」),点一行进该项目的 Console;不再列具体事项。
 - 工单抽屉盖在打开它的页上(Console 或 Kanban),关掉回到那一页;从 Timeline 打开落在 Kanban。系统通知点开工单落在 Console 并打开抽屉。
 
+Kanban 的列和 Backlog 分组(CYC-555):
+
+- **列的顺序**:按状态从左到右 started(In Progress、In Review、Blocked)→ unstarted(Todo、Paused)→ backlog → completed(Done)→ canceled(Canceled);同一状态内保持服务端顺序。Loop 在做的列因此在最左。待批准计数、工单查找和 `columnRoleOf` 仍用服务端顺序。
+- **默认收起**:completed、canceled 列,以及除第一个以外的 unstarted 列。收起的列是一条窄列,显示列名和数量,整条是按钮(`aria-expanded`),点开后变成普通列,列头有收起按钮。空列不自动收起。展开状态在切换项目时重置,不持久化。「第一个 unstarted 列是 Todo」和 `columnRoleOf` 一样是按位置的约定,不按列名判断;等看板接口给出列的角色(CYC-557)后一起换掉。筛选时收起的列仍收起,数量显示 `n/总数`。
+- **Backlog 分组**:从上到下是待批准的卡片(置顶,不进组,行为不变)→ Epic 组 → 父单在别的列的组 → 不属于任何组的卡片。
+  - Epic 组:Backlog 里被看板上任一工单当作父单的卡片是组头(不看类型名),组内是它在 Backlog 里、不待批准的子单。组间按组头优先级、组内按优先级,都是稳定排序。
+  - 父单不在 Backlog 的子单按父单归组,组头显示父单编号和标题并注明「Epic 在别的列」,点开是父单的抽屉。
+  - 组头有展开/收起按钮、编号、类型、标题、优先级和进度「完成数/总数」(数整块看板上的子单,completed 算完成,canceled 不计)。组默认收起;点标题打开 Epic 的抽屉,点箭头只展开收起。
+- **每张工单只出现一次**:Backlog 里每张工单恰好出现一次,子单不再同时作为父卡上的折叠清单和独立卡片出现(取代 CYC-503 的做法;「Subtasks」清单已删)。非 Backlog 列里的子单是普通卡片,带「↑ 父单编号」;非 Backlog 列里有子单的卡片在脚部只读地显示进度。
+- **分页和筛选**:Backlog 首屏 20 行,「Show N more」每次再加 20 行,一个组算一行。筛选时组头或任一子单匹配则显示该组:组头匹配显示全部子单,否则只显示匹配的子单;有匹配的组筛选期间显示为展开,清掉筛选后回到人设的状态。
+- **卡片**:卡头在编号后显示类型(服务端给的名字原样显示),为 null 时不显示;优先级为 null 时不显示 badge。
+- **埋点**:人点开或收起列、组时发 `loop_board_expanded`(`target`、`expanded`),筛选引起的自动展开不发,见 `docs/analytics.md`。
+
 当前 workspace 里的会话分组:**Needs you**(`requires_action`)、**Running**(`running`,以及有后台子 agent 的)、然后 Today / Yesterday / Earlier,按本地日界线分,用 `updatedAt`。每个 workspace 默认显示 20 条,"Show N more";有状态的和当前打开的永远显示。
 
 一行只带一个状态标记,优先级:`requires_action` > `running` > background(`cycle/background` > 0)> unread(`cycle/unread`)。来源都是 daemon 的列表字段。
