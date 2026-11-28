@@ -289,6 +289,17 @@ describe("the dictionary", () => {
     expect(
       EVENTS.loop_notice_opened.safeParse({ kind: "operator", from: "overview" }).success,
     ).toBe(false);
+    expect(isUiEvent("loop_board_expanded")).toBe(true);
+    expect(EVENTS.loop_board_expanded.safeParse({ target: "column", expanded: true }).success).toBe(
+      true,
+    );
+    expect(EVENTS.loop_board_expanded.safeParse({ target: "tab", expanded: true }).success).toBe(
+      false,
+    );
+    expect(
+      EVENTS.loop_board_expanded.safeParse({ target: "group", expanded: false, id: "CYC-1" })
+        .success,
+    ).toBe(false);
     expect(isUiEvent("loop_console_shown")).toBe(true);
     expect(
       EVENTS.loop_console_shown.safeParse({ needs_you: 2, pending: 1, operator: 0, running: 3 })

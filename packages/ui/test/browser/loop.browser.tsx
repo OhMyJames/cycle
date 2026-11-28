@@ -474,7 +474,11 @@ test("opening a ticket drawer updates breadcrumbs to Project / ticket and clicki
 });
 
 test("the board is a row of columns by state with Done last and folded, and can be opened and folded again: cards are not draggable, there is no move menu, and the tops line up", async () => {
-  await mountBoard({ loopProjects: { kind: "ok", projects: [cycle] }, loopBoards: { CYC: board } });
+  const { calls: fake_calls } = await mountBoard({
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: { CYC: board },
+  });
+  const fake = { calls: fake_calls };
   await screen.findByRole("region", { name: "In Review" });
   const names = [...document.querySelectorAll('[data-slot="loop-column"]')].map((e) =>
     e.getAttribute("aria-label"),
@@ -495,7 +499,14 @@ test("the board is a row of columns by state with Done last and folded, and can 
   const user = userEvent.setup();
   await user.click(show);
   expect(within(done).getAllByRole("listitem")).toHaveLength(1);
+  expect(expandedEvents(fake.calls)).toEqual([
+    ["loop_board_expanded", { target: "column", expanded: true }],
+  ]);
   await user.click(within(done).getByRole("button", { name: "Hide Done" }));
+  expect(expandedEvents(fake.calls).at(-1)).toEqual([
+    "loop_board_expanded",
+    { target: "column", expanded: false },
+  ]);
   expect(within(done).queryAllByRole("listitem")).toHaveLength(0);
   expect(
     within(done).getByRole("button", { name: "Show Done" }).getAttribute("aria-expanded"),
@@ -1367,6 +1378,10 @@ test("Backlog groups Epics: a group starts folded with its progress, opens to it
   // The arrow opens the group, not the drawer.
   await user.click(toggle);
   expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  expect(expandedEvents(calls)).toEqual([
+    ["loop_board_expanded", { target: "group", expanded: true }],
+  ]);
+  expect(JSON.stringify(tracked(calls))).not.toContain("CYC-381");
   expect(calls.some(([n]) => n === "loopTicket")).toBe(false);
   expect(within(backlog).getAllByText("Ticket 390")).toHaveLength(1);
   expect(within(backlog).getAllByText("Ticket 392")).toHaveLength(1);
@@ -1380,7 +1395,7 @@ test("Backlog groups Epics: a group starts folded with its progress, opens to it
 });
 
 test("a filter opens the groups it leaves and clearing it brings the folds back", async () => {
-  const { user } = await mountBoard({
+  const { user, calls } = await mountBoard({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: {
       CYC: withTickets({
@@ -1395,6 +1410,8 @@ test("a filter opens the groups it leaves and clearing it brings the folds back"
   expect(within(backlog).queryByText("Ticket 392")).toBeNull();
   await user.click(screen.getByRole("button", { name: "Clear filters" }));
   expect(within(backlog).queryByText("Ticket 390")).toBeNull();
+  // Opening by filter is not the person opening it.
+  expect(tracked(calls).some(([e]) => e === "loop_board_expanded")).toBe(false);
 });
 
 test("cards show the ticket type when there is one", async () => {
@@ -1538,6 +1555,8 @@ const graphTicket = () => {
     loopTickets: { "CYC-610": detailOf(mine, { graph: graphOf(nodes) }) },
   } satisfies NonNullable<Parameters<typeof fakeBridge>[0]>;
 };
+const expandedEvents = (calls: [string, ...unknown[]][]) =>
+  tracked(calls).filter(([e]) => e === "loop_board_expanded");
 const tracked = (calls: [string, ...unknown[]][]) =>
   calls.filter(([name]) => name === "track").map(([, event, props]) => [event, props]);
 

@@ -485,9 +485,12 @@ export function Board({
   const mine = view.projectKey === projectKey ? view : fresh(projectKey);
   if (mine !== view) setView(mine);
   const isCollapsed = (id: number) => mine.columns.get(id) ?? folded.has(id);
-  const setCollapsed = (id: number, collapsed: boolean) =>
+  const setCollapsed = (id: number, collapsed: boolean) => {
+    store.track("loop_board_expanded", { target: "column", expanded: !collapsed });
     setView({ ...mine, columns: new Map(mine.columns).set(id, collapsed) });
+  };
   const setGroupOpen = (key: string, open: boolean) => {
+    store.track("loop_board_expanded", { target: "group", expanded: open });
     const groups = new Set(mine.groups);
     if (open) groups.add(key);
     else groups.delete(key);

@@ -133,6 +133,8 @@ export const EVENTS = {
     stuck: z.number(),
     intent_stuck: z.number(),
   }),
+  /** The person opened or folded a Kanban column or Backlog group by hand (not a filter opening one): are the folded defaults right? */
+  loop_board_expanded: o({ target: z.enum(["column", "group"]), expanded: z.boolean() }),
   /** A system notification was shown for a Notice (Blocked, escalated review, stuck run or stuck write; never a permission). */
   loop_notice_notified: o({ kind: z.enum(["blocked", "review", "stuck", "intent_stuck"]) }),
   /** The person opened a Notice's ticket from the Console, Notice area or board alert strip. */
@@ -608,6 +610,7 @@ export const UI_EVENTS = [
   "background_shown_from_conversation",
   "file_previewed",
   "loop_notice_opened",
+  "loop_board_expanded",
   "loop_tickets_acted",
   "loop_session_joined",
   "loop_run_viewed",
