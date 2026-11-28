@@ -624,6 +624,13 @@ function AppWindow() {
               conversation={view.conversation}
               loading={view.loading}
               awaitingApproval={activity === "requires_action"}
+              onOpenSession={(locationId, sessionId) => {
+                if (
+                  sessionsByLocation[locationId]?.find((s) => s.sessionId === sessionId)?.archived
+                )
+                  nav.setShowArchived(true);
+                nav.followOpen();
+              }}
             />
           ) : (
             <NoSession

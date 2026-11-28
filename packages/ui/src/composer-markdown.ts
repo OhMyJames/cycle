@@ -22,7 +22,11 @@ import { $createMentionNode, MentionNode } from "./react/mention-node.tsx";
 export const NODES = [HeadingNode, QuoteNode, ListNode, ListItemNode, CodeNode, MentionNode];
 
 /** What the editor needs of a mention that the draft holds: the `@path` it reads back as a block. */
-export type MentionRef = { readonly path: string; readonly kind: "file" | "folder" | "session" };
+export type MentionRef = {
+  readonly path: string;
+  readonly kind: "file" | "folder" | "session";
+  readonly name?: string | undefined;
+};
 
 /** Lexical's own set, less the `_` forms of emphasis and less links. */
 export const TRANSFORMERS_FOR_COMPOSER: Transformer[] = TRANSFORMERS.filter((t) => {
@@ -105,7 +109,7 @@ const $blockMentions = (mentions: readonly MentionRef[]): void => {
     for (const piece of pieces) {
       const size = piece.getTextContentSize();
       const hit = found.find((f) => f.at === offset && f.end === offset + size);
-      if (hit !== undefined) piece.replace($createMentionNode(hit.m.path, hit.m.kind));
+      if (hit !== undefined) piece.replace($createMentionNode(hit.m.path, hit.m.kind, hit.m.name));
       offset += size;
     }
   }

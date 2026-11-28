@@ -29,6 +29,29 @@ export const SESSION_URI_PREFIX = "cycle://session/";
 export const sessionUri = (sessionId: string): string =>
   `${SESSION_URI_PREFIX}${encodeURIComponent(sessionId)}`;
 
+/** The session a `cycle://session/` address names, or undefined for any other address. Mirrors `@cycle/protocol`. */
+export const sessionIdOfUri = (uri: unknown): string | undefined => {
+  if (typeof uri !== "string" || !uri.startsWith(SESSION_URI_PREFIX)) return undefined;
+  try {
+    const id = decodeURIComponent(uri.slice(SESSION_URI_PREFIX.length));
+    return id === "" ? undefined : id;
+  } catch {
+    return undefined;
+  }
+};
+
+/** Maximum characters shown inside a session @ mention chip before truncating with `...`. */
+export const SESSION_CHIP_MAX_CHARS = 20;
+
+const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/** Shortens a session mention's displayed text to at most 20 grapheme clusters, appending `...` when cut. */
+export const sessionChipText = (text: string): string => {
+  const segments = Array.from(GRAPHEMES.segment(text), (s) => s.segment);
+  if (segments.length <= SESSION_CHIP_MAX_CHARS) return text;
+  return `${segments.slice(0, SESSION_CHIP_MAX_CHARS).join("").trimEnd()}...`;
+};
+
 /** At most this many sessions in the @ menu: the most recent first, the rest are found by typing. */
 export const SESSION_ROWS = 6;
 
