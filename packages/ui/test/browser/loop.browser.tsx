@@ -1951,6 +1951,97 @@ test("an In Progress ticket drawer shows run progress, translated stage, heartbe
   expect(sent.includes("Ticket 900")).toBe(false);
 });
 
+test("escalated In Review ticket shows review conclusion and marks In review as awaiting review, not Done", async () => {
+  const user = userEvent.setup();
+  const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+  const escalated: LoopTicket = {
+    ...ticket(517, "In Review"),
+    title: "Codex MCP readable title",
+  };
+  const fake = fakeBridge({
+    connected: true,
+    loopProjects: { kind: "ok", projects: [cycle] },
+    workspaceRepos: { "/work": cycle.repo.displayName },
+    loopBoards: { CYC: withTickets({ "In Review": [escalated] }) },
+    loopTickets: {
+      "CYC-517": detailOf(escalated, {
+        body: "Escalated ticket body",
+        attention: {
+          kind: "review",
+          text: "Needs human sign-off on scope",
+          prUrl: "https://github.com/OhMyJames/cycle/pull/401",
+        },
+        links: ["https://github.com/OhMyJames/cycle/pull/401"],
+      }),
+    },
+    loopRunDetails: {
+      "CYC-517": {
+        kind: "ok",
+        run: {
+          key: "CYC-517",
+          title: "Codex MCP readable title",
+          kind: "dev",
+          phase: "done",
+          state: "done",
+          round: 0,
+          startedAt: ago(30),
+          updatedAt: ago(5),
+          blockedReason: null,
+          sessions: [
+            { kind: "dev", id: "sess-dev" },
+            { kind: "qa", id: "sess-qa" },
+            { kind: "review", id: "sess-rev" },
+          ],
+          prUrl: "https://github.com/OhMyJames/cycle/pull/401",
+          events: [
+            { ts: ago(30), kind: "claimed" },
+            { ts: ago(5), kind: "delivered" },
+          ],
+          heartbeat: null,
+        },
+      },
+    },
+  });
+  await renderApp(fake.bridge);
+  await user.click(await screen.findByRole("button", { name: "Kanban" }));
+  await user.click(await screen.findByRole("button", { name: "Codex MCP readable title" }));
+  const drawer = await screen.findByRole("complementary", { name: "CYC-517" });
+
+  // Review conclusion card and PR link appear above workflow progress.
+  await within(drawer).findByText("Review conclusion");
+  expect(within(drawer).getByText("Needs human sign-off on scope")).toBeTruthy();
+  expect(
+    within(drawer).getAllByRole("link", { name: "https://github.com/OhMyJames/cycle/pull/401" })
+      .length,
+  ).toBeGreaterThanOrEqual(1);
+
+  // In review is highlighted as `attention` (Awaiting review) with aria-current="step", and Done stays `pending`.
+  const steps = [...drawer.querySelectorAll('[data-slot="loop-run-step"]')];
+  const byLabel = Object.fromEntries(
+    steps.map((el) => [
+      el.querySelector('[data-slot="loop-run-step-label"]')?.textContent ?? "",
+      el.getAttribute("data-state"),
+    ]),
+  );
+  expect(byLabel).toEqual({
+    Developing: "done",
+    Verifying: "done",
+    QA: "done",
+    "Opening PR": "done",
+    "Waiting on CI": "done",
+    "In review": "attention",
+    Done: "pending",
+  });
+  const reviewStep = steps.find(
+    (el) => el.querySelector('[data-slot="loop-run-step-label"]')?.textContent === "In review",
+  );
+  const doneStep = steps.find(
+    (el) => el.querySelector('[data-slot="loop-run-step-label"]')?.textContent === "Done",
+  );
+  expect(reviewStep?.getAttribute("aria-current")).toBe("step");
+  expect(doneStep?.getAttribute("aria-current")).toBeNull();
+});
+
 test("board alert strip, sidebar notice badge, intent retry, and loop-activity live refresh work together", async () => {
   const user = userEvent.setup();
   const fake = fakeBridge({

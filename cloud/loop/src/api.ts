@@ -555,12 +555,28 @@ export class LoopApiHandler {
     const notice = (await this.#notices(project))
       .filter((n) => n.key === key && n.kind === "review")
       .sort((a, b) => b.at.localeCompare(a.at))[0];
-    if (notice === undefined) return undefined;
-    return {
-      kind: "review",
-      text: notice.text,
-      prUrl: run !== undefined && run.kind === "dev" ? run.dev.prUrl : null,
-    };
+    if (notice !== undefined) {
+      return {
+        kind: "review",
+        text: notice.text,
+        prUrl: run !== undefined && run.kind === "dev" ? run.dev.prUrl : null,
+      };
+    }
+    if (
+      run !== undefined &&
+      run.kind === "dev" &&
+      run.phase === "done" &&
+      run.cleanedAt === null &&
+      run.dev.reviewCommented !== undefined &&
+      !run.dev.reviewCommented.endsWith(":merge")
+    ) {
+      return {
+        kind: "review",
+        text: "",
+        prUrl: run.dev.prUrl,
+      };
+    }
+    return undefined;
   }
 
   // ---- runs ----
@@ -609,14 +625,30 @@ export class LoopApiHandler {
     }
     const db = sqlite(project.store);
     if (db === null) return out;
-    // A stored Notice lasts until its run is finished or has moved on since (its record changed after the Notice).
+    // A stored Notice lasts until its run is finished or has moved on since (its record changed after the Notice),
+    // except `review` Notices: those are written when a run finishes by escalating to In Review, so they last while
+    // the run is finished, not yet cleaned up, and not updated since (e.g. put back to Todo).
     // A permission request nobody answered for a day is dropped as well.
     const latestPermission = new Map<string, number>();
+    const latestReview = new Map<string, number>();
     const stored = db.notices();
-    for (const n of stored) if (n.kind === "permission") latestPermission.set(n.runKey, n.id);
+    for (const n of stored) {
+      if (n.kind === "permission") latestPermission.set(n.runKey, n.id);
+      if (n.kind === "review") latestReview.set(n.runKey, n.id);
+    }
     for (const n of stored) {
       const run = runs.get(n.runKey);
-      if (run !== undefined && (finished(run) || run.updatedAt > n.createdAt)) continue;
+      if (n.kind === "review") {
+        if (latestReview.get(n.runKey) !== n.id) continue;
+        if (
+          run !== undefined &&
+          (!finished(run) || run.cleanedAt !== null || run.updatedAt > n.createdAt)
+        ) {
+          continue;
+        }
+      } else if (run !== undefined && (finished(run) || run.updatedAt > n.createdAt)) {
+        continue;
+      }
       if (n.kind === "permission") {
         if (latestPermission.get(n.runKey) !== n.id) continue;
         if (now - Date.parse(n.createdAt) > PERMISSION_TTL_MS) continue;

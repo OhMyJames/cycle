@@ -2623,6 +2623,11 @@ html[data-platform="darwin"] [data-slot="loop-crumb"] {
   font-weight: 600;
 }
 
+[data-slot="loop-run-step"][data-state="attention"] {
+  color: var(--cycle-attention);
+  font-weight: 600;
+}
+
 [data-slot="loop-run-step"][data-state="blocked"] {
   color: var(--ui-destructive);
   font-weight: 600;
@@ -2648,6 +2653,12 @@ html[data-platform="darwin"] [data-slot="loop-crumb"] {
 [data-slot="loop-run-step"][data-state="active"] [data-slot="loop-run-step-mark"] {
   border-color: var(--cycle-accent);
   background: var(--cycle-accent);
+}
+
+[data-slot="loop-run-step"][data-state="attention"] [data-slot="loop-run-step-mark"] {
+  border-color: var(--cycle-attention);
+  background: var(--cycle-attention-soft);
+  color: var(--cycle-attention);
 }
 
 [data-slot="loop-run-step"][data-state="blocked"] [data-slot="loop-run-step-mark"] {
