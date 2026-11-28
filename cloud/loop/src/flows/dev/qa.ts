@@ -98,7 +98,12 @@ export async function qa(
       tx.saveGraph(next);
     });
   };
-  await recordSession({ qaSessionId: first });
+  // Going on in an open QA node starts a new session: the one it had is replaced, so it is cleaned up later.
+  const replaced = node?.sessionId;
+  await recordSession({
+    qaSessionId: first,
+    ...(replaced != null ? { replacedSessions: [...run.replacedSessions, replaced] } : {}),
+  });
   run = { ...run, qaSessionId: first };
 
   const before = await h.snapshot(worktree);
@@ -137,38 +142,61 @@ export async function qa(
     throw error;
   }
 
+  // The result of this QA node is written with the change of phase, in one transaction: a crash between the two
+  // must not leave a finished node in a run that is still in `qa` (recovery would pay for a second QA session).
+  let finished: TaskGraph | undefined;
   if (node !== undefined && graph !== undefined) {
     const head = await h.d.workspace.head(where(h, worktree));
     const nowIso = clock.now().toISOString();
-    graph = updateGraphNode(
+    finished = updateGraphNode(
       graph,
       node.id,
       {
         status: "passed",
         verdict: verdict.pass ? "pass" : "fail",
         commitSha: head.ok ? head.sha : null,
-        report: verdict.pass && verdict.findings.length === 0 ? "通过" : formatFindings(verdict),
+        report: verdict.pass && verdict.findings.length === 0 ? null : formatFindings(verdict),
         lastError: null,
         finishedAt: nowIso,
       },
       nowIso,
       null,
     );
-    const done = graph;
-    await store.saveGraph(done);
-    await store.event(run.key, "graph_qa_done", {
+  }
+  const persist = (tx: Parameters<NonNullable<Parameters<Save>[1]>>[0]) => {
+    if (finished === undefined || node === undefined) return;
+    tx.saveGraph(finished);
+    tx.event(run.key, "graph_qa_done", {
       nodeId: node.id,
       verdict: verdict.pass ? "pass" : "fail",
     });
-  }
-  if (!verdict.pass) {
-    await nextRound(h, run, `Independent review found:\n${formatFindings(verdict)}`, save, "dev", {
-      fixTitle: "修复独立 QA 审查问题",
-      fixVerify: ["bun run check"],
+  };
+  const commit: Save = (patch, also) =>
+    save(patch, (tx) => {
+      persist(tx);
+      also?.(tx);
     });
+  if (!verdict.pass) {
+    // At the round limit nothing is saved by the fix round: keep the node's result before it blocks.
+    if (finished !== undefined && run.round >= config.maxFixRounds) {
+      await store.saveGraph(finished);
+      await store.event(run.key, "graph_qa_done", { nodeId: node?.id ?? "", verdict: "fail" });
+    }
+    await nextRound(
+      h,
+      run,
+      `Independent review found:\n${formatFindings(verdict)}`,
+      commit,
+      "dev",
+      {
+        fixTitle: "修复独立 QA 审查问题",
+        fixVerify: ["bun run check"],
+        ...(finished !== undefined ? { graph: finished } : {}),
+      },
+    );
     return;
   }
-  await save({ phase: "delivering", dev: { activeNodeId: null } });
+  await commit({ phase: "delivering", dev: { activeNodeId: null } });
 }
 
 /**
@@ -260,7 +288,7 @@ export async function nextRound(
   findings: string,
   save: Save,
   to: "dev" | "research" = "dev",
-  graphFix?: { fixTitle: string; fixVerify?: string[] },
+  graphFix?: { fixTitle: string; fixVerify?: string[]; graph?: TaskGraph },
 ): Promise<void> {
   await h.d.store.event(run.key, "round_failed", { round: run.round });
   if (run.round >= h.d.config.maxFixRounds) {
@@ -278,6 +306,7 @@ export async function nextRound(
       title: graphFix?.fixTitle ?? `修复整单问题 #${run.round + 1}`,
       findings,
       ...(graphFix?.fixVerify !== undefined ? { verify: graphFix.fixVerify } : {}),
+      ...(graphFix?.graph !== undefined ? { graph: graphFix.graph } : {}),
       save,
     });
     if (scheduled) return;

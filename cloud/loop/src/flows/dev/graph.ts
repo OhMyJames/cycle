@@ -236,10 +236,14 @@ export async function graphPlan(h: FlowHost, run: DevRun, issue: Issue, save: Sa
     nowIso,
     target.id,
   );
-  await save({ phase: "dev", dev: { activeNodeId: target.id } }, (tx) => {
-    tx.saveGraph(nextGraph);
-    postGraphReadyComment(tx, run, issue, nextGraph);
-  });
+  // A QA node (retried from the graph UI) is executed by the QA phase, never by a Dev session.
+  await save(
+    { phase: target.role === "qa" ? "qa" : "dev", dev: { activeNodeId: target.id } },
+    (tx) => {
+      tx.saveGraph(nextGraph);
+      postGraphReadyComment(tx, run, issue, nextGraph);
+    },
+  );
 }
 
 /**
@@ -476,7 +480,8 @@ export async function nodeVerify(h: FlowHost, run: DevRun, save: Save): Promise<
       nowIso,
       next.id,
     );
-    await save({ phase: "dev", findings: null, dev: { activeNodeId: next.id } }, (tx) => {
+    const phase = next.role === "qa" ? "qa" : "dev";
+    await save({ phase, findings: null, dev: { activeNodeId: next.id } }, (tx) => {
       tx.saveGraph(nextGraph);
       tx.event(run.key, "graph_node_passed", {
         nodeId: node.id,
@@ -516,14 +521,24 @@ export async function scheduleGraphFix(
     title: string;
     findings: string;
     verify?: string[];
+    /** The graph to append to, when the caller holds a newer one than the store (not yet saved). */
+    graph?: TaskGraph;
     save: Save;
     extraPatch?: RunPatch;
   },
 ): Promise<boolean> {
-  const graph = await h.d.store.loadGraph(run.key);
+  const graph = input.graph ?? (await h.d.store.loadGraph(run.key));
   if (graph === undefined) return false;
   const nowIso = h.d.clock.now().toISOString();
-  const appended = appendFixNode(graph, {
+  // An open QA node (a run resumed from `qa` that then failed whole-item verify) is superseded by the fix: skip it,
+  // so it is neither left unfinished nor picked up as a Dev node later.
+  const closed = graph.nodes
+    .filter((n) => n.role === "qa" && n.status !== "passed" && n.status !== "skipped")
+    .reduce(
+      (g, n) => updateGraphNode(g, n.id, { status: "skipped", finishedAt: nowIso }, nowIso),
+      graph,
+    );
+  const appended = appendFixNode(closed, {
     title: input.title,
     goal: input.findings,
     verify: input.verify ?? ["bun run check"],
