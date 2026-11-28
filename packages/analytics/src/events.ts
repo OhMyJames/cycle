@@ -205,8 +205,11 @@ export const EVENTS = {
       "refused",
     ]),
   }),
-  /** The person pressed Sessions in the sidebar's Sessions/Loop switch, leaving the Loop mode (entering it is `panel_opened` with `loop`). */
-  sessions_mode_shown: o({}),
+  /** The person opened a Loop Project's Kanban or Timeline view (CYC-533): which view and from where; never which project. */
+  loop_project_view_opened: o({
+    view: z.enum(["kanban", "timeline"]),
+    from: z.enum(["sidebar", "overview", "timeline", "notification"]),
+  }),
   /** The person asked to check for an update. */
   update_checked: o({ result: z.enum(["available", "up_to_date", "error", "disabled"]) }),
   update_install_started: o({}),
@@ -572,7 +575,7 @@ export const UI_EVENTS = [
   "loop_run_viewed",
   "loop_graph_viewed",
   "loop_graph_node_opened",
-  "sessions_mode_shown",
+  "loop_project_view_opened",
   "diff_view_changed",
   "diff_file_opened",
   "diff_edit_revealed",

@@ -86,6 +86,8 @@ export const fakeBridge = (
     /** Whether usage statistics are on. Default: nowhere to report to. */
     analytics?: AnalyticsStatus;
     loopProjects?: LoopProjectsAnswer;
+    /** What `workspaceRepo` answers per local workspace `cwd`. Default: null. */
+    workspaceRepos?: Record<string, string | null>;
     loopRuns?: LoopRunsAnswer;
     loopBoards?: Record<string, LoopBoardAnswer>;
     loopTickets?: Record<string, LoopTicketAnswer>;
@@ -704,6 +706,10 @@ export const fakeBridge = (
     loopProjects: record(
       "loopProjects",
       async (): Promise<LoopProjectsAnswer> => options.loopProjects ?? { kind: "disconnected" },
+    ),
+    workspaceRepo: record(
+      "workspaceRepo",
+      async (cwd: string): Promise<string | null> => options.workspaceRepos?.[cwd] ?? null,
     ),
     loopRuns: record(
       "loopRuns",

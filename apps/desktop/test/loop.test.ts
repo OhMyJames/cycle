@@ -19,6 +19,8 @@ import {
   loopFeed,
   readLoopProjects,
   readLoopRuns,
+  readWorkspaceRepo,
+  repoDisplayName,
   retireKeyFile,
   retryLoopIntents,
   startTicketChat,
@@ -1396,5 +1398,47 @@ describe("run detail, cancel, intent retry and activity feed", () => {
     await feed.tick(); // same active run key, new event -> activity fires!
     expect(activities).toEqual([["CYC"]]);
     expect(changes).toHaveLength(1);
+  });
+});
+
+describe("workspace git remote normalisation for Loop matching (CYC-533)", () => {
+  test("repoDisplayName extracts owner/name from https, ssh and scp remotes without host or credentials", () => {
+    expect(repoDisplayName("https://github.com/OhMyJames/cycle.git")).toBe("OhMyJames/cycle");
+    expect(repoDisplayName("https://token@github.com/OhMyJames/cycle/")).toBe("OhMyJames/cycle");
+    expect(repoDisplayName("git@github.com:OhMyJames/cycle.git")).toBe("OhMyJames/cycle");
+    expect(repoDisplayName("ssh://git@gitlab.example.com/group/sub/repo.git")).toBe(
+      "group/sub/repo",
+    );
+    expect(repoDisplayName("")).toBeNull();
+    expect(repoDisplayName("file:///Users/me/repo.git")).toBeNull();
+    expect(repoDisplayName("/local/path/only")).toBeNull();
+    expect(repoDisplayName("not-a-repo")).toBeNull();
+  });
+
+  test("readWorkspaceRepo reads origin remote from a local git repo, falls back to first remote, and returns null otherwise", async () => {
+    const repoDir = mkdtempSync(join(dir, "repo-"));
+    const fallbackDir = mkdtempSync(join(dir, "fallback-"));
+    const plainDir = mkdtempSync(join(dir, "plain-"));
+    const gitEnv = { ...process.env };
+    delete gitEnv.GIT_DIR;
+    delete gitEnv.GIT_WORK_TREE;
+    delete gitEnv.GIT_COMMON_DIR;
+    delete gitEnv.GIT_INDEX_FILE;
+    const git = (args: string[]) => Bun.spawnSync(["git", ...args], { env: gitEnv });
+    expect(git(["init", repoDir]).exitCode).toBe(0);
+    expect(
+      git(["-C", repoDir, "remote", "add", "origin", "git@github.com:OhMyJames/cycle.git"])
+        .exitCode,
+    ).toBe(0);
+    expect(git(["init", fallbackDir]).exitCode).toBe(0);
+    expect(
+      git(["-C", fallbackDir, "remote", "add", "upstream", "https://github.com/clawdot/cycle.git"])
+        .exitCode,
+    ).toBe(0);
+    expect(await readWorkspaceRepo(repoDir)).toBe("OhMyJames/cycle");
+    expect(await readWorkspaceRepo(fallbackDir)).toBe("clawdot/cycle");
+    expect(await readWorkspaceRepo(plainDir)).toBeNull();
+    expect(await readWorkspaceRepo("relative/path")).toBeNull();
+    expect(await readWorkspaceRepo(null)).toBeNull();
   });
 });

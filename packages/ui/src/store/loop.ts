@@ -23,6 +23,8 @@ import type { StoreKit } from "./core.ts";
 export type LoopState = {
   /** The Projects as last read: kept when the server goes away, so the page can show them greyed out. */
   projects: LoopProjectInfo[];
+  /** Normalised `owner/name` repo per local workspace `cwd` (CYC-533), or null when none. */
+  workspaceRepos: Record<string, string | null>;
   /** Whether the Loop server answered the last time it was asked. `undefined`: not asked yet. */
   connected?: boolean;
   /** Where Loop is running, as last read or pushed. `undefined`: not read yet. */
@@ -42,6 +44,7 @@ const MANY_CHUNK = 50;
 
 export const initialLoop = (): LoopState => ({
   projects: [],
+  workspaceRepos: {},
   boards: {},
   notices: {},
   activity: {},
@@ -72,6 +75,32 @@ export class LoopSlice {
         projects: answer.kind === "ok" ? answer.projects : s.loop.projects,
       },
     }));
+  };
+
+  readonly #repoInflight = new Map<string, Promise<string | null>>();
+
+  /** Reads and caches the normalised git `owner/name` of a local workspace folder (CYC-533). */
+  loadWorkspaceRepo = async (cwd: string): Promise<string | null> => {
+    if (cwd === "") return null;
+    const cached = this.#kit.state().loop.workspaceRepos;
+    if (Object.hasOwn(cached, cwd)) return cached[cwd] ?? null;
+    const existing = this.#repoInflight.get(cwd);
+    if (existing !== undefined) return existing;
+    const promise = this.#kit.bridge
+      .workspaceRepo(cwd)
+      .catch(() => null)
+      .then((repo) => {
+        this.#repoInflight.delete(cwd);
+        this.#kit.set((s) => ({
+          loop: {
+            ...s.loop,
+            workspaceRepos: { ...s.loop.workspaceRepos, [cwd]: repo },
+          },
+        }));
+        return repo;
+      });
+    this.#repoInflight.set(cwd, promise);
+    return promise;
   };
 
   loadRuns = async (): Promise<void> => {

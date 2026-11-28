@@ -1309,6 +1309,11 @@ export type AppApi = {
   /** The Projects the Loop server on this computer serves (docs/protocol.md §17). */
   loopProjects(): Promise<LoopProjectsAnswer>;
   /**
+   * The normalised git repository name (`owner/name`) of a local workspace folder, or null when it is not a git
+   * repository or has no remote (CYC-533). Matched against `LoopProjectInfo.repo.displayName`; never returns a path.
+   */
+  workspaceRepo(cwd: string): Promise<string | null>;
+  /**
    * Where Loop is running now, by Project (docs/protocol.md §17, CYC-458). Read once when the page opens; after that
    * the main process pushes `loop-runs` when it changes. Read-only: there is no start or stop.
    */
@@ -1715,6 +1720,7 @@ const METHODS: { readonly [method in keyof AppApi]-?: true } = {
   analytics: true,
   setAnalytics: true,
   loopProjects: true,
+  workspaceRepo: true,
   loopRuns: true,
   loopBoard: true,
   loopTicket: true,

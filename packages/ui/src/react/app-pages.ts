@@ -1,7 +1,7 @@
 import { type RefObject, useEffect, useRef, useState } from "react";
 import { CONNECTORS_SECTIONS, type ConnectorsSection } from "../connectors-sections.ts";
 import type { SettingsSection } from "../settings-sections.ts";
-import { enter, type LoopView, up } from "./loop-nav.ts";
+import { type LoopProjectTab, type LoopView, up } from "./loop-nav.ts";
 import { useAppState, useAppStore } from "./store-context.tsx";
 
 /** Where Settings and Connectors go back to: the sessions, or the Loop they were opened from. */
@@ -126,20 +126,35 @@ export function usePlaces(appRef: RefObject<HTMLElement | null>) {
   };
 
   const openLoop = () => {
-    if (placeRef.current.id === "loop") return;
-    go({ id: "loop", view: enter(last.current.loop) });
+    const now = placeRef.current;
+    if (now.id === "loop" && now.view.at === "overview") return;
+    go({ id: "loop", view: { at: "overview" } });
     store.track("panel_opened", { panel: "loop", via: "click" });
   };
+  const openLoopProject = (
+    projectKey: string,
+    tab: LoopProjectTab,
+    from: "sidebar" | "overview" | "timeline" | "notification" = "sidebar",
+  ) => {
+    const now = placeRef.current;
+    if (
+      now.id === "loop" &&
+      now.view.at === "project" &&
+      now.view.projectKey === projectKey &&
+      now.view.tab === tab
+    )
+      return;
+    go({ id: "loop", view: { at: "project", projectKey, tab } });
+    store.track("loop_project_view_opened", { view: tab, from });
+  };
   // Moving inside the Loop: where it is now is where it comes back to. Under a page opened from it the Loop can still
-  // move by itself (it lands on the only Project's board once the Projects are read): that is remembered for the way
-  // back, and the page stays.
+  // move by itself: that is remembered for the way back, and the page stays.
   const showLoopView = (view: LoopView) => {
     const now = placeRef.current;
     if (isPage(now)) last.current.loop = view;
     else go({ id: "loop", view });
   };
-  // Escape closes a ticket's drawer, back to its board. It goes no higher and does not leave the Loop: the sidebar's
-  // Overview and Sessions do.
+  // Escape closes a ticket's drawer, back to its board. It goes no higher and does not leave the Loop: the sidebar does.
   const loopBack = () => {
     const now = placeRef.current;
     const parent = now.id === "loop" ? up(now.view) : undefined;
@@ -175,6 +190,12 @@ export function usePlaces(appRef: RefObject<HTMLElement | null>) {
         view: { at: "project", projectKey: loopRequest.projectKey, tab: "kanban" },
       });
   }
+  const trackedLoopRequest = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (loopRequest === undefined || trackedLoopRequest.current === loopRequest.n) return;
+    trackedLoopRequest.current = loopRequest.n;
+    store.track("loop_project_view_opened", { view: "kanban", from: "notification" });
+  }, [loopRequest, store]);
   const pageOpen = isPage(place);
   useEffect(() => {
     const opener = returnFocus.current;
@@ -212,6 +233,7 @@ export function usePlaces(appRef: RefObject<HTMLElement | null>) {
     openConnectors,
     showConnectorsSection,
     openLoop,
+    openLoopProject,
     showLoopView,
     loopBack,
     leaveLoop,
