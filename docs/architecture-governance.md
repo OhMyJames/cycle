@@ -1,6 +1,6 @@
 # 架构治理进度
 
-审计基线为 `95bb58db`。依赖边以各 workspace 的 manifest 为准。用 `bun scripts/module-graph.ts > modules.dot` 导出完整生产模块图。门禁使用同一个图检查环，失败时显示闭环路径。当前 482 个文件、1,405 条边，覆盖 workspace 的 src 下 TS/TSX 文件、相对路径与包导出、字面量动态加载和 require。计算生成的模块名、纯类型依赖和进程间 RPC 各有不同语义。
+审计基线为 `95bb58db`。依赖边以各 workspace 的 manifest 为准。用 `bun scripts/module-graph.ts > modules.dot` 导出完整生产模块图。门禁使用同一个图检查环，失败时显示闭环路径。在 Loop 验证重构后的快照（8a35fd75）上有 482 个文件、1,405 条边，覆盖 workspace 的 src 下 TS/TSX 文件、相对路径与包导出、字面量动态加载和 require。计算生成的模块名、纯类型依赖和进程间 RPC 各有不同语义。
 
 ## 模块、依赖与状态所有权
 
@@ -31,6 +31,6 @@
 | 分层约束             | 分区门禁已迁移至 Oxc 语法树。删除自制词法器，保留类型、动态导入和 require 检查。原压力测试在本机用时约 0.5 秒，上限 3 秒。                                                                       |
 | UI、状态与业务模型   | Harness 已迁入 LocationScope，与订阅、API keys、Vault 共用位置选择、断线保留、能力回退与空状态。每页原有的能力缓存寿命保留。曝光由选中的 Harness 上报，浏览器用例核对两次位置曝光。              |
 | 错误、重试、可观测性 | 桌面主进程的终端限额、connector 和配置保存错误改读协议字典。纯 UI 模型沿用分区约束，由重发测试以 CycleErrorCode 校验四种失败投影。client 持有连接重连的退避计时，Loop 主进程轮询按项目独立退避。 |
-| 配置、权限与身份     | 继续核对 harness 注册表到启动环境、凭证存储与代理网关的调用路径。                                                                                                                                |
+| 配置、权限与身份     | 三种 harness 的 CLI 与适配器均经各自 env 函数进入 harnessEnv。共同处理白名单、系统代理和显式覆盖，专用目录由适配器决定。system-proxy.test.ts 校验目录冲突时的优先级和宿主秘密隔离。              |
 
 Loop 的节点和整单验证现在各创建一次 verificationPass。每次验证独享结果缓存、隔离目录和超时配置，节点重试事件带 nodeId。目标 bun test 的退出码、跳过计数和证据说明在 criteria.ts 一处判定。整单测试层和工单验收条件仍由各自调用方选择。

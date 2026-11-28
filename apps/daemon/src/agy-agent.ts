@@ -19,9 +19,8 @@ import {
 } from "./agent-setup.ts";
 import type { AgentDefinition } from "./agents.ts";
 import { type Config, ConfigSchema } from "./config.ts";
-import type { Harness, HarnessContext } from "./harness.ts";
+import { type Harness, type HarnessContext, harnessEnv } from "./harness.ts";
 import { processAgent } from "./process-agent.ts";
-import { systemProxyFill } from "./system-proxy.ts";
 
 const isExecutable = (path: string): boolean => {
   try {
@@ -102,21 +101,12 @@ export const agyEnv = (
   dataDir: string,
   inherited: Record<string, string | undefined>,
 ): Record<string, string> => {
-  const env: Record<string, string> = {};
-  for (const key of config.allowEnv) {
-    if (key === "HOME") continue;
-    const value = inherited[key];
-    if (value !== undefined) env[key] = value;
-  }
-  env.HOME = config.home ?? join(dataDir, "agy");
-  // agy must keep an isolated HOME (models/plugin/usage have no directory env var), so force file-based token
-  // storage to avoid macOS Keychain prompts across all agy entry points (CYC-401 / CYC-402; `agy.env` can override).
-  env.AGY_CLI_FORCE_FILE_TOKEN_STORAGE = "1";
-  // agy-fast checks GitHub for a newer release from its session hook and swaps its own files: not unasked here
-  // (`agy.env` can turn it back on).
-  env.AGY_FAST_AUTO_UPDATE = "off";
-  Object.assign(env, systemProxyFill(config.allowEnv, inherited, config.env), config.env);
-  return env;
+  return harnessEnv(config, inherited, {
+    HOME: config.home ?? join(dataDir, "agy"),
+    // Isolated HOME uses file tokens; agy.env can override either default (CYC-401 / CYC-402).
+    AGY_CLI_FORCE_FILE_TOKEN_STORAGE: "1",
+    AGY_FAST_AUTO_UPDATE: "off",
+  });
 };
 
 export type AgyDefinitionOptions = {

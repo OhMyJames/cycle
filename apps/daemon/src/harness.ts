@@ -4,6 +4,23 @@ import type { Config } from "./config.ts";
 import type { Logger } from "./logger.ts";
 import type { ModelProviders } from "./providers.ts";
 
+import { systemProxyFill } from "./system-proxy.ts";
+
+/** The allowed host variables, harness defaults, missing system proxies and explicit overrides, in that order. */
+export function harnessEnv(
+  config: { allowEnv: readonly string[]; env: Record<string, string> },
+  inherited: Record<string, string | undefined>,
+  defaults: Record<string, string> = {},
+): Record<string, string> {
+  const env = { ...defaults };
+  for (const name of config.allowEnv) {
+    if (Object.hasOwn(defaults, name)) continue;
+    const value = inherited[name];
+    if (value !== undefined) env[name] = value;
+  }
+  return { ...env, ...systemProxyFill(config.allowEnv, inherited, config.env), ...config.env };
+}
+
 /** What a harness is given to make its agent from: nothing of the daemon's own environment but what is named here. */
 export type HarnessContext = {
   config: Config;

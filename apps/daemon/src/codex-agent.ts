@@ -10,12 +10,11 @@ import {
 import { runAdapter } from "@cycle/harness-codex/run";
 import { createCodexSetupProvider } from "./agent-setup.ts";
 import type { Config } from "./config.ts";
-import type { Harness } from "./harness.ts";
+import { type Harness, harnessEnv } from "./harness.ts";
 import { ensureHomeKeychain } from "./home-keychain.ts";
 import { processAgent } from "./process-agent.ts";
 import { protectedFiles } from "./secrets.ts";
 import { shippedExecutable } from "./self.ts";
-import { systemProxyFill } from "./system-proxy.ts";
 
 /** What the Codex process is allowed to see, and nothing else: the allowlist, what config.json names, its own home. */
 export const codexEnv = (
@@ -23,9 +22,7 @@ export const codexEnv = (
   dataDir: string,
   inherited: Record<string, string | undefined>,
 ): Record<string, string> => {
-  const env: Record<string, string> = {};
-  for (const key of config.allowEnv) if (inherited[key] !== undefined) env[key] = inherited[key];
-  Object.assign(env, systemProxyFill(config.allowEnv, inherited, config.env), config.env);
+  const env = harnessEnv(config, inherited);
   env.CODEX_HOME = config.configDir ?? join(dataDir, "codex");
   // Host HOME is passed through via allowEnv so macOS login.keychain-db and host dev tools (git/gh/ssh) work,
   // while CODEX_HOME + file credential stores keep Codex isolated from ~/.codex (CYC-401).
