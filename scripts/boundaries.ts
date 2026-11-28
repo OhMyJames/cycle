@@ -32,6 +32,8 @@ export const zoneOf = (file: string): Zone[] => {
 /** Literal module references, including types checked at the model and bridge boundaries. */
 export const moduleReferences = (text: string, file = "source.ts") => {
   const references: { name: string; typeOnly: boolean }[] = [];
+  // Every statically knowable module name has a string or template delimiter.
+  if (!/["'`]/.test(text)) return references;
   const collect = (source: Argument | null | undefined, typeOnly = false) => {
     const name =
       source?.type === "Literal"

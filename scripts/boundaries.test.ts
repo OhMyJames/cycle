@@ -70,6 +70,8 @@ describe("module references", () => {
     importsOf("export const a = 1\n".repeat(200_000));
     importsOf("import a\n".repeat(200_000));
     importsOf("import {\n".repeat(50_000));
+    const statements = "void 0;\n".repeat(50_000);
+    expect(importsOf(`${statements}import "last";`)).toEqual(["last"]);
     expect(performance.now() - started).toBeLessThan(3000);
   });
 
