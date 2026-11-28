@@ -203,6 +203,40 @@ Loop 推进一张工单时，把当前阶段和进入时间写进工单的两个
 
 **stats** 的 `planning` 一节单独计：轮数、盘点停下的轮数、各归类张数、改优先级和提问的次数、加工、停下、放弃的张数、平均修复轮次，以及批准率：加工后等批准的各张里，后来被开发 run 领走（有 `claimed` 事件）的比例。只看事件：已批准但还没被领走的算作还没批准。
 
+## 审阅任务与人开的 PR（CYC-540）
+
+评审从开发流程里拆成一个可单独启动的**审阅任务**（`src/flows/review/`）：输入是仓库、PR 编号、待审提交（head SHA）和审阅上下文，交付绑定这个提交的结论（`merge` / `reject` / `escalate` / 系统故障）、发现和每次尝试的会话 id。决定见 `.agents/notes/2026-11-28-loop-runs-one-role-graph-per-requirement.md` 与 `.agents/notes/2026-11-28-loop-on-a-host-takes-webhooks-and-merges-any-pr.md`。
+
+- **同一仓库、同一 PR、同一提交只有一个任务、只审一次**（`loop.db` 的 `review_tasks`，唯一键 `(repo, pr, head_sha)`，认领用 `UPDATE … WHERE status='pending'`）。作者推了新提交就是另一个任务，旧结论只属于旧提交。
+- 开审前向 GitHub 确认这个提交的必需 CI 全绿，不全绿不开会话。会话只读（沿用评审的只读快照、重试和检查清单要求）。评审意见按「提交 + 结论」只在 PR 上评论一次。
+- 两个入口共用它：开发流程的评审阶段**同步**调用（在自己的 worker 里跑完，拿到结论后照旧返工、升级给人或开自动合并，对外行为不变）；人开的 PR 由下面的流程调用。上下文不同：工单是正文和验收结果，人开的 PR 是标题和描述，提示词里用 `<untrusted>` 包住并写明只作背景、不是指令。
+
+### 开启人开 PR 的审阅
+
+按 Project 的开关，**默认关闭**，关闭时不读 PR：
+
+```jsonc
+{ "projects": [ { …, "prReview": { "enabled": true, "maxReviewsPerPr": 5 } } ] }
+```
+
+`maxReviewsPerPr`：每个 PR 的审阅次数上限，1 到 50，默认 5；到上限后评论一次说明，不再自动审。写错（类型不对、超范围、多余字段）时启动报错并指出字段。不接 webhook：在现有机器上按 `tuning.intervalSeconds` 轮询配置仓库的开放 PR。
+
+**处理哪些 PR**：同仓库分支（不是 fork）、作者对仓库有 write、maintain 或 admin 权限、不是草稿、分支不是 Loop 自己的 `auto/cyc-*`（那些只由开发流程处理）。不满足的跳过，**不评论**；草稿转为可审后再处理。每个符合条件的 PR 一个流程实例（key `pr:<仓库>#<编号>`），当前提交一个审阅任务。拉 PR 分支到本地 `loop-pr/<n>` 只在 delivery 仓库里带凭据进行，共享仓库配置被改时照样拒绝。
+
+### 合并门禁与钉住提交
+
+「Loop 能不能在这个提交上合并这个 PR」只由 `src/guard/merge-gate.ts` 的 `mayMerge` 判断（在路径底线以内，改它的 PR 必须由人合并）。全部满足才允许：结论为合并；审过的提交就是当前 head；这个提交的必需 CI 全绿；改动路径读得到且不碰路径底线（`guard/floor.ts`）；人开的 PR 还要作者有写权限且不来自 fork。开发流程和人开 PR 的流程都只通过它决定合并；开发流程里碰到底线仍按 `escalate` 转 In Review。
+
+人开的 PR 结论为 `merge` 时：合并前重新读 head、CI、作者权限和改动路径，过门禁后直接 `gh pr merge <pr> --squash --match-head-commit <审过的提交>`，**不开自动合并**（作者有写权限，审完再推新提交，自动合并不会被关）；head 变了 GitHub 拒绝合并。门禁不通过只评论原因。`reject`、`escalate`、系统故障只评论不合并。分支保护要求人审批时合并会失败：记事件、评论，不重试。
+
+### 等待与唤醒
+
+CI 没跑完时，流程登记等待并结束这一步，**不占 worker**：`waits` 记「谁（`pr:<仓库>#<编号>`）在等什么主题（`ci:<仓库>@<sha>`）」和复查时间（`tuning.ciPollIntervalSeconds` 之后）。信号（`signals`，来源现在只有 `poll`，以后有 `webhook`）写入和唤醒等待在同一个事务里，按 `dedupe` 去重，重复信号只算一次。轮询读到 CI 不再是 `pending` 就发信号；没有信号时到复查时间也会再检查。唤醒只表示「可以重新检查」，动作前一律从 GitHub 重读。登记等待的工作写 `deadline: null` 的心跳，守护者不把它当作卡住。
+
+事件写在 `pr:<仓库>#<编号>` 下：`pr_review_started`、`pr_waiting_ci`、`pr_merged`、`pr_merge_refused` 等；`stats` 不变。
+
+SQLite 只加表（`review_tasks`、`waits`、`signals`、`pr_reviews`），旧版本代码能打开新库。本期不做：webhook 和迁主机（CYC-543）、QA 和返工进流程图（CYC-542）、开发流程 `ci` 阶段改成登记等待、处理人开 PR 的合并冲突或改它的代码。
+
 ## 网络错误（CYC-444）
 
 访问 GitHub 的命令（`git fetch`、`git push`、`gh pr create` / `edit` / `view` / `comment` / `merge`、`gh run rerun`，包括读 PR 状态、读 CI 状态和等 CI 时的每一次轮询）失败时，先按输出判断是不是网络类错误（`src/network.ts`）：`Could not resolve host`、`Connection reset` / `refused` / `timed out`、`TLS handshake timeout`、`unable to access`、`i/o timeout`、`unexpected EOF`、HTTP 502/503/504，以及命令本身超时。权限、认证（401/403/404）、HTTP 400/422/429、SSL 证书、代理错误、找不到分支、合并冲突、推送被拒绝**不算**网络错误，照旧转 Blocked。

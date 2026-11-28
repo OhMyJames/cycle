@@ -1,16 +1,11 @@
 import type { CriteriaBook } from "../../criteria.ts";
-import { branchOf, tail } from "../../engine/flow.ts";
+import { tail } from "../../engine/flow.ts";
 import { deadlineFor, recordHeartbeat } from "../../engine/heartbeat.ts";
-import { floorHits } from "../../guard/floor.ts";
+import { mayMerge } from "../../guard/merge-gate.ts";
 import { renderReviewComment } from "../../pr.ts";
-import {
-  formatReviewFindings,
-  listsWhatWasChecked,
-  parseReviewVerdict,
-  type ReviewVerdict,
-  reviewBrief,
-} from "../../prompts/index.ts";
+import { formatReviewFindings, type ReviewVerdict } from "../../prompts/index.ts";
 import type { Issue } from "../../types.ts";
+import { commentOnce, type ReviewInput, reviewTask } from "../review/index.ts";
 import { tellTicket } from "../ticket.ts";
 import { handleConflict } from "./conflict.ts";
 import { type Dev, type DevRun, type Save, where } from "./context.ts";
@@ -31,129 +26,36 @@ export async function review(
   const head = await h.d.workspace.head(where(h, worktree));
   const headSha = head.ok ? head.sha : "";
 
-  // Confirm CI is green for this exact HEAD. Only what this process saw counts: after a crash recovery the first
-  // review asks GitHub again, whatever `ci_state` says.
-  let ciGreen = headSha !== "" && x.greenSeen.get(run.key) === headSha;
-  let ciNotGreenReason: string | null = null;
-  if (!ciGreen) {
-    if (headSha === "") {
-      ciNotGreenReason = `读取 HEAD 提交失败：${tail(head.ok ? "" : head.error)}`;
-    } else {
-      const read = await h.net(
-        run.key,
-        "gh pr view",
-        () => h.d.forge.ciStatus(where(h, worktree), prUrl, headSha, config.ciChecks),
-        (r) => (r.ok ? undefined : r.error),
-      );
-      if (read.ok && read.status.state === "passed") {
-        ciGreen = true;
-        x.greenSeen.set(run.key, headSha);
-        await h.d.store.saveCi(run.key, { greenSha: headSha });
-      } else {
-        ciNotGreenReason = read.ok
-          ? `CI 状态未全绿（当前为 ${read.status.state}）。`
-          : `读取 CI 状态失败：${tail(read.error)}`;
-      }
-    }
-  }
-
-  const diff = await h.d.workspace.diff(where(h, worktree), config.baseRef);
-  const maxAttempts = Math.max(1, config.maxReviewRetries + 1);
-  let reviewSessionId = run.dev.reviewSessionId;
-  let verdict: ReviewVerdict | undefined;
-  let lastFailure: string | null = null;
-  let attempts = 0;
-
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    attempts = attempt + 1;
-    let worktreeModified = false;
-    try {
-      const created = await h.d.sessions.create({
-        role: "review",
-        run: run.key,
-        agent: config.reviewAgent,
-        ...(config.reviewModel ? { model: config.reviewModel } : {}),
-        ...(config.reviewEffort ? { effort: config.reviewEffort } : {}),
-        title: `[${run.key}] Review`,
-        cwd: config.repoRoot,
-        worktree: { base: config.baseRef, name: branchOf(issue.number) },
-      });
-      reviewSessionId = created.sessionId;
-      await save({ dev: { reviewSessionId } });
-
-      const before = await h.snapshot(worktree);
-      const retryNote =
-        attempt > 0 && lastFailure !== null
-          ? `Previous review attempt #${attempt} failed (${lastFailure}). Make sure to include a "What I checked" list and end with a valid <review> JSON block choosing "merge", "reject", or "escalate".`
-          : undefined;
-      const prompt = reviewBrief(
-        issue,
-        prUrl,
-        book.items,
-        diff,
-        config.ciChecks,
-        retryNote,
-        run.dev.resolvedFiles,
-      );
-      const result = await h.turn(run.key, reviewSessionId, prompt, {
-        role: "review",
-        worktree,
-        timeoutMs: config.turnTimeoutMs,
-      });
-      await store.event(run.key, "review_turn", {
-        round: run.round,
-        attempt,
-        stop: result.stopReason,
-      });
-
-      const after = await h.snapshot(worktree);
-      if (before !== after) {
-        lastFailure = "评审会话修改了工作区，自动化不信任这次评审结果。";
-        worktreeModified = true;
-      } else if (result.timedOut) {
-        lastFailure = "评审会话单回合超时被取消。";
-      } else if (result.stopReason !== "end_turn") {
-        lastFailure = `评审会话异常结束（${result.stopReason}）。`;
-      } else {
-        const parsed = parseReviewVerdict(result.text);
-        if (parsed === undefined) {
-          lastFailure = "评审会话未给出可解析的结构化结论。";
-        } else if (parsed.decision === "merge" && !listsWhatWasChecked(result.text)) {
-          lastFailure = "评审结论为合并（merge）但未列出检查内容，不接受无依据的通过。";
-        } else {
-          verdict = parsed;
-          lastFailure = null;
-          break;
-        }
-      }
-    } catch (error) {
-      lastFailure = `评审会话执行失败：${error instanceof Error ? error.message : String(error)}`;
-    }
-    if (worktreeModified) break;
-    if (attempt + 1 < maxAttempts) {
-      await store.event(run.key, "review_retry", { round: run.round, attempt: attempt + 1 });
-    }
-  }
-
-  await assertNotClosed(h, run);
-
-  // The comment on the pull request is made once for a head and a conclusion, however often the review is entered.
-  const writeAndPostComment = async (body: string, decision: string) => {
-    const said = `${headSha}:${decision}`;
-    if (headSha !== "" && run.dev.reviewCommented === said) return { ok: true as const };
-    const { mkdir, writeFile } = await import("node:fs/promises");
-    const { join } = await import("node:path");
-    const commentPath = join(config.stateDir, "runs", run.key, "review-comment.md");
-    await mkdir(join(config.stateDir, "runs", run.key), { recursive: true, mode: 0o700 });
-    await writeFile(commentPath, body, { mode: 0o600 });
-    const posted = await h.net(
-      run.key,
-      "gh pr comment",
-      () => h.d.forge.comment(where(h, worktree), prUrl, commentPath),
-      (r) => (r.ok ? undefined : r.error),
-    );
-    if (posted.ok && headSha !== "") await save({ dev: { reviewCommented: said } });
-    return posted;
+  // The review itself is the review task's: it confirms CI for this exact HEAD with GitHub, runs the read-only
+  // sessions and keeps the conclusion for the commit. This flow acts on the conclusion.
+  const parsedPr = /github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/.exec(prUrl);
+  const repo = parsedPr?.[1] ?? "";
+  const pr = parsedPr ? Number(parsedPr[2]) : 0;
+  const reviewInput: ReviewInput = {
+    repo,
+    pr,
+    headSha,
+    prRef: prUrl,
+    key: run.key,
+    origin: `dev:${run.key}`,
+    worktree,
+    comment: false,
+    ciKnownGreen: headSha !== "" && x.greenSeen.get(run.key) === headSha,
+    context: {
+      kind: "ticket",
+      issue,
+      criteria: book.items,
+      resolvedFiles: run.dev.resolvedFiles ?? [],
+    },
+    render: (r) =>
+      renderReviewComment({
+        issueKey: run.key,
+        ciChecks: config.ciChecks,
+        ciGreen: true,
+        sessionId: r.sessionId,
+        ...(r.verdict ? { verdict: r.verdict } : {}),
+        ...(r.systemError ? { systemError: r.systemError } : {}),
+      }),
   };
 
   /** The end of the review: the comment and the move for the tracker, the run done, and what happened, in one go. */
@@ -184,9 +86,74 @@ export async function review(
     return { prUrl, autoMerge: done.autoMerge };
   };
 
+  const result =
+    parsedPr === null
+      ? ({
+          kind: "unavailable",
+          reason: `无法从 PR 地址读出仓库和编号：${tail(prUrl)}`,
+        } as const)
+      : headSha === ""
+        ? ({
+            kind: "unavailable",
+            reason: `读取 HEAD 提交失败：${tail(head.ok ? "" : head.error)}`,
+          } as const)
+        : await reviewTask(h, reviewInput);
+  await assertNotClosed(h, run);
+
+  if (result.kind !== "concluded") {
+    const why =
+      result.kind === "ci_not_green"
+        ? result.reason
+        : result.kind === "busy"
+          ? "这个提交的评审正被另一处执行。"
+          : result.reason;
+    x.greenSeen.delete(run.key);
+    return deliverWith(
+      "merge_blocked",
+      `已开 PR：${prUrl}\n未能得到针对这个提交的评审结论，未开启自动合并，需要人工处理：\n${why}`,
+      { decision: "system_error", autoMerge: false },
+      true,
+    );
+  }
+  // A conclusion kept from an earlier call says nothing about CI now: unless CI was seen green on this commit, or the
+  // task has just read it, read it again before green is recorded or the gate is asked.
+  let ciAtHead: "passed" | "failed" | "pending" | "unreadable" = "passed";
+  if (reviewInput.ciKnownGreen !== true && !result.ciReadGreen) {
+    const ci = await h.net(
+      run.key,
+      "gh pr view",
+      () => h.d.forge.ciStatus(where(h, worktree), prUrl, headSha, config.ciChecks),
+      (r) => (r.ok ? undefined : r.error),
+    );
+    ciAtHead = ci.ok ? ci.status.state : "unreadable";
+  }
+  if (ciAtHead !== "passed") {
+    x.greenSeen.delete(run.key);
+    return deliverWith(
+      "merge_blocked",
+      `已开 PR：${prUrl}\n评审结论已有，但这个提交的 CI 当前不是全绿（${ciAtHead}），未开启自动合并，需要人工处理。`,
+      { decision: "system_error", autoMerge: false },
+      true,
+    );
+  }
+  x.greenSeen.set(run.key, headSha);
+  await h.d.store.saveCi(run.key, { greenSha: headSha });
+  const { conclusion } = result;
+  const ciGreen = true;
+  const reviewSessionId = conclusion.sessions.at(-1) ?? run.dev.reviewSessionId;
+  if (reviewSessionId !== run.dev.reviewSessionId) await save({ dev: { reviewSessionId } });
+  const verdict: ReviewVerdict | undefined = conclusion.verdict ?? undefined;
+  const writeAndPostComment = async (body: string, decision: string) => {
+    const posted = await commentOnce(h, reviewInput, worktree, decision, body);
+    if (posted.ok && headSha !== "")
+      await save({ dev: { reviewCommented: `${headSha}:${decision}` } });
+    return posted;
+  };
+
   // No valid conclusion even after retries (or read-only violation): review system failure, not a code issue.
   if (verdict === undefined) {
-    const reason = lastFailure ?? "评审会话未给出有效结论。";
+    const reason = conclusion.reason ?? "评审会话未给出有效结论。";
+    const attempts = conclusion.attempts;
     const commented = await writeAndPostComment(
       renderReviewComment({
         issueKey: run.key,
@@ -197,7 +164,6 @@ export async function review(
       }),
       "system_error",
     );
-    await store.event(run.key, "review_decided", { decision: "system_error", attempts });
     const commentErrorLine = !commented.ok
       ? `\n写入 PR 评审评论失败：${tail(commented.error)}`
       : "";
@@ -224,7 +190,6 @@ export async function review(
       }),
       "reject",
     );
-    await store.event(run.key, "review_decided", { decision: "reject" });
     await store.event(run.key, "round_failed", { round: run.round });
     const formatted = formatReviewFindings(verdict);
 
@@ -266,10 +231,19 @@ export async function review(
       () => h.d.forge.changedPaths(where(h, worktree), prUrl),
       (r) => (r.ok ? undefined : r.error),
     );
-    const hits = changed.ok ? floorHits(changed.paths) : [];
-    if (!changed.ok || hits.length > 0) {
+    const gate = mayMerge({
+      verdict: conclusion.decision,
+      reviewedSha: result.headSha,
+      headNow: headSha,
+      ciAtHead,
+      changedPaths: changed.ok ? changed.paths : null,
+    });
+    const hits = gate.ok ? [] : gate.floorHits;
+    if (!gate.ok) {
       const floorReason = changed.ok
-        ? `改动涉及需要人合并的路径：${hits.join("、")}`
+        ? hits.length > 0
+          ? `改动涉及需要人合并的路径：${hits.join("、")}`
+          : `不满足合并门禁：${gate.reasons.join("；")}`
         : `无法读取 PR 改动路径列表，按路径底线升级给人合并：${tail(changed.error)}`;
       const escalatedVerdict: ReviewVerdict = {
         ...verdict,
@@ -312,7 +286,6 @@ export async function review(
       }),
       "merge",
     );
-    await store.event(run.key, "review_decided", { decision: "merge" });
     if (ciGreen && commented.ok) {
       const merged = await h.net(
         run.key,
@@ -352,7 +325,6 @@ export async function review(
     }
 
     const reasonLines: string[] = [];
-    if (!ciGreen && ciNotGreenReason !== null) reasonLines.push(ciNotGreenReason);
     if (!commented.ok) reasonLines.push(`写入 PR 评审评论失败：${tail(commented.error)}`);
     return deliverWith(
       "merge_blocked",
@@ -374,7 +346,6 @@ export async function review(
     }),
     "escalate",
   );
-  await store.event(run.key, "review_decided", { decision: "escalate" });
   const reasonLines: string[] = [verdict.summary];
   for (const reason of verdict.reasons) reasonLines.push(`- ${reason}`);
   for (const finding of verdict.findings) {

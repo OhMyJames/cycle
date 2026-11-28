@@ -64,3 +64,107 @@ test("the workspace runs git with GIT_SAFE and keeps credentials for the remote 
   expect(r.calls[1]?.env.GH_TOKEN).toBeUndefined();
   expect(await ws.configClean(at)).toEqual({ ok: true });
 });
+
+const SHA = "a".repeat(40);
+
+const scripted = (output: string, code = 0) => {
+  const calls: { argv: string[]; cwd: string; env: Record<string, string> }[] = [];
+  const exec: Exec = async (argv, o) => {
+    calls.push({ argv, cwd: o.cwd, env: o.env });
+    return { code, output, timedOut: false };
+  };
+  return { calls, exec };
+};
+
+test("openPrs reads number, head, draft, fork and author", async () => {
+  const r = scripted(
+    JSON.stringify([
+      {
+        number: 7,
+        headRefName: "feat",
+        headRefOid: SHA,
+        baseRefName: "main",
+        isDraft: false,
+        isCrossRepository: true,
+        author: { login: "bob" },
+      },
+    ]),
+  );
+  const forge = githubForge({ exec: r.exec, env: { GH_TOKEN: "t" }, repo: "o/r" });
+  const got = await forge.openPrs({ cwd: "/wt", timeoutMs: 5 });
+  expect(got).toEqual({
+    ok: true,
+    prs: [
+      {
+        number: 7,
+        headBranch: "feat",
+        headSha: SHA,
+        baseBranch: "main",
+        isDraft: false,
+        crossRepository: true,
+        author: "bob",
+        title: "",
+        body: "",
+      },
+    ],
+  });
+  expect(r.calls[0]?.argv.slice(-2)).toEqual(["--repo", "o/r"]);
+  expect(
+    (
+      await githubForge({ exec: scripted("nope").exec, env: {} }).openPrs({
+        cwd: "/",
+        timeoutMs: 5,
+      })
+    ).ok,
+  ).toBe(false);
+});
+
+test("authorPermission asks the collaborators API without --repo and refuses odd logins", async () => {
+  const r = scripted("write\n");
+  const forge = githubForge({ exec: r.exec, env: { GH_TOKEN: "t" }, repo: "o/r" });
+  const at = { cwd: "/wt", timeoutMs: 5 };
+  expect(await forge.authorPermission(at, "bob")).toEqual({ ok: true, permission: "write" });
+  expect(r.calls[0]?.argv).toEqual([
+    "gh",
+    "api",
+    "repos/o/r/collaborators/bob/permission",
+    "--jq",
+    ".permission",
+  ]);
+  expect((await forge.authorPermission(at, "../x")).ok).toBe(false);
+  expect(r.calls).toHaveLength(1);
+});
+
+test("mergeAt squashes pinned to the reviewed commit and never uses auto-merge", async () => {
+  const r = scripted("");
+  const forge = githubForge({ exec: r.exec, env: { GH_TOKEN: "t" }, repo: "o/r" });
+  const at = { cwd: "/wt", timeoutMs: 5 };
+  expect(await forge.mergeAt(at, "7", SHA)).toEqual({ ok: true });
+  expect(r.calls[0]?.argv).toEqual([
+    "gh",
+    "pr",
+    "merge",
+    "7",
+    "--squash",
+    "--match-head-commit",
+    SHA,
+    "--repo",
+    "o/r",
+  ]);
+  expect(r.calls[0]?.argv).not.toContain("--auto");
+  expect((await forge.mergeAt(at, "7", "--auto")).ok).toBe(false);
+  expect(
+    (await githubForge({ exec: scripted("head changed", 1).exec, env: {} }).mergeAt(at, "7", SHA))
+      .ok,
+  ).toBe(false);
+});
+
+test("prHead reads the head commit and state", async () => {
+  const r = scripted(JSON.stringify({ headRefOid: SHA, state: "OPEN" }));
+  const forge = githubForge({ exec: r.exec, env: {} });
+  expect(await forge.prHead({ cwd: "/wt", timeoutMs: 5 }, "7")).toEqual({
+    ok: true,
+    sha: SHA,
+    state: "OPEN",
+  });
+});

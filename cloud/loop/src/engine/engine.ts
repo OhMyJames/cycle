@@ -6,6 +6,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { type Tuning, tuningToConfig } from "../config-file.ts";
 import { CriteriaBook } from "../criteria.ts";
 import type { PlanFlow } from "../flows/plan.ts";
+import type { PrFlow } from "../flows/pr/index.ts";
 import { isNetworkError } from "../network.ts";
 import type { At } from "../ports/forge.ts";
 import { applyPatch, type RunRecord } from "../store.ts";
@@ -39,6 +40,8 @@ export type Wiring = {
   todo: Intake;
   /** The planning node (CYC-322): asked after `Todo`, and only when it is on. */
   plan: PlanFlow;
+  /** Pull requests a person opened (CYC-540): asked last, and only when the Project turned it on. */
+  pr: PrFlow;
 };
 
 export class Engine {
@@ -46,6 +49,7 @@ export class Engine {
   readonly #flows: Record<RunKind, Flow>;
   readonly #todo: Intake;
   readonly #plan: PlanFlow;
+  readonly #pr: PrFlow;
   /** The `tuning` in force for new steps: the last one that was read and valid. */
   #tuning: Tuning;
   #lastTuningProblem: string | null = null;
@@ -67,11 +71,16 @@ export class Engine {
     this.#flows = wiring.flows;
     this.#todo = wiring.todo;
     this.#plan = wiring.plan;
+    this.#pr = wiring.pr;
   }
 
   /** Where new runs come from, asked in order: `Todo` first (approved work), then the planning node when it is on. */
   #intakes(config: Config): Intake[] {
-    return config.planning === null ? [this.#todo] : [this.#todo, this.#plan.intake()];
+    return [
+      this.#todo,
+      ...(config.planning === null ? [] : [this.#plan.intake()]),
+      ...(config.prReview === null ? [] : [this.#pr.intake()]),
+    ];
   }
 
   /** What a flow may use. `d` is a getter: the config is the one of the step that calls. */

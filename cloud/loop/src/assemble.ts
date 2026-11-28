@@ -125,6 +125,8 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
             checkMinutes: planning.checkMinutes ?? DEFAULT_CHECK_MINUTES,
             maxAsk: planning.maxAsk ?? DEFAULT_MAX_ASK,
           },
+    prReview:
+      file.prReview?.enabled === true ? { maxReviewsPerPr: file.prReview.maxReviewsPerPr } : null,
     dryRun,
   };
   const tuning = {
@@ -268,8 +270,15 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
     throw error;
   }
   const repoSlug = effectiveRepoUrl !== undefined ? repoDisplayName(effectiveRepoUrl) : undefined;
+  if (config.prReview !== null && (repoSlug === undefined || repoSlug === "repository"))
+    plog(
+      "warning: prReview is enabled but the repository slug cannot be resolved; it will stay idle",
+    );
   const pipeline = new Pipeline({
-    config,
+    config: {
+      ...config,
+      repoSlug: repoSlug !== undefined && repoSlug !== "repository" ? repoSlug : null,
+    },
     tracker,
     sessions,
     exec: runCommand,

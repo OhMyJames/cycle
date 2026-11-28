@@ -14,6 +14,7 @@ import {
   DEFAULT_CI_CHECKS,
   type Failed,
   type Forge,
+  type OpenPr,
   type ReadAutoMergeResult,
   type ReadCiStatusResult,
   type ReadPrMergeStatusResult,
@@ -483,6 +484,39 @@ const disableAutoMerge = async (input: {
   return { ok: true };
 };
 
+const OpenPrsSchema = z.array(
+  z.object({
+    number: z.number().int(),
+    headRefName: z.string(),
+    headRefOid: z.string(),
+    baseRefName: z.string(),
+    isDraft: z.boolean(),
+    isCrossRepository: z.boolean(),
+    author: z.object({ login: z.string() }).nullable(),
+    title: z.string().default(""),
+    body: z.string().nullable().default(""),
+  }),
+);
+
+const PrHeadSchema = z.object({
+  headRefOid: z.string().min(1),
+  state: z.enum(["OPEN", "CLOSED", "MERGED"]),
+});
+
+const LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\[bot\])?$/;
+const SHA = /^[0-9a-f]{40,64}$/i;
+
+const parseJson = <T>(text: string, parse: (v: unknown) => T, command: string) => {
+  try {
+    return { ok: true, value: parse(JSON.parse(text)) } as const;
+  } catch (error) {
+    return {
+      ok: false,
+      error: `${command} 返回无法解析的 JSON：${error instanceof Error ? error.message : String(error)}`,
+    } as const;
+  }
+};
+
 const timedOutOrFailed = (
   command: string,
   done: { code: number; output: string; timedOut: boolean },
@@ -506,6 +540,8 @@ const findUrl = (text: string): string | undefined =>
     .find((line) => /^https:\/\/\S+$/.test(line.trim()))
     ?.trim();
 
+const OPEN_PR_LIMIT = 1000;
+
 /** The forge over `gh`: isolated cwd/env and `--repo` when configured, with outbound secret redaction (CYC-478). */
 export const githubForge = (deps: {
   exec: Exec;
@@ -516,8 +552,9 @@ export const githubForge = (deps: {
 }): Forge => {
   const { exec, env, repo, stateDir, onRedact } = deps;
   const ghExec: Exec = (argv, options) => {
+    // `gh api` takes no `--repo`; its callers put the repository in the path.
     const withRepo =
-      repo !== undefined && argv[0] === "gh" && !argv.includes("--repo")
+      repo !== undefined && argv[0] === "gh" && argv[1] !== "api" && !argv.includes("--repo")
         ? [...argv, "--repo", repo]
         : argv;
     // Only move `gh` out of the repo cwd when `--repo` is known; otherwise `gh` cannot resolve the repository.
@@ -637,6 +674,70 @@ export const githubForge = (deps: {
           .map((l) => l.trim())
           .filter((l) => l !== ""),
       };
+    },
+    async openPrs(at) {
+      const done = await run(at, [
+        "gh",
+        "pr",
+        "list",
+        "--state",
+        "open",
+        "--limit",
+        String(OPEN_PR_LIMIT),
+        "--json",
+        "number,headRefName,headRefOid,baseRefName,isDraft,isCrossRepository,author,title,body",
+      ]);
+      if (done.timedOut || done.code !== 0) return timedOutOrFailed("gh pr list", done);
+      const parsed = parseJson(done.output, (v) => OpenPrsSchema.parse(v), "gh pr list");
+      if (!parsed.ok) return parsed;
+      // `gh pr list` stops at the limit: a list that may be cut is not trusted (waits would be cleared as "gone").
+      if (parsed.value.length >= OPEN_PR_LIMIT)
+        return {
+          ok: false,
+          error: `gh pr list reached its limit of ${OPEN_PR_LIMIT} pull requests`,
+        };
+      const prs: OpenPr[] = parsed.value.map((p) => ({
+        number: p.number,
+        headBranch: p.headRefName,
+        headSha: p.headRefOid,
+        baseBranch: p.baseRefName,
+        isDraft: p.isDraft,
+        crossRepository: p.isCrossRepository,
+        author: p.author?.login ?? "",
+        title: p.title,
+        body: p.body ?? "",
+      }));
+      return { ok: true, prs };
+    },
+    async authorPermission(at, login) {
+      if (!LOGIN.test(login)) return { ok: false, error: `不是有效的 GitHub 用户名：${login}` };
+      const slug = repo ?? "{owner}/{repo}";
+      const done = await run(at, [
+        "gh",
+        "api",
+        `repos/${slug}/collaborators/${login}/permission`,
+        "--jq",
+        ".permission",
+      ]);
+      const permission = done.output.trim();
+      if (done.timedOut || done.code !== 0 || permission === "") {
+        return timedOutOrFailed("gh api permission", done);
+      }
+      return { ok: true, permission };
+    },
+    async mergeAt(at, pr, sha) {
+      if (!SHA.test(sha)) return { ok: false, error: `不是有效的提交：${sha}` };
+      const done = await run(at, ["gh", "pr", "merge", pr, "--squash", "--match-head-commit", sha]);
+      return done.timedOut || done.code !== 0
+        ? timedOutOrFailed("gh pr merge", done)
+        : { ok: true };
+    },
+    async prHead(at, pr) {
+      const done = await run(at, ["gh", "pr", "view", pr, "--json", "headRefOid,state"]);
+      if (done.timedOut || done.code !== 0) return timedOutOrFailed("gh pr view", done);
+      const parsed = parseJson(done.output, (v) => PrHeadSchema.parse(v), "gh pr view");
+      if (!parsed.ok) return parsed;
+      return { ok: true, sha: parsed.value.headRefOid, state: parsed.value.state };
     },
   };
 };

@@ -73,6 +73,81 @@ export interface Action {
   data: unknown;
 }
 
+export type ReviewTaskStatus = "pending" | "running" | "done";
+export interface ReviewTask {
+  id: number;
+  repo: string;
+  pr: number;
+  headSha: string;
+  origin: string;
+  status: ReviewTaskStatus;
+  decision: string | null;
+  verdict: unknown;
+  /** The session id of every attempt. */
+  sessions: string[];
+  /** "<sha>:<decision>" of each comment already made. */
+  commented: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+export interface Wait {
+  owner: string;
+  subject: string;
+  recheckAt: string;
+  wokenAt: string | null;
+  createdAt: string;
+}
+export interface PrReview {
+  repo: string;
+  pr: number;
+  reviews: number;
+  capped: boolean;
+  lastSha: string | null;
+}
+
+interface ReviewTaskRow {
+  id: number;
+  repo: string;
+  pr: number;
+  head_sha: string;
+  origin: string;
+  status: ReviewTaskStatus;
+  decision: string | null;
+  verdict: string | null;
+  sessions: string;
+  commented: string;
+  created_at: string;
+  updated_at: string;
+}
+const toTask = (r: ReviewTaskRow): ReviewTask => ({
+  id: r.id,
+  repo: r.repo,
+  pr: r.pr,
+  headSha: r.head_sha,
+  origin: r.origin,
+  status: r.status,
+  decision: r.decision,
+  verdict: r.verdict === null ? null : JSON.parse(r.verdict),
+  sessions: JSON.parse(r.sessions),
+  commented: JSON.parse(r.commented),
+  createdAt: r.created_at,
+  updatedAt: r.updated_at,
+});
+interface WaitRow {
+  owner: string;
+  subject: string;
+  recheck_at: string;
+  woken_at: string | null;
+  created_at: string;
+}
+const toWait = (r: WaitRow): Wait => ({
+  owner: r.owner,
+  subject: r.subject,
+  recheckAt: r.recheck_at,
+  wokenAt: r.woken_at,
+  createdAt: r.created_at,
+});
+
 /** The record's fields that have a column of their own; `state` holds the rest. */
 const COLUMN_FIELDS = [
   "key",
@@ -619,6 +694,182 @@ export class StoreOps {
       .run(runKey, this.now().toISOString(), detail);
   }
 
+  /** The review task for this commit, made if it is not there; one row per repo, PR and commit. */
+  reviewTask(repo: string, pr: number, headSha: string, origin: string): ReviewTask {
+    const at = this.now().toISOString();
+    this.db
+      .query(
+        `INSERT INTO review_tasks (repo, pr, head_sha, origin, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (repo, pr, head_sha) DO NOTHING`,
+      )
+      .run(repo, pr, headSha, origin, at, at);
+    return this.findReviewTask(repo, pr, headSha) as ReviewTask;
+  }
+
+  findReviewTask(repo: string, pr: number, headSha: string): ReviewTask | undefined {
+    const row = this.db
+      .query("SELECT * FROM review_tasks WHERE repo = ? AND pr = ? AND head_sha = ?")
+      .get(repo, pr, headSha) as ReviewTaskRow | null;
+    return row === null ? undefined : toTask(row);
+  }
+
+  /**
+   * Takes a pending task: true for exactly one caller. A running task nobody touched for `leaseMs` is taken too: its
+   * claimer died without releasing it.
+   */
+  claimReviewTask(id: number, leaseMs = 0): boolean {
+    const now = this.now();
+    const stale = new Date(now.getTime() - leaseMs).toISOString();
+    return (
+      this.db
+        .query(
+          `UPDATE review_tasks SET status = 'running', updated_at = ?
+           WHERE id = ? AND (status = 'pending' OR (status = 'running' AND ? > 0 AND updated_at < ?))`,
+        )
+        .run(now.toISOString(), id, leaseMs, stale).changes > 0
+    );
+  }
+
+  /** Puts a running task back (the claimer died or gave up without a result). */
+  releaseReviewTask(id: number): void {
+    this.db
+      .query(
+        "UPDATE review_tasks SET status = 'pending', updated_at = ? WHERE id = ? AND status = 'running'",
+      )
+      .run(this.now().toISOString(), id);
+  }
+
+  /** Puts a finished task back to pending so it is reviewed again (a person sent an escalated ticket back). */
+  reopenReviewTask(id: number): void {
+    this.db
+      .query(
+        "UPDATE review_tasks SET status = 'pending', updated_at = ? WHERE id = ? AND status = 'done'",
+      )
+      .run(this.now().toISOString(), id);
+  }
+
+  /** Appends the session id of one attempt. */
+  addReviewSession(id: number, sessionId: string): void {
+    const row = this.db.query("SELECT sessions FROM review_tasks WHERE id = ?").get(id) as {
+      sessions: string;
+    } | null;
+    if (row === null) return;
+    const sessions = [...(JSON.parse(row.sessions) as string[]), sessionId];
+    this.db
+      .query("UPDATE review_tasks SET sessions = ?, updated_at = ? WHERE id = ?")
+      .run(JSON.stringify(sessions), this.now().toISOString(), id);
+  }
+
+  finishReviewTask(id: number, decision: string, verdict: unknown): void {
+    this.db
+      .query(
+        "UPDATE review_tasks SET status = 'done', decision = ?, verdict = ?, updated_at = ? WHERE id = ?",
+      )
+      .run(decision, JSON.stringify(verdict ?? null), this.now().toISOString(), id);
+  }
+
+  /** Notes that "<sha>:<decision>" was commented on the PR: true the first time only. */
+  markReviewCommented(id: number, entry: string): boolean {
+    const row = this.db.query("SELECT commented FROM review_tasks WHERE id = ?").get(id) as {
+      commented: string;
+    } | null;
+    if (row === null) return false;
+    const commented = JSON.parse(row.commented) as string[];
+    if (commented.includes(entry)) return false;
+    this.db
+      .query("UPDATE review_tasks SET commented = ?, updated_at = ? WHERE id = ?")
+      .run(JSON.stringify([...commented, entry]), this.now().toISOString(), id);
+    return true;
+  }
+
+  /** Work `owner` waits on `subject`; looks again at `recheckAt`. Registering again moves the time and clears the wake. */
+  wait(owner: string, subject: string, recheckAt: string): void {
+    this.db
+      .query(
+        `INSERT INTO waits (owner, subject, recheck_at, created_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT (owner, subject) DO UPDATE SET recheck_at = excluded.recheck_at, woken_at = NULL`,
+      )
+      .run(owner, subject, recheckAt, this.now().toISOString());
+  }
+
+  clearWaits(owner: string): void {
+    this.db.query("DELETE FROM waits WHERE owner = ?").run(owner);
+  }
+
+  waits(owner?: string): Wait[] {
+    const rows = (
+      owner === undefined
+        ? this.db.query("SELECT * FROM waits ORDER BY owner, subject").all()
+        : this.db.query("SELECT * FROM waits WHERE owner = ? ORDER BY subject").all(owner)
+    ) as WaitRow[];
+    return rows.map(toWait);
+  }
+
+  /** Waits that were woken or whose time has come. */
+  dueWaits(): Wait[] {
+    const rows = this.db
+      .query(
+        "SELECT * FROM waits WHERE woken_at IS NOT NULL OR recheck_at <= ? ORDER BY owner, subject",
+      )
+      .all(this.now().toISOString()) as WaitRow[];
+    return rows.map(toWait);
+  }
+
+  /**
+   * A signal on `subject`, once per `dedupe`: the first time wakes the work waiting on the subject (same
+   * transaction), and returns true; a repeat changes nothing and returns false.
+   */
+  signal(dedupe: string, subject: string, source: string): boolean {
+    const at = this.now().toISOString();
+    const inserted =
+      this.db
+        .query(
+          "INSERT INTO signals (dedupe, subject, source, at) VALUES (?, ?, ?, ?) ON CONFLICT (dedupe) DO NOTHING",
+        )
+        .run(dedupe, subject, source, at).changes > 0;
+    if (!inserted) return false;
+    this.db
+      .query("UPDATE waits SET woken_at = ? WHERE subject = ? AND woken_at IS NULL")
+      .run(at, subject);
+    return true;
+  }
+
+  prReview(repo: string, pr: number): PrReview {
+    const row = this.db
+      .query("SELECT reviews, capped, last_sha FROM pr_reviews WHERE repo = ? AND pr = ?")
+      .get(repo, pr) as { reviews: number; capped: number; last_sha: string | null } | null;
+    return {
+      repo,
+      pr,
+      reviews: row?.reviews ?? 0,
+      capped: (row?.capped ?? 0) !== 0,
+      lastSha: row?.last_sha ?? null,
+    };
+  }
+
+  /** Counts one more review of `sha`. */
+  countPrReview(repo: string, pr: number, sha: string): PrReview {
+    this.db
+      .query(
+        `INSERT INTO pr_reviews (repo, pr, reviews, last_sha) VALUES (?, ?, 1, ?)
+         ON CONFLICT (repo, pr) DO UPDATE SET reviews = reviews + 1, last_sha = excluded.last_sha`,
+      )
+      .run(repo, pr, sha);
+    return this.prReview(repo, pr);
+  }
+
+  /** Notes the cap was said on the PR: true the first time only. */
+  markPrCapped(repo: string, pr: number): boolean {
+    this.db
+      .query("INSERT INTO pr_reviews (repo, pr) VALUES (?, ?) ON CONFLICT (repo, pr) DO NOTHING")
+      .run(repo, pr);
+    return (
+      this.db
+        .query("UPDATE pr_reviews SET capped = 1 WHERE repo = ? AND pr = ? AND capped = 0")
+        .run(repo, pr).changes > 0
+    );
+  }
+
   heartbeats(): Heartbeat[] {
     const rows = this.db
       .query("SELECT run_key, at, detail FROM heartbeats ORDER BY run_key")
@@ -836,6 +1087,54 @@ export class SqliteStore implements LoopStore {
   }
   beat(runKey: string, detail: string | null = null) {
     this.#ops.beat(runKey, detail);
+  }
+  reviewTask(repo: string, pr: number, headSha: string, origin: string) {
+    return this.#ops.reviewTask(repo, pr, headSha, origin);
+  }
+  findReviewTask(repo: string, pr: number, headSha: string) {
+    return this.#ops.findReviewTask(repo, pr, headSha);
+  }
+  claimReviewTask(id: number, leaseMs?: number) {
+    return this.#ops.claimReviewTask(id, leaseMs);
+  }
+  releaseReviewTask(id: number) {
+    this.#ops.releaseReviewTask(id);
+  }
+  reopenReviewTask(id: number) {
+    this.#ops.reopenReviewTask(id);
+  }
+  addReviewSession(id: number, sessionId: string) {
+    this.#ops.addReviewSession(id, sessionId);
+  }
+  finishReviewTask(id: number, decision: string, verdict: unknown) {
+    this.#ops.finishReviewTask(id, decision, verdict);
+  }
+  markReviewCommented(id: number, entry: string) {
+    return this.#ops.markReviewCommented(id, entry);
+  }
+  wait(owner: string, subject: string, recheckAt: string) {
+    this.#ops.wait(owner, subject, recheckAt);
+  }
+  clearWaits(owner: string) {
+    this.#ops.clearWaits(owner);
+  }
+  waits(owner?: string) {
+    return this.#ops.waits(owner);
+  }
+  dueWaits() {
+    return this.#ops.dueWaits();
+  }
+  signal(dedupe: string, subject: string, source: string) {
+    return this.#ops.signal(dedupe, subject, source);
+  }
+  prReview(repo: string, pr: number) {
+    return this.#ops.prReview(repo, pr);
+  }
+  countPrReview(repo: string, pr: number, sha: string) {
+    return this.#ops.countPrReview(repo, pr, sha);
+  }
+  markPrCapped(repo: string, pr: number) {
+    return this.#ops.markPrCapped(repo, pr);
   }
   heartbeats() {
     return this.#ops.heartbeats();

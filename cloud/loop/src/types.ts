@@ -235,6 +235,13 @@ export type Config = {
    * resolved from the tracker at start; `templates` are the Feature and Bug issue templates' bodies, for the prompt.
    */
   planning: PlanningConfig | null;
+  /**
+   * Pull requests a person opened (CYC-540), or null when the Project has not turned the review of them on (the
+   * default). `maxReviewsPerPr` is how many commits of one pull request are reviewed before the loop stops.
+   */
+  prReview: { maxReviewsPerPr: number } | null;
+  /** `owner/name` of the repository the pull requests are on; null when it is not known. */
+  repoSlug: string | null;
 };
 
 export type PlanningConfig = {
@@ -318,6 +325,8 @@ export const defaultConfig = (
   docsBase: null,
   research: null,
   planning: null,
+  prReview: null,
+  repoSlug: null,
   ...partial,
 });
 

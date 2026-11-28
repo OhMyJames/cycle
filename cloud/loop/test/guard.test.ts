@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SqliteStore } from "../src/db/store.ts";
 import { FLOOR, floorHits } from "../src/guard/floor.ts";
+import { type MergeGateInput, mayMerge } from "../src/guard/merge-gate.ts";
 import { Pipeline } from "../src/pipeline.ts";
 import type { Exec } from "../src/types.ts";
 import {
@@ -134,4 +135,47 @@ test("a merge verdict touching no floor path still enables auto-merge (CYC-481)"
   expect(result).toMatchObject({ status: "delivered", autoMerge: true });
   expect(world.calls.some((c) => c.includes("gh pr merge") && c.includes("--auto"))).toBe(true);
   expect(events.find((e) => e.kind === "floor_hit")).toBeUndefined();
+});
+
+const okGate: MergeGateInput = {
+  verdict: "merge",
+  reviewedSha: "a1",
+  headNow: "a1",
+  ciAtHead: "passed",
+  changedPaths: ["cloud/loop/src/x.ts"],
+};
+
+test("mayMerge allows only when every condition holds", () => {
+  expect(mayMerge(okGate)).toEqual({ ok: true });
+  expect(mayMerge({ ...okGate, author: { permission: "write", crossRepository: false } })).toEqual({
+    ok: true,
+  });
+  for (const permission of ["maintain", "admin"])
+    expect(mayMerge({ ...okGate, author: { permission, crossRepository: false } }).ok).toBe(true);
+});
+
+test("mayMerge refuses each failing condition", () => {
+  const refused = (patch: Partial<MergeGateInput>) => mayMerge({ ...okGate, ...patch }).ok;
+  for (const verdict of ["reject", "escalate", "system_error"] as const)
+    expect(refused({ verdict })).toBe(false);
+  expect(refused({ headNow: "b2" })).toBe(false);
+  expect(refused({ reviewedSha: "", headNow: "" })).toBe(false);
+  for (const ciAtHead of ["failed", "pending", "unreadable"] as const)
+    expect(refused({ ciAtHead })).toBe(false);
+  expect(refused({ changedPaths: null })).toBe(false);
+  for (const permission of ["read", "triage", "none", ""])
+    expect(refused({ author: { permission, crossRepository: false } })).toBe(false);
+  expect(refused({ author: { permission: "admin", crossRepository: true } })).toBe(false);
+});
+
+test("mayMerge reports floor hits and reasons", () => {
+  const r = mayMerge({
+    ...okGate,
+    changedPaths: ["README.md", "cloud/loop/src/guard/merge-gate.ts"],
+  });
+  expect(r).toEqual({
+    ok: false,
+    reasons: [expect.stringContaining("path floor")],
+    floorHits: ["cloud/loop/src/guard/merge-gate.ts"],
+  });
 });

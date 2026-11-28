@@ -424,3 +424,20 @@ test("model and effort per role are optional, and a blank one is refused", () =>
         `invalid ${name}`,
       );
 });
+
+test("prReview is off when left out, and a bad value names the field", () => {
+  expect(parseConfigFile(JSON.stringify(full)).prReview).toBeUndefined();
+  expect(parseConfigFile(JSON.stringify({ ...full, prReview: {} })).prReview).toEqual({
+    enabled: false,
+    maxReviewsPerPr: 5,
+  });
+  expect(
+    parseConfigFile(JSON.stringify({ ...full, prReview: { enabled: true } })).prReview,
+  ).toEqual({ enabled: true, maxReviewsPerPr: 5 });
+  expect(() =>
+    parseConfigFile(JSON.stringify({ ...full, prReview: { enabled: true, maxReviewsPerPr: 0 } })),
+  ).toThrow("prReview.maxReviewsPerPr");
+  expect(() => parseConfigFile(JSON.stringify({ ...full, prReview: { enabled: "yes" } }))).toThrow(
+    "prReview.enabled",
+  );
+});

@@ -6,6 +6,7 @@ import { Engine } from "./engine/engine.ts";
 import type { Deps } from "./engine/flow.ts";
 import { devFlow } from "./flows/dev/index.ts";
 import { PlanFlow } from "./flows/plan.ts";
+import { PrFlow } from "./flows/pr/index.ts";
 import { ResearchFlow } from "./flows/research/index.ts";
 import { todoIntake } from "./flows/ticket.ts";
 import { gitWorkspace } from "./ports/git.ts";
@@ -37,6 +38,7 @@ export class Pipeline extends Engine {
         flows: { dev: devFlow(host), research: new ResearchFlow(host) },
         todo: todoIntake(host),
         plan: new PlanFlow(host),
+        pr: new PrFlow(host),
       }),
     );
   }

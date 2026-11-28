@@ -51,6 +51,28 @@ export type ReadPrMergeStatusResult = { ok: true; status: PrMergeStatus } | Fail
 
 export type ReadAutoMergeResult = { ok: true; enabled: boolean } | Failed;
 
+/** An open pull request as the poller sees it. */
+export type OpenPr = {
+  number: number;
+  headBranch: string;
+  headSha: string;
+  /** The branch the pull request merges into. */
+  baseBranch: string;
+  isDraft: boolean;
+  /** The head is in a fork. */
+  crossRepository: boolean;
+  author: string;
+  /** What the author wrote: untrusted text. */
+  title: string;
+  body: string;
+};
+
+export type OpenPrsResult = { ok: true; prs: OpenPr[] } | Failed;
+
+export type PrHeadResult = { ok: true; sha: string; state: PrState } | Failed;
+
+export type AuthorPermissionResult = { ok: true; permission: string } | Failed;
+
 export interface Forge {
   /** The URL of the pull request for a branch. */
   prFor(at: At, branch: string): Promise<{ ok: true; url: string } | Failed>;
@@ -85,4 +107,12 @@ export interface Forge {
   autoMergeOn(at: At, pr: string): Promise<ReadAutoMergeResult>;
   /** The paths the pull request changes. */
   changedPaths(at: At, pr: string): Promise<{ ok: true; paths: string[] } | Failed>;
+  /** The open pull requests of the repository. */
+  openPrs(at: At): Promise<OpenPrsResult>;
+  /** The author's permission on the repository: admin, maintain, write, triage, read or none. */
+  authorPermission(at: At, login: string): Promise<AuthorPermissionResult>;
+  /** Squash-merges now (never auto-merge); GitHub refuses when the head is no longer `sha`. */
+  mergeAt(at: At, pr: string, sha: string): Promise<{ ok: true } | Failed>;
+  /** The pull request's current head commit and state. */
+  prHead(at: At, pr: string): Promise<PrHeadResult>;
 }
