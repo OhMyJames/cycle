@@ -2,6 +2,7 @@
 import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
 import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
+import { summary } from "../fake-bridge.ts";
 import { boxText } from "./box.ts";
 import { openSession } from "./mount.tsx";
 
@@ -46,11 +47,42 @@ test("a long conversation is offered a new session, which opens with the old one
   ]);
 });
 
+test("it is said under the title bar, in the plain tone, and not over the input box", async () => {
+  await open(250_000);
+  await waitFor(() => expect(hint()).not.toBeNull());
+  expect(hint()?.getAttribute("data-slot")).toBe("notice-line");
+  expect(hint()?.getAttribute("data-tone")).toBe("info");
+  expect(hint()?.closest('[data-slot="composer"]')).toBeNull();
+});
+
+test("it waits while something the session started still runs in the background", async () => {
+  const updates = [
+    u({ sessionUpdate: "user_message", messageId: "u1", content: [{ type: "text", text: "fix" }] }),
+    u({ sessionUpdate: "agent_message", messageId: "a1", content: [{ type: "text", text: "ok" }] }),
+    u({ sessionUpdate: "state_update", state: "idle", stopReason: "end_turn" }),
+    u({ sessionUpdate: "usage_update", used: 250_000, size: 1_000_000 }),
+  ];
+  const app = await openSession(updates, {
+    box: true,
+    fake: { capabilities: CAPS },
+    configure: (script) => {
+      script.bridge.sessions = async (locationId: string) => [
+        { ...summary("s1", locationId), background: 1 },
+      ];
+    },
+  });
+  // The length has been counted (the ring says so), and still nothing is offered.
+  await screen.findByText("25%");
+  await act(async () => {});
+  expect(app.box).toBeTruthy();
+  expect(hint()).toBeNull();
+});
+
 test("a conversation left idle while big is offered one, a small one is not, and dismissing hides it", async () => {
   const idle = await open(150_000);
   await waitFor(() => expect(hint()).not.toBeNull());
   expect(hint()?.textContent).toContain("has been idle");
-  await idle.user.click(screen.getByRole("button", { name: "Dismiss hint" }));
+  await idle.user.click(screen.getByRole("button", { name: "Dismiss" }));
   expect(hint()).toBeNull();
   expect(idle.tracked()).toEqual([["continue_hint_shown", { reason: "idle" }]]);
   cleanup();

@@ -2165,6 +2165,32 @@ export const scenarios: Record<string, Scenario> = {
       });
     },
   },
+  "notice-continue": {
+    title:
+      "A long conversation: a plain line under the title bar offers a new session; the title bar names the worktree alone",
+    status: [
+      {
+        locationId: "local",
+        state: "connected",
+        capabilities: { queue: true, files: true, folders: true, sessionMentions: true },
+      },
+    ],
+    sessions: [
+      session("s1", {
+        title: "Fix the remote session",
+        cwd: "/home/dev/cycle-v1/.agents/worktree/wt-ac88664c",
+        worktree: {
+          root: "/home/dev/cycle-v1",
+          path: "/home/dev/cycle-v1/.agents/worktree/wt-ac88664c",
+          managed: true,
+        },
+      }),
+    ],
+    history: [
+      ...conversation,
+      u({ sessionUpdate: "usage_update", used: 480_000, size: 1_000_000 }),
+    ],
+  },
   "notice-both": {
     title:
       "A failure while the connection is being retried: two lines, the failure first; a long one stays on one line and fades out at its end",

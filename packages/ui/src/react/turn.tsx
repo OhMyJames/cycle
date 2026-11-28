@@ -20,6 +20,7 @@ import { startedAt } from "../started.ts";
 import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import { ErrorCircleIcon, WarningIcon } from "./icons.tsx";
+import { useAllInView } from "./in-view.ts";
 import { Elapsed, InlineAiStatus } from "./inline-ai-status.tsx";
 import { useLoaderClaim } from "./loader-claim.ts";
 import { BACKGROUND_KIND, backgroundOf } from "./overview.tsx";
@@ -378,7 +379,8 @@ export function StepLine({
  * Between turns, while something the agent started still runs in the background (a sub-agent sent there, a command, a
  * watcher): one quiet line where the step line was, with a slowly breathing ring (the sidebar's background mark), how
  * many, and what they are. Not the loader and no clock: the agent is not at work on a turn, and the person may write.
- * Clicked, it opens the Overview, where each is listed. Gone when the last one ends, or once a turn begins.
+ * What they are is left out while each has its card on screen: the card says it, and the same name twice in one view
+ * is noise. Clicked, it opens the Overview, where each is listed. Gone when the last one ends, or once a turn begins.
  */
 function BackgroundLine({
   conversation,
@@ -399,6 +401,10 @@ function BackgroundLine({
   const running = useMemo(
     () => backgroundOf(conversation).filter((row) => row.state === "running"),
     [conversation],
+  );
+  // Only a sub-agent has a card; a command or a watcher in the background is a line among others, so it is named here.
+  const shown = useAllInView(
+    running.map((row) => (row.kind === "agent" ? row.toolCallId : undefined)),
   );
   if (live === 0 || running.length === 0) return null;
   const label = t("step.background", { count: running.length });
@@ -423,7 +429,7 @@ function BackgroundLine({
         </span>
         <span data-slot="step-label">
           {label}
-          <span data-slot="step-detail"> · {names}</span>
+          {shown ? null : <span data-slot="step-detail"> · {names}</span>}
           <span data-slot="visually-hidden">. {t("step.backgroundOpen")}</span>
         </span>
       </button>

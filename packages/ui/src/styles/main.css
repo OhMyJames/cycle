@@ -221,14 +221,20 @@ html[data-platform="darwin"]
   -webkit-app-region: no-drag;
 }
 
-/* Two lines, one rule between them. */
-[data-slot="notice-line"] + [data-slot="notice-line"] {
+/* One line between two notices, also when the first of them is the last of a stack. */
+:is([data-slot="notice-line"], [data-slot="notice-stack"]) + [data-slot="notice-line"] {
   border-block-start: 0;
 }
 
 [data-slot="notice-line"][data-tone="error"] {
   --notice-tone: var(--ui-destructive);
   --notice-ground: var(--cycle-destructive-soft);
+}
+
+/* Only worth knowing (advice, where the page was opened from): no hue, the ground of a sunken block. */
+[data-slot="notice-line"][data-tone="info"] {
+  --notice-tone: var(--cycle-ink-secondary);
+  --notice-ground: var(--cycle-surface-message);
 }
 
 [data-slot="notice-line"] > svg {

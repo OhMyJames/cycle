@@ -292,6 +292,40 @@ test("a task the history says runs is not said to once the daemon counts nothing
   expect(log.querySelector('[data-slot="step"]')).toBeNull();
 });
 
+test("the line does not name a background sub-agent whose card is on screen, and names it once the card is not", async () => {
+  const sent = history(
+    u({ sessionUpdate: "user_message", messageId: "u1", content: [{ type: "text", text: "Go" }] }),
+    u({ sessionUpdate: "tool_call_update", toolCallId: "bg", name: "Agent", status: "pending" }),
+    u({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "bg",
+      status: "completed",
+      rawInput: { description: "Watch the logs", prompt: "Watch." },
+    }),
+    u({
+      sessionUpdate: "subagent_update",
+      sessionId: "sub-bg",
+      state: { state: "running" },
+      _meta: { "cycle/subagent": { toolCallId: "bg", background: true } },
+    }),
+    text("Started", "a1"),
+    idle({ stopReason: "end_turn" }),
+  );
+  const { log } = await openBetweenTurns(sent, 1);
+  const card = await waitFor(() => {
+    const found = log.querySelector<HTMLElement>('[data-kind="subagent"]');
+    expect(found).not.toBeNull();
+    return found as HTMLElement;
+  });
+  expect(card.textContent).toContain("Watch the logs");
+  const line = await within(log).findByRole("button", { name: /1 running in the background/ });
+  // The card says what it is: the line keeps to how many.
+  await waitFor(() => expect(line.textContent).not.toContain("Watch the logs"));
+  // Out of sight (as when scrolled away), the line is the only place left that names it.
+  card.style.display = "none";
+  await waitFor(() => expect(line.textContent).toContain("Watch the logs"));
+});
+
 test("nothing is said between turns once the background has ended", async () => {
   const ended = history(
     u({ sessionUpdate: "user_message", messageId: "u1", content: [{ type: "text", text: "Go" }] }),

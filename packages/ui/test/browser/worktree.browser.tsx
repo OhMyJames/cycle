@@ -105,6 +105,7 @@ test("a session in a worktree has no line of its own above its box", async () =>
     {
       ...summary("w1", locationId),
       title: "In a worktree",
+      cwd: "/work/.agents/worktree/one",
       worktree: {
         root: "/work",
         path: "/work/.agents/worktree/one",
@@ -119,4 +120,18 @@ test("a session in a worktree has no line of its own above its box", async () =>
   expect(await screen.findByRole("textbox")).toBeTruthy();
   expect(document.querySelector('[data-slot="worktree-strip"]')).toBeNull();
   expect(screen.queryByText("worktree-one")).toBeNull();
+  // Its title bar names the worktree by its folder alone; the whole path is the hover title.
+  const where = document.querySelector('[data-slot="session-where"]');
+  expect(where?.textContent).toBe("one");
+  expect(where?.getAttribute("title")).toBe("/work/.agents/worktree/one");
+});
+
+test("a session in the workspace's own folder has no path in its title bar: the sidebar names the workspace", async () => {
+  const plain = fakeBridge({ connected: true, capabilities: CAPABILITIES });
+  await renderApp(plain.bridge);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("option", { name: /work/ }));
+  expect(await screen.findByRole("textbox")).toBeTruthy();
+  expect(document.querySelector('[data-slot="session-heading"]')).not.toBeNull();
+  expect(document.querySelector('[data-slot="session-where"]')).toBeNull();
 });

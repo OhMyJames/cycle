@@ -143,6 +143,8 @@ export function SessionHeading({
   const { shown, problem, finish } = useRename(title, (next) =>
     store.renameSession(session.sessionId, next, "header", session.locationId),
   );
+  // The worktree's own folder name: the path to it is the same for every one, and is whole in the hover title.
+  const worktree = session.worktree?.path.replace(/\/+$/, "").split("/").at(-1) || undefined;
   const titleButton = useRef<HTMLButtonElement>(null);
   const refocus = useRef(false);
   useEffect(() => {
@@ -179,9 +181,12 @@ export function SessionHeading({
         </h1>
       )}
       {editing ? null : <RenameProblem problem={problem} />}
-      <span data-slot="session-where" title={session.cwd}>
-        {session.cwd}
-      </span>
+      {/* Only what the sidebar does not already say: the workspace is named there, the worktree nowhere else. */}
+      {worktree !== undefined ? (
+        <span data-slot="session-where" title={session.cwd}>
+          {worktree}
+        </span>
+      ) : null}
     </div>
   );
 }

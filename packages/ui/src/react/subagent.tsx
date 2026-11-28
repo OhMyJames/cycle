@@ -6,6 +6,7 @@ import { type Conversation, isLive, streamsOf, type ToolItem, textOf } from "../
 import { startedAt } from "../started.ts";
 import { useI18n } from "./i18n.tsx";
 import { CheckIcon, ChevronRightIcon, ErrorCircleIcon, StopIcon, WarningIcon } from "./icons.tsx";
+import { useReportInView } from "./in-view.ts";
 import { Elapsed } from "./inline-ai-status.tsx";
 import { type LoaderState, loaderStateOfKind, MorphLoader } from "./loader/index.ts";
 import { useLoaderClaim } from "./loader-claim.ts";
@@ -266,6 +267,8 @@ export function SubagentCard({ tool, work }: { tool: ToolItem; work?: ReactNode 
     sub.state === "running" &&
     sub.id !== undefined;
   const card = useRef<HTMLDivElement>(null);
+  // In the background and on screen: the line at the end of the conversation does not name it again (turn.tsx).
+  useReportInView(tool.id, card, running && background);
   const stopFocused = useRef(false);
   const stop = () => {
     if (sub?.id === undefined || stopping) return;
