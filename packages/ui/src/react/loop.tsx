@@ -51,6 +51,7 @@ function Overview({
   const store = useAppStore();
   const boards = useAppState((s) => s.loop.boards);
   const runs = useAppState((s) => s.loop.runs);
+  const allNotices = useAppState((s) => s.loop.notices);
   const [refreshing, setRefreshing] = useState(false);
 
   const refreshAll = async () => {
@@ -94,6 +95,8 @@ function Overview({
                   board && board !== "loading" && board.kind === "ok"
                     ? pendingCountOf(board.columns)
                     : 0;
+                const answer = allNotices[p.projectKey];
+                const needs = (answer?.kind === "ok" ? answer.notices.length : 0) + pending;
                 return (
                   <li key={p.projectKey} data-slot="loop-project-row" data-project={p.projectKey}>
                     <button
@@ -110,6 +113,11 @@ function Overview({
                         </span>
                         <span data-slot="loop-repo">{p.repo.displayName}</span>
                       </span>
+                      {needs > 0 ? (
+                        <span data-slot="loop-project-needs" data-kind="loop-project-needs">
+                          {t("loop.project.needs", { count: needs })}
+                        </span>
+                      ) : null}
                       {board === undefined || board === "loading" ? (
                         <span data-slot="loop-repo">{away ? "" : t("loop.loading")}</span>
                       ) : board.kind === "ok" ? (

@@ -1926,6 +1926,18 @@ button[data-slot="loop-ticket-title"] {
   font-size: var(--cycle-text-meta);
 }
 
+[data-slot="loop-project-needs"] {
+  margin-inline-start: auto;
+  color: var(--cycle-ink);
+  font-size: var(--cycle-text-meta);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+[data-slot="loop-project-needs"] + [data-slot="loop-project-counts"] {
+  margin-inline-start: 0.75rem;
+}
+
 [data-slot="loop-project-counts"] {
   margin-inline-start: auto;
   display: flex;

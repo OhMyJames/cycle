@@ -422,6 +422,14 @@ test("Needs you is on the project's Console, not on the overview or the board", 
   );
   await screen.findByRole("region", { name: "Projects" });
   expect(screen.queryByRole("region", { name: "Needs you" })).toBeNull();
+  const row = document.querySelector(
+    '[data-slot="loop-project-row"][data-project="CYC"]',
+  ) as HTMLElement;
+  await waitFor(() => expect(within(row).getByText("1 need you")).toBeTruthy());
+  const other = document.querySelector(
+    '[data-slot="loop-project-row"][data-project="DOC"]',
+  ) as HTMLElement;
+  expect(within(other).queryByText(/need you/)).toBeNull();
   await openOverviewProject(user, "CYC");
   const notices = await screen.findByRole("region", { name: "Needs you" });
   expect(within(notices).getByText("CYC-9")).toBeTruthy();

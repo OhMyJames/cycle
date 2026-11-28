@@ -593,6 +593,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "loop.console.operator": "运营 agent 的建议",
   "loop.console.running": "正在做",
   "loop.console.idle": "Loop 现在没有在做的单",
+  "loop.project.needs": "要你处理 {count} 件",
   "loop.tab.timeline": "时间轴",
   "loop.openKanban": "查看看板",
   "loop.timeline.filter.status": "按状态筛选",

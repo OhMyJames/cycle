@@ -660,6 +660,7 @@ export const enUS = {
   "loop.console.operator": "Operator suggestions",
   "loop.console.running": "Running now",
   "loop.console.idle": "Loop is not working on anything right now.",
+  "loop.project.needs": "{count} need you",
   "loop.tab.timeline": "Timeline",
   "loop.openKanban": "Open Kanban",
   "loop.timeline.filter.status": "Filter by status",
