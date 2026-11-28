@@ -723,7 +723,11 @@ export const enUS = {
   "loop.col.backlog": "Backlog",
   "loop.col.done": "Done",
   "loop.column.empty": "Nothing here",
-  "loop.subtasks": "Subtasks",
+  "loop.column.show": "Show {name}",
+  "loop.column.hide": "Hide {name}",
+  "loop.group.toggle": "Show tickets under {id}",
+  "loop.group.progress": "{done}/{total} done",
+  "loop.group.elsewhere": "Epic in another column",
   "loop.parent": "Parent",
   "loop.offline.title": "The Loop server is not running",
   "loop.offline.body":

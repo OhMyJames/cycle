@@ -73,7 +73,7 @@ const openOverviewProject = async (user: ReturnType<typeof userEvent.setup>, nam
 const mountBoard = (script: FakeOptions) =>
   mountLoop({ workspaceRepos: { "/work": cycle.repo.displayName }, ...script }, "board");
 
-test("the Loop page shows a full-width board as a row of columns, with Done open at the end", async () => {
+test("the Loop page shows a full-width board as a row of columns, with Done folded at the end", async () => {
   const { user, calls } = await mount({
     loopProjects: { kind: "ok", projects: [cycle, docs] },
     loopBoards: { CYC: board },
@@ -98,9 +98,9 @@ test("the Loop page shows a full-width board as a row of columns, with Done open
   expect(main && boardEl && boardEl.getBoundingClientRect().width >= main.clientWidth - 2).toBe(
     true,
   );
-  // Done is open like the others.
-  expect(await screen.findByText("Ticket 300")).toBeTruthy();
-  expect(document.querySelector("[data-folded]")).toBeNull();
+  // Done is a narrow strip: its cards are not on the page until it is opened.
+  expect(screen.queryByText("Ticket 300")).toBeNull();
+  expect(screen.getByRole("button", { name: "Show Done" })).toBeTruthy();
   expect(calls.some(([name, key]) => name === "loopBoard" && key === "CYC")).toBe(true);
 });
 
@@ -473,23 +473,44 @@ test("opening a ticket drawer updates breadcrumbs to Project / ticket and clicki
   expect(screen.getByRole("region", { name: "In Progress" })).toBeTruthy();
 });
 
-test("the board is a row of columns by name with Done last and open: cards are not draggable, there is no move menu, and the tops line up", async () => {
-  await mountBoard({ loopProjects: { kind: "ok", projects: [cycle] }, loopBoards: { CYC: board } });
+test("the board is a row of columns by state with Done last and folded, and can be opened and folded again: cards are not draggable, there is no move menu, and the tops line up", async () => {
+  const { calls: fake_calls } = await mountBoard({
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: { CYC: board },
+  });
+  const fake = { calls: fake_calls };
   await screen.findByRole("region", { name: "In Review" });
   const names = [...document.querySelectorAll('[data-slot="loop-column"]')].map((e) =>
     e.getAttribute("aria-label"),
   );
-  expect(names).toEqual(["Backlog", "Todo", "In Progress", "In Review", "Blocked", "Done"]);
+  expect(names).toEqual(["In Progress", "In Review", "Blocked", "Todo", "Backlog", "Done"]);
   expect(document.querySelectorAll("[draggable='true']")).toHaveLength(0);
   expect(screen.queryByText(/Move to/i)).toBeNull();
   expect(screen.queryByRole("menu")).toBeNull();
-  const done = screen.getByRole("region", { name: "Done" });
-  expect(within(done).getByText("1")).toBeTruthy();
-  expect(within(done).getAllByRole("listitem")).toHaveLength(1);
   const tops = [...document.querySelectorAll('[data-slot="loop-column"]')].map(
     (e) => e.getBoundingClientRect().top,
   );
   expect(new Set(tops).size).toBe(1);
+  const done = screen.getByRole("region", { name: "Done" });
+  const show = within(done).getByRole("button", { name: "Show Done" });
+  expect(show.getAttribute("aria-expanded")).toBe("false");
+  expect(within(done).getByText("1")).toBeTruthy();
+  expect(within(done).queryAllByRole("listitem")).toHaveLength(0);
+  const user = userEvent.setup();
+  await user.click(show);
+  expect(within(done).getAllByRole("listitem")).toHaveLength(1);
+  expect(expandedEvents(fake.calls)).toEqual([
+    ["loop_board_expanded", { target: "column", expanded: true }],
+  ]);
+  await user.click(within(done).getByRole("button", { name: "Hide Done" }));
+  expect(expandedEvents(fake.calls).at(-1)).toEqual([
+    "loop_board_expanded",
+    { target: "column", expanded: false },
+  ]);
+  expect(within(done).queryAllByRole("listitem")).toHaveLength(0);
+  expect(
+    within(done).getByRole("button", { name: "Show Done" }).getAttribute("aria-expanded"),
+  ).toBe("false");
 });
 
 test("a card opens its drawer, a button on it does not, and cancelling Approve writes nothing", async () => {
@@ -530,7 +551,11 @@ const checkNarrow = async () => {
   strip.scrollLeft = 40;
   expect(strip.scrollLeft).toBeGreaterThan(0);
   const columns = [...document.querySelectorAll<HTMLElement>('[data-slot="loop-column"]')];
-  for (const c of columns) expect(c.getBoundingClientRect().width).toBeGreaterThanOrEqual(320);
+  for (const c of columns) {
+    const w = c.getBoundingClientRect().width;
+    if (c.hasAttribute("data-collapsed")) expect(w).toBeLessThan(80);
+    else expect(w).toBeGreaterThanOrEqual(320);
+  }
   expect(document.querySelector("[data-folded]")).toBeNull();
 };
 
@@ -715,6 +740,7 @@ test("open columns sort by priority (stable), Backlog keeps pending first, Done 
     "CYC-811",
   ]);
   expect(await idsOf("Backlog")).toEqual(["CYC-804", "CYC-802", "CYC-803", "CYC-801"]);
+  await userEvent.setup().click(screen.getByRole("button", { name: "Show Done" }));
   expect(await idsOf("Done")).toEqual(["CYC-821", "CYC-822", "CYC-823"]);
 });
 
@@ -1300,37 +1326,132 @@ test("Settings opened while Loop projects are loading stays open when the Projec
   await screen.findByRole("region", { name: "Projects" });
 });
 
-test("a parent card folds a sub-ticket list; children keep their cards and name the parent", async () => {
-  const child = (n: number, column: string): LoopTicket => ({
-    ...ticket(n, column),
-    parent: { identifier: "CYC-381", title: "The Epic" },
-  });
-  const { user, calls } = await mountBoard({
+const childOf = (n: number, column: string, parent = "CYC-381"): LoopTicket => ({
+  ...ticket(n, column),
+  parent: { identifier: parent, title: "The Epic" },
+});
+
+test("a child in Todo appears once, with its parent marked, and there is no Subtasks list", async () => {
+  await mountBoard({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: {
       CYC: withTickets({
-        Todo: [ticket(381, "Todo"), child(390, "Todo")],
-        Done: [child(391, "Done")],
+        Todo: [ticket(381, "Todo"), childOf(390, "Todo")],
+        Done: [childOf(391, "Done")],
       }),
     },
   });
   const todo = await screen.findByRole("region", { name: "Todo" });
-  const toggle = within(todo).getByRole("button", { name: /Subtasks/ });
-  expect(toggle.textContent).toContain("1/2");
-  expect(toggle.getAttribute("aria-expanded")).toBe("false");
-  // The children stay in their own columns, with the parent named on the card.
-  expect(within(todo).getByText("Ticket 390")).toBeTruthy();
+  expect(screen.queryByText(/Subtasks/)).toBeNull();
+  expect(within(todo).getAllByText("Ticket 390")).toHaveLength(1);
+  expect(screen.getAllByText("Ticket 390")).toHaveLength(1);
   expect(within(todo).getByRole("button", { name: "Parent CYC-381" })).toBeTruthy();
+  // The parent card shows its progress, read only.
+  expect(within(todo).getByText("1/2 done")).toBeTruthy();
+});
+
+test("Backlog groups Epics: a group starts folded with its progress, opens to its children once, and its title opens the Epic", async () => {
+  const { user, calls } = await mountBoard({
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: {
+      CYC: withTickets({
+        Backlog: [
+          { ...ticket(381, "Backlog"), type: "Epic" },
+          childOf(390, "Backlog"),
+          childOf(392, "Backlog"),
+          ticket(400, "Backlog"),
+          childOf(410, "Backlog", "CYC-77"),
+        ],
+        Done: [childOf(391, "Done")],
+      }),
+    },
+  });
+  const backlog = await screen.findByRole("region", { name: "Backlog" });
+  const toggle = within(backlog).getByRole("button", { name: "Show tickets under CYC-381" });
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  const head = backlog.querySelector<HTMLElement>('[data-slot="loop-group"][data-key="CYC-381"]');
+  expect(head?.textContent).toContain("Epic");
+  expect(head?.textContent).toContain("1/3 done");
+  expect(within(backlog).queryByText("Ticket 390")).toBeNull();
+  expect(within(backlog).getByText("Ticket 400")).toBeTruthy();
+  expect(within(backlog).getByText("Epic in another column")).toBeTruthy();
+  // The arrow opens the group, not the drawer.
   await user.click(toggle);
   expect(toggle.getAttribute("aria-expanded")).toBe("true");
-  expect(document.querySelector('[data-slot="loop-drawer"], [role="dialog"]')).toBeNull();
-  const done = document.querySelector<HTMLElement>('[data-slot="loop-subtask"][data-id="CYC-391"]');
-  expect(done?.hasAttribute("data-done")).toBe(true);
-  expect(done?.textContent).toContain("Ticket 391");
-  await user.click(done as HTMLElement);
+  expect(expandedEvents(calls)).toEqual([
+    ["loop_board_expanded", { target: "group", expanded: true }],
+  ]);
+  expect(JSON.stringify(tracked(calls))).not.toContain("CYC-381");
+  expect(calls.some(([n]) => n === "loopTicket")).toBe(false);
+  expect(within(backlog).getAllByText("Ticket 390")).toHaveLength(1);
+  expect(within(backlog).getAllByText("Ticket 392")).toHaveLength(1);
+  await user.click(toggle);
+  expect(within(backlog).queryByText("Ticket 390")).toBeNull();
+  // The title opens the Epic's drawer.
+  await user.click(within(backlog).getByRole("button", { name: "Ticket 381" }));
   await waitFor(() =>
-    expect(calls.some(([n, , id]) => n === "loopTicket" && id === "CYC-391")).toBe(true),
+    expect(calls.some(([n, , id]) => n === "loopTicket" && id === "CYC-381")).toBe(true),
   );
+});
+
+test("a filter opens the groups it leaves and clearing it brings the folds back", async () => {
+  const { user, calls } = await mountBoard({
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: {
+      CYC: withTickets({
+        Backlog: [ticket(381, "Backlog"), childOf(390, "Backlog"), childOf(392, "Backlog")],
+      }),
+    },
+  });
+  const backlog = await screen.findByRole("region", { name: "Backlog" });
+  expect(within(backlog).queryByText("Ticket 390")).toBeNull();
+  await user.type(screen.getByRole("searchbox"), "390");
+  expect(within(backlog).getByText("Ticket 390")).toBeTruthy();
+  expect(within(backlog).queryByText("Ticket 392")).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Clear filters" }));
+  expect(within(backlog).queryByText("Ticket 390")).toBeNull();
+  // Opening by filter is not the person opening it.
+  expect(tracked(calls).some(([e]) => e === "loop_board_expanded")).toBe(false);
+});
+
+test("under a filter the group arrow still folds, and the column count only counts matches", async () => {
+  const { user, calls } = await mountBoard({
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: {
+      CYC: withTickets({
+        Backlog: [ticket(381, "Backlog"), childOf(390, "Backlog"), childOf(392, "Backlog")],
+      }),
+    },
+  });
+  const backlog = await screen.findByRole("region", { name: "Backlog" });
+  await user.type(screen.getByRole("searchbox"), "390");
+  // Only the child matches: the head is not counted.
+  expect(backlog.textContent).toContain("1/3");
+  const toggle = within(backlog).getByRole("button", { name: "Show tickets under CYC-381" });
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  await user.click(toggle);
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  expect(within(backlog).queryByText("Ticket 390")).toBeNull();
+  expect(expandedEvents(calls)).toEqual([
+    ["loop_board_expanded", { target: "group", expanded: false }],
+  ]);
+});
+
+test("cards show the ticket type when there is one", async () => {
+  await mountBoard({
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: {
+      CYC: withTickets({
+        Todo: [
+          { ...ticket(1, "Todo"), type: "Feature" },
+          { ...ticket(2, "Todo"), type: null },
+        ],
+      }),
+    },
+  });
+  const todo = await screen.findByRole("region", { name: "Todo" });
+  const types = [...todo.querySelectorAll('[data-slot="loop-ticket-type"]')];
+  expect(types.map((e) => e.textContent)).toEqual(["Feature"]);
 });
 
 test("the parent id on a child card opens the parent", async () => {
@@ -1457,6 +1578,8 @@ const graphTicket = () => {
     loopTickets: { "CYC-610": detailOf(mine, { graph: graphOf(nodes) }) },
   } satisfies NonNullable<Parameters<typeof fakeBridge>[0]>;
 };
+const expandedEvents = (calls: [string, ...unknown[]][]) =>
+  tracked(calls).filter(([e]) => e === "loop_board_expanded");
 const tracked = (calls: [string, ...unknown[]][]) =>
   calls.filter(([name]) => name === "track").map(([, event, props]) => [event, props]);
 

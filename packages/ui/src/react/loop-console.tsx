@@ -10,6 +10,7 @@ import type { LoopBoardAnswer, LoopManyResult, LoopNotice, LoopTicket } from "..
 import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import { CheckIcon, ChevronRightIcon, CloseIcon, ErrorCircleIcon } from "./icons.tsx";
+import { priorityRank } from "./loop-board-layout.ts";
 import { GraphProgress } from "./loop-graph.tsx";
 import {
   joinsSession,
@@ -18,7 +19,7 @@ import {
   RetryFeedback,
   type RetryIntents,
 } from "./loop-notices.tsx";
-import { priorityRank, TicketStage, useTicketDrawer } from "./loop-ticket.tsx";
+import { TicketStage, useTicketDrawer } from "./loop-ticket.tsx";
 import { PageGroup, PageRows } from "./page-layout.tsx";
 import { usePlaceActive } from "./shell.tsx";
 import { StateBlock } from "./state-block.tsx";
