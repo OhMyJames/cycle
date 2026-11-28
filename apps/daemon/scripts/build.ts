@@ -8,9 +8,9 @@
 import { chmod, cp, mkdir, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { vendorDirectory } from "../../../harness/codex/src/binary.ts";
-import { parseVersion } from "../../desktop/src/shared/release.ts";
 import { HARNESSES } from "../src/harnesses.ts";
 import { BINARY_SOURCES } from "./binaries.ts";
+import { daemonVersion } from "./version.ts";
 
 const root = new URL("..", import.meta.url).pathname;
 const name = `cycle-${process.platform}-${process.arch}`;
@@ -40,14 +40,13 @@ for (const harness of HARNESSES) {
   }
 }
 
-const version = String((await Bun.file(join(root, "../desktop/package.json")).json()).version);
-
-if (!parseVersion(version)) throw new Error(`The version ${version} is not a version.`);
+// The daemon's own version (scripts/version.ts), apart from the app's (CYC-538).
+const version = daemonVersion();
 
 const result = await Bun.build({
   entrypoints: [join(root, "src/main.ts")],
   // The daemon runs from whatever directory it was started in; it must not read a .env or bunfig.toml there.
-  // The release version, which is the app's: one number for the whole release.
+  // The daemon's version: `<major>.<minor>.<commits>` (scripts/version.ts).
   define: { "process.env.CYCLE_BUILD_VERSION": JSON.stringify(version) },
   compile: { outfile: join(out, "cycle"), autoloadDotenv: false, autoloadBunfig: false },
   minify: false,

@@ -40,7 +40,7 @@ const locate = () => {
 };
 
 test.skipIf(!ready)(
-  "the packaged app starts the daemon it carries, and its window connects to it",
+  "the packaged app starts the daemon it carries from a folder of its own, and its window connects to it",
   async () => {
     const packaged = locate();
     expect(existsSync(join(packaged.appDir, "build.json"))).toBe(true);
@@ -67,6 +67,7 @@ test.skipIf(!ready)(
           PATH: "/usr/bin:/bin",
           HOME: root,
           CYCLE_HOME: data,
+          CYCLE_DAEMON_UPDATES: "off",
           CYCLE_ANALYTICS: "off",
           ...sso.env,
           ...(mac ? { CYCLE_TEST_HIDDEN_WINDOW: "1" } : {}),
@@ -239,14 +240,16 @@ test.skipIf(!ready)(
       });
       expect(sso.idp.stats.refreshed).toBe(1);
 
-      // And the daemon that serves it is the one inside the app.
+      // And the daemon that serves it is the one the app carries, put in a folder of its own (CYC-538).
       const pid = Number((await Bun.file(join(data, "daemon.pid")).text()).trim());
-      if (linux)
-        expect(await readlink(`/proc/${pid}/exe`)).toBe(join(packaged.appDir, "bin/cycle"));
+      const managed = join(data, "daemon", "bin", "cycle");
+      if (linux) expect(await readlink(`/proc/${pid}/exe`)).toBe(managed);
       else {
         const ps = Bun.spawnSync(["ps", "-p", String(pid), "-o", "command="]);
-        expect(ps.stdout.toString()).toContain(join(packaged.appDir, "bin/cycle"));
+        expect(ps.stdout.toString()).toContain(managed);
       }
+      const carried = (await Bun.file(join(packaged.appDir, "build.json")).json()).daemonVersion;
+      expect(Bun.spawnSync([managed, "version"]).stdout.toString().trim()).toBe(carried);
       process.kill(pid, "SIGTERM");
     } finally {
       proc.kill();

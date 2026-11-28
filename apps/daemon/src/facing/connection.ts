@@ -69,6 +69,7 @@ export const registerConnection = (app: AgentApp, core: Core, me: Me): void => {
           worktrees: true,
           vault: true,
           search: true,
+          selfUpdate: true,
         },
       },
     };

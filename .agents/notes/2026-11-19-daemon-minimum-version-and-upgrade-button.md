@@ -27,3 +27,7 @@ Any remote daemon older than the app showed a banner with a shell command, thoug
 
 - The minimum is raised by hand. Forgetting leaves a too-old daemon unflagged and the new feature broken on it; the release checklist in `docs/desktop.md` is the only guard besides the test of its validity. Not verified here against a real remote machine: the ssh run is covered by a fake in tests.
 - The command assumes Linux x64, `curl`, `sha256sum`, and `~/.local/bin/cycle`, as before.
+
+## Related
+
+- [The daemon is released on its own channel and updates itself when idle](2026-11-27-daemon-releases-on-its-own-and-updates-itself-when-idle.md) (CYC-538): daemons now update themselves; the flag and button here remain the way out for one too old to.

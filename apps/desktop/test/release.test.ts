@@ -143,12 +143,13 @@ test("a file table may only describe the inside of the bundle", () => {
   for (const [value, message] of refused) expect(() => parseTree(value)).toThrow(message);
 });
 
-test("the least daemon is a version no later than the app's own: an app cannot ask for what it is not", async () => {
-  const { version } = (await Bun.file(new URL("../package.json", import.meta.url)).json()) as {
-    version: string;
-  };
+test("the least daemon is a version no later than the daemon this commit builds: an app cannot ask for what is not", async () => {
+  // A daemon's version is `<major>.<minor>.<commits>` (CYC-538), apart from the app's: the least is one of those. Taken
+  // from the history when it is there; a shallow clone counts no commits, and then only the format is checked.
+  const { daemonVersion } = await import("../../daemon/scripts/version.ts");
+  const built = daemonVersion({});
   expect(parseVersion(MIN_DAEMON_VERSION)).toBeDefined();
-  expect(isNewer(MIN_DAEMON_VERSION, version)).toBe(false);
+  if (!built.endsWith(".0")) expect(isNewer(MIN_DAEMON_VERSION, built)).toBe(false);
 });
 
 test("a daemon is too old below the least, and not for a development build or a version it cannot read", () => {

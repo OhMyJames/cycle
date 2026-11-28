@@ -53,6 +53,8 @@ export class Engine {
   readonly #stepConfig = new AsyncLocalStorage<Config>();
   /** Keys of the runs some step is working on now. */
   readonly #active = new Set<string>();
+  /** Whether the last look found the daemon waiting to switch versions: said in the log only when it changes. */
+  #heldForDaemon = false;
   /** In-flight session id per run key, for supervisor `loop/run/cancel` (CYC-484). */
   readonly #activeSessions = new Map<string, string>();
   #lock: Promise<void> = Promise.resolve();
@@ -228,6 +230,16 @@ export class Engine {
     }
 
     if (this.#d.stopped?.() === true) return { result: { status: "idle" } };
+    // The daemon has a new version waiting for it to be idle: nothing new is taken until it has switched (CYC-538).
+    const daemonUpdating = (await this.#d.sessions.updatePending?.().catch(() => false)) === true;
+    if (daemonUpdating !== this.#heldForDaemon)
+      this.#d.log(
+        daemonUpdating
+          ? "daemon update waiting: not taking new work items until it has switched"
+          : "daemon update done: taking new work items again",
+      );
+    this.#heldForDaemon = daemonUpdating;
+    if (daemonUpdating) return { result: { status: "idle" } };
     const held = new Set([...this.#active, ...unfinished.map((r) => r.key)]);
     for (const intake of this.#intakes(config)) {
       const want = await intake.want(held);

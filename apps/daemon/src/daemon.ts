@@ -27,6 +27,7 @@ import {
   type ChildUpdate,
   CONNECTORS_CHANGED,
   CycleErrorCode,
+  type DaemonUpdateState,
   META,
   NOTIFICATIONS,
   PLAN_USAGE_CHANGED,
@@ -182,6 +183,8 @@ export type DaemonOptions = {
   authFlowTtlMs?: number;
   /** The plugins that ship with Cycle: installed for each agent in the background once started. Default: none. */
   builtinPlugins?: BuiltinBundle;
+  /** The daemon's own update state (`_cycle/daemon/update/read`). Default: it does not update itself. */
+  updateState?: () => DaemonUpdateState;
 };
 
 /** The terminals' settings when the daemon is given none: what `config.json` defaults to. */
@@ -263,6 +266,7 @@ export class Daemon {
   readonly #staleHistory = new Map<string, string[]>();
   #counter = 0;
   #closing = false;
+  readonly #updateState: (() => DaemonUpdateState) | undefined;
 
   private constructor(
     options: DaemonOptions,
@@ -275,6 +279,7 @@ export class Daemon {
     modelProviders: ModelProviders,
   ) {
     this.#version = options.version ?? "dev";
+    this.#updateState = options.updateState;
     this.#dataDir = options.dataDir;
     this.#agentHomes = options.agentHomes ?? (() => []);
     const defaultConfigPath = join(options.dataDir, "config.json");
@@ -500,6 +505,23 @@ export class Daemon {
       since = Math.max(since, session.lastActive);
     }
     return since;
+  }
+
+  /**
+   * Whether the daemon can switch to a new version now without cutting anything short (docs/daemon.md "自动更新"): no
+   * session working, loading or starting its agent, nothing done in any session for `quietMs`, and no terminal running a
+   * command. Unlike `idleSince`, clients may be connected: the app and Loop stay connected, and reconnect after.
+   */
+  async quietForUpdate(quietMs: number): Promise<boolean> {
+    if (this.#closing || this.#loading.size > 0) return false;
+    if (this.activity().length > 0) return false;
+    const now = this.#now();
+    for (const session of this.#sessions.values()) {
+      if (session.closed) continue;
+      if (session.starting !== undefined) return false;
+      if (now - session.lastActive < quietMs) return false;
+    }
+    return !(await this.#terminals.busy());
   }
 
   /** A turn has started and not ended: on record, or as the daemon has it (a prompt still on its way to the agent). */
@@ -2164,6 +2186,8 @@ export class Daemon {
       terminals: this.#terminals,
       clients: this.#clients,
       planUsage: this.#planUsage,
+      updateState: () =>
+        this.#updateState?.() ?? { version: this.#version, updates: "off" as const },
       now: () => this.#now(),
       definition: (id) => this.#definition(id),
       session: (sessionId) => this.#session(sessionId),

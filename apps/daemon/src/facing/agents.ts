@@ -1,10 +1,11 @@
 // The agents (docs/protocol.md §8 "agent"): which there are, the defaults a person set for each, and the plan usage
-// each told.
+// each told. And the daemon's own update state (docs/protocol.md §3), which has no module of its own.
 import type { AgentApp } from "@agentclientprotocol/sdk/experimental/v2";
 import {
   agentDefaultsRead,
   agentDefaultsSet,
   agentsList,
+  daemonUpdateRead,
   NOTIFICATIONS,
   planUsageRead,
 } from "@cycle/protocol";
@@ -30,6 +31,7 @@ export const registerAgents = (app: AgentApp, core: Core): void => {
     ),
   }));
   cycle(planUsageRead, () => ({ agents: Object.fromEntries(core.planUsage) }));
+  cycle(daemonUpdateRead, () => core.updateState());
   cycle(agentDefaultsRead, (params) => {
     core.definition(params.agent);
     return { config: core.defaults.get(params.agent) };

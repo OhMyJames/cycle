@@ -59,12 +59,14 @@ ACP 方法和类型已对照 `@agentclientprotocol/sdk` 2.7.0 的 v2 稳定版 J
   "agentPrewarm": true,
   "sessionMentions": true,
   "search": true,
-  "terminal": true
+  "terminal": true,
+  "selfUpdate": true
 }
 ```
 
 - **旧 daemon 的降级**:远程 daemon 可能比客户端旧。`sessionOps` 里没有 `markRead` 的 daemon,客户端不发 `_cycle/session/mark_read`;它的列表里没有 `updatedAt`、`cycle/unread`、`cycle/background`,客户端按"缺失"处理,不得报错,也不得把缺失当成 `false` 或 0 以外的意思(规则见 §6)。
 
+- **daemon 自更新的状态(`_cycle/daemon/update/read`,CYC-538)**:`{}` → `{version, updates, pending?}`。`version` 是这个 daemon 自己的版本;`updates` 是 `"on"`(装在可以自己更新的位置,会定时查发布通道)或 `"off"`(从源码运行、装在应用包里、关掉了,或没有内置公钥);`pending` 只在已下载、校验好、等着空闲时切换的新版本存在,形如 `{version}`。daemon 的 `cycle/capabilities` 有 `selfUpdate: true` 时才有这个方法;没有的(旧 daemon)客户端当作没有待装版本。Loop 在领新单前读它:有 `pending` 就不领新单,已在进行的 run 照常(docs/daemon.md "自动更新")。daemon 切换版本就是一次停止和启动:连接断开,客户端照常重连到新版本。
 - 桌面端在 `initialize` 的 `_meta["cycle/appVersion"]` 里报自己的版本,格式 `x.y.z`,其他格式不记。daemon 把最近一次报来的写进数据目录的 `app-version`,`cycle update` 默认装这个版本。别的客户端不发。
 - 客户端在 `initialize` 的 `capabilities.elicitation.form` 里声明自己能回答表单式的提问(见 §9)。不声明就不会收到 `elicitation/create`。
 - 每个 agent 能收什么样的 prompt 内容、能不能带 MCP 服务器等,不在这里:daemon 的 `initialize` 不依赖具体 agent,放在 `_cycle/agents/list`(§10)。

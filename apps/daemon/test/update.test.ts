@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { createHash } from "node:crypto";
 import { chmod, readFile, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { methods } from "@agentclientprotocol/sdk/experimental/v2";
@@ -25,9 +24,6 @@ afterEach(async () => {
   await dispose();
 });
 
-const sha = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
-const SCRIPT = new TextEncoder().encode("#!/bin/sh\necho installing\n");
-
 /** A daemon on `<dir>/daemon.sock`, as `serve` runs one. */
 const serve = async (fake = fakeAgent()) => {
   const daemon = await Daemon.start({ dataDir: dir, agents: [fake.definition] });
@@ -47,33 +43,21 @@ const serve = async (fake = fakeAgent()) => {
   return { daemon, socket, stop };
 };
 
-/** `runUpdate` with everything outside the process faked: what was downloaded, what was installed, said. */
+/** `runUpdate` with everything outside the process faked: what was staged, switched and started, and what it said. */
 const harness = (over: Partial<UpdateDeps> = {}) => {
   const said: string[] = [];
-  const calls = {
-    downloads: [] as string[],
-    installs: [] as string[],
-    starts: 0,
-    stops: [] as boolean[],
-  };
+  const calls = { stages: 0, swaps: 0, starts: 0, stops: [] as boolean[] };
   const deps: UpdateDeps = {
     version: "0.3.1",
     requested: undefined,
     now: false,
     install: { kind: "installed", prefix: "/home/u/.local" },
-    recorded: async () => undefined,
-    download: async (url) => {
-      calls.downloads.push(url);
-      return url.endsWith(".sha256")
-        ? new TextEncoder().encode(`${sha(SCRIPT)}  install.sh\n`)
-        : SCRIPT;
-    },
-    runInstaller: async (_dir, tag) => {
-      calls.installs.push(tag);
-      return 0;
+    installDir: "/home/u/.local/share/cycle",
+    stage: async () => {
+      calls.stages += 1;
+      return { staged: { version: "0.3.5" } };
     },
     isRunning: async () => false,
-    runningVersion: async () => undefined,
     stop: async (force) => {
       calls.stops.push(force);
       return 0;
@@ -82,6 +66,11 @@ const harness = (over: Partial<UpdateDeps> = {}) => {
       calls.starts += 1;
       return true;
     },
+    swap: async () => {
+      calls.swaps += 1;
+    },
+    stillStaged: async () => true,
+    selfUpdating: async () => true,
     say: (line) => said.push(line),
     ...over,
   };
@@ -121,76 +110,40 @@ const waitFor = async (condition: () => Promise<boolean>, what: string) => {
 
 const existsRecorded = () => Bun.file(join(dir, "app-version")).exists();
 
-test("with no argument it installs the recorded version; --version installs that one", async () => {
-  const a = harness({ recorded: async () => "0.3.5" });
-  expect(await runUpdate(a.deps)).toBe(0);
-  expect(a.calls.installs).toEqual(["v0.3.5"]);
-  expect(a.calls.downloads[0]).toContain("/download/v0.3.5/install.sh");
-  expect(a.calls.downloads[1]).toEndWith("/install.sh.sha256");
-  const b = harness({ recorded: async () => "0.3.5", requested: "0.3.8" });
-  expect(await runUpdate(b.deps)).toBe(0);
-  expect(b.calls.installs).toEqual(["v0.3.8"]);
-});
-
-test("with neither a recorded version nor --version it refuses and says how", async () => {
+test("it stages the newest version on the channel and, with no daemon running, switches the folder", async () => {
   const h = harness();
-  expect(await runUpdate(h.deps)).not.toBe(0);
-  expect(h.calls.downloads).toEqual([]);
-  expect(h.calls.installs).toEqual([]);
-  expect(h.said.join("\n")).toContain("--version");
-});
-
-test("a wrong sha256 or a failed download installs nothing and fails", async () => {
-  const bad = harness({
-    recorded: async () => "0.3.5",
-    download: async (url) =>
-      url.endsWith(".sha256") ? new TextEncoder().encode(`${"0".repeat(64)}  install.sh`) : SCRIPT,
-    isRunning: async () => true,
-  });
-  expect(await runUpdate(bad.deps)).toBe(1);
-  expect(bad.calls.installs).toEqual([]);
-  expect(bad.calls.stops).toEqual([]);
-  expect(bad.said.join("\n")).toContain("does not match");
-
-  const down = harness({
-    recorded: async () => "0.3.5",
-    download: async () => {
-      throw new Error("HTTP 404");
-    },
-    isRunning: async () => true,
-  });
-  expect(await runUpdate(down.deps)).toBe(1);
-  expect(down.calls.installs).toEqual([]);
-  expect(down.calls.stops).toEqual([]);
-  expect(down.said.join("\n")).toContain("HTTP 404");
-});
-
-test("a failed installer leaves the running daemon alone", async () => {
-  const h = harness({
-    recorded: async () => "0.3.5",
-    runInstaller: async () => 1,
-    isRunning: async () => true,
-  });
-  expect(await runUpdate(h.deps)).toBe(1);
-  expect(h.calls.stops).toEqual([]);
-  expect(h.calls.starts).toBe(0);
-});
-
-test("the version it already is: nothing is downloaded or changed", async () => {
-  const h = harness({ recorded: async () => "0.3.1", isRunning: async () => true });
   expect(await runUpdate(h.deps)).toBe(0);
-  expect(h.calls.downloads).toEqual([]);
+  expect(h.calls).toEqual({ stages: 1, swaps: 1, starts: 0, stops: [] });
+  expect(h.said.join("\n")).toContain("Installed 0.3.5");
+});
+
+test("--version is refused: the channel has only its newest", async () => {
+  const h = harness({ requested: "0.3.8" });
+  expect(await runUpdate(h.deps)).toBe(2);
+  expect(h.calls.stages).toBe(0);
+});
+
+test("a failed download changes nothing", async () => {
+  const h = harness({ stage: async () => ({ error: "HTTP 404" }), isRunning: async () => true });
+  expect(await runUpdate(h.deps)).toBe(1);
+  expect(h.calls).toEqual({ stages: 0, swaps: 0, starts: 0, stops: [] });
+  expect(h.said.join("\n")).toContain("HTTP 404");
+});
+
+test("already the newest: nothing is switched or stopped", async () => {
+  const h = harness({ stage: async () => ({}), isRunning: async () => true });
+  expect(await runUpdate(h.deps)).toBe(0);
   expect(h.calls.stops).toEqual([]);
-  expect(h.said.join("\n")).toContain("Already 0.3.1");
+  expect(h.calls.swaps).toBe(0);
+  expect(h.said.join("\n")).toContain("Already the newest");
 });
 
 test("a program inside the desktop app is not replaced", async () => {
   const h = harness({
-    recorded: async () => "0.3.5",
     install: installOf("/Applications/Cycle.app/Contents/Resources/bin/cycle", true),
   });
-  expect(await runUpdate(h.deps)).not.toBe(0);
-  expect(h.calls.downloads).toEqual([]);
+  expect(await runUpdate(h.deps)).toBe(2);
+  expect(h.calls.stages).toBe(0);
   expect(h.said.join("\n")).toContain("updated with it");
 });
 
@@ -202,14 +155,45 @@ test("where a program is decides whether it can be replaced", () => {
   expect(installOf("/usr/bin/bun", false, "linux").kind).toBe("source");
   expect(installOf("/opt/x/cycle", true, "linux").kind).toBe("unknown");
   expect(installOf("/Users/u/.local/share/cycle/cycle", true, "darwin").kind).toBe("unsupported");
+  // Where the app puts it (CYC-538), on any platform.
+  expect(installOf("/Users/u/.cycle/daemon/bin/cycle", true, "darwin").kind).toBe("managed");
+  expect(installOf("/home/u/.cycle/daemon/bin/cycle", true, "linux").kind).toBe("managed");
+  expect(installOf("/Users/u/.cycle/daemon/bin/cycle", false, "darwin").kind).toBe("source");
 });
 
-test("with no daemon running only the program is replaced", async () => {
-  const h = harness({ recorded: async () => "0.3.5" });
+test("a daemon that will not stop keeps running the old version, and is told what happens next", async () => {
+  const h = harness({ isRunning: async () => true, stop: async () => 4 });
+  expect(await runUpdate(h.deps)).toBe(1);
+  expect(h.calls.swaps).toBe(0);
+  expect(h.said.join("\n")).toContain("switches by itself");
+  // One that does not update itself is not said to.
+  const off = harness({
+    isRunning: async () => true,
+    stop: async () => 4,
+    selfUpdating: async () => false,
+  });
+  expect(await runUpdate(off.deps)).toBe(1);
+  expect(off.said.join("\n")).not.toContain("switches by itself");
+  expect(off.said.join("\n")).toContain("cycle stop --wait");
+});
+
+test("a daemon that switched by itself while this waited is not switched again, and is started", async () => {
+  const h = harness({ isRunning: async () => true, stillStaged: async () => false });
   expect(await runUpdate(h.deps)).toBe(0);
-  expect(h.calls.installs).toEqual(["v0.3.5"]);
-  expect(h.calls.stops).toEqual([]);
-  expect(h.calls.starts).toBe(0);
+  expect(h.calls.swaps).toBe(0);
+  expect(h.calls.starts).toBe(1);
+});
+
+test("a switch that fails starts the current version again", async () => {
+  const h = harness({
+    isRunning: async () => true,
+    swap: async () => {
+      throw new Error("ENOENT");
+    },
+  });
+  expect(await runUpdate(h.deps)).toBe(1);
+  expect(h.calls.starts).toBe(1);
+  expect(h.said.join("\n")).toContain("started again");
 });
 
 /** What `cycle update` does with a daemon: stop it as `cycle stop` does, then start one on the same socket. */
@@ -255,18 +239,15 @@ test("it waits for a running turn to end, then the new daemon is already listeni
   });
   const started: { new?: () => Promise<void> } = {};
   const messages: string[] = [];
-  const h = harness({
-    recorded: async () => "0.3.5",
-    ...switching(socket, stop, started, (line) => messages.push(line)),
-  });
+  const h = harness({ ...switching(socket, stop, started, (line) => messages.push(line)) });
   const updating = runUpdate(h.deps);
   await until(
     () => messages.some((line) => line.startsWith("Waiting for them to finish")),
     "the updater to observe the running turn",
     1_000,
   );
-  expect(h.calls.installs).toEqual(["v0.3.5"]);
-  // The program is replaced, but the daemon with a turn running is not touched.
+  expect(h.calls.stages).toBe(1);
+  // The version is ready, but the daemon with a turn running is not touched.
   expect(await isListening(socket)).toBe(true);
   expect(started.new).toBeUndefined();
   release();
@@ -288,11 +269,7 @@ test("--now switches over a running turn without waiting", async () => {
     prompt: [{ type: "text", text: "go" }],
   });
   const started: { new?: () => Promise<void> } = {};
-  const h = harness({
-    recorded: async () => "0.3.5",
-    now: true,
-    ...switching(socket, stop, started),
-  });
+  const h = harness({ now: true, ...switching(socket, stop, started) });
   expect(await runUpdate(h.deps)).toBe(0);
   expect(started.new).toBeDefined();
   expect(await isListening(socket)).toBe(true);
@@ -305,42 +282,6 @@ test("the recorded version file holds just the version", async () => {
   await client.close();
   await until(() => Bun.file(join(dir, "app-version")).size > 0, "the file");
   expect((await readFile(join(dir, "app-version"), "utf8")).trim()).toBe("1.2.3");
-});
-
-test("the same version with an older daemon still running switches it over, without installing", async () => {
-  let running = true;
-  const h = harness({
-    recorded: async () => "0.3.1",
-    isRunning: async () => running,
-    runningVersion: async () => "0.3.0",
-    stop: async () => {
-      running = false;
-      return 0;
-    },
-  });
-  expect(await runUpdate(h.deps)).toBe(0);
-  expect(h.calls.installs).toEqual([]);
-  expect(h.calls.starts).toBe(1);
-  const same = harness({
-    recorded: async () => "0.3.1",
-    isRunning: async () => true,
-    runningVersion: async () => "0.3.1",
-  });
-  expect(await runUpdate(same.deps)).toBe(0);
-  expect(same.calls.starts).toBe(0);
-});
-
-test("a lower target is a downgrade and is warned about; macOS is refused up front", async () => {
-  const h = harness({ recorded: async () => "0.3.0" });
-  expect(await runUpdate(h.deps)).toBe(0);
-  expect(h.said.join("\n")).toContain("downgrade");
-  const mac = harness({
-    recorded: async () => "0.3.5",
-    install: installOf("/Users/u/.local/share/cycle/cycle", true, "darwin"),
-  });
-  expect(await runUpdate(mac.deps)).toBe(2);
-  expect(mac.calls.downloads).toEqual([]);
-  expect(mac.said.join("\n")).toContain("Linux");
 });
 
 test("a daemon is started from the program that was just put in place, not the one that was running", async () => {
