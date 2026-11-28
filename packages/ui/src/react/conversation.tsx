@@ -1,8 +1,10 @@
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "@ui-sdk/react/collapsible";
 import {
+  createContext,
   memo,
   type ReactNode,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -13,7 +15,7 @@ import {
 import { resourceName } from "../attachments.ts";
 import { MENTION_META, wordAt } from "../draft.ts";
 import { insideFolder } from "../files-view.ts";
-import { SESSION_URI_PREFIX } from "../mention.ts";
+import { SESSION_URI_PREFIX, sessionChipText, sessionIdOfUri } from "../mention.ts";
 import {
   type Block,
   type BlockCache,
@@ -35,23 +37,17 @@ import { blockHolds, heldIds, reveal } from "../reveal.ts";
 import { BLANK_KEY } from "../store/index.ts";
 import { CopyButton } from "./copy-button.tsx";
 import { useI18n } from "./i18n.tsx";
-import {
-  ArrowDownIcon,
-  AttachIcon,
-  ChevronRightIcon,
-  FileIcon,
-  FolderIcon,
-  MessageIcon,
-} from "./icons.tsx";
+import { ArrowDownIcon, AttachIcon, ChevronRightIcon, FileIcon, FolderIcon } from "./icons.tsx";
 import { ImageBlockView } from "./image.tsx";
 import { LoaderClaims, LoaderClaimsProvider } from "./loader-claim.ts";
 import { type FileLinks, FileLinksContext, Markdown } from "./markdown.tsx";
+import { SessionMentionView } from "./mention-node.tsx";
 import { MessageTime } from "./message-time.tsx";
 import { PlanBlock } from "./plan.tsx";
 import { ReviewCard } from "./review.tsx";
-import { useScopedFilesRoot } from "./session-scope.tsx";
+import { useScopedFilesRoot, useSessionScope } from "./session-scope.tsx";
 import { StateBlock } from "./state-block.tsx";
-import { useAppStore } from "./store-context.tsx";
+import { useAppState, useAppStore } from "./store-context.tsx";
 import { SubagentCard, subagentWorkOf } from "./subagent.tsx";
 import { ThoughtText, useDisplayMode } from "./thought.tsx";
 import { Tip } from "./tip.tsx";
@@ -71,8 +67,14 @@ const isMention = (block: Block, text: string): boolean => {
 const hasWords = (block: Block): boolean =>
   block.type === "text" && String(block.text).trim() !== "";
 
-/** The sessions a message names with @: what its text says of each, and the session's title. */
-const sessionMentionsOf = (blocks: readonly Block[]): { said: string; name: string }[] =>
+type SessionMention = {
+  said: string;
+  name: string;
+  sessionId: string | undefined;
+};
+
+/** The sessions a message names with @: what its text says of each, its title, and its session id. */
+const sessionMentionsOf = (blocks: readonly Block[]): SessionMention[] =>
   blocks.flatMap((block) => {
     const said = (block._meta as Record<string, unknown> | undefined)?.[MENTION_META];
     return block.type === "resource_link" &&
@@ -80,17 +82,56 @@ const sessionMentionsOf = (blocks: readonly Block[]): { said: string; name: stri
       block.uri.startsWith(SESSION_URI_PREFIX) &&
       typeof said === "string" &&
       said !== ""
-      ? [{ said, name: typeof block.name === "string" && block.name !== "" ? block.name : said }]
+      ? [
+          {
+            said,
+            name: typeof block.name === "string" && block.name !== "" ? block.name : said,
+            sessionId: sessionIdOfUri(block.uri),
+          },
+        ]
       : [];
   });
 
-/** A session named with @, as a sent message shows it: a chip with its name, not what the agent was given of it. */
-const SessionChip = ({ said, name }: { said: string; name: string }) => (
-  <span data-slot="mention-chip" data-kind="session" title={name}>
-    <MessageIcon size={12} />
-    {said}
-  </span>
-);
+/** Notified after a session @ mention chip switches the open session (so the sidebar can reveal archived rows). */
+const OpenSessionContext = createContext<
+  ((locationId: string, sessionId: string) => void) | undefined
+>(undefined);
+
+/**
+ * A session named with @, as a sent message shows it: a compact chip (at most 20 chars + `...`) whose tooltip shows the
+ * full session name, clicking opens the session when another session with that id exists on this location.
+ */
+function SessionChip({ said, name, sessionId }: SessionMention) {
+  const store = useAppStore();
+  const onOpenSession = useContext(OpenSessionContext);
+  const scope = useSessionScope();
+  const locationId = useAppState((s) => scope.locationId ?? s.blank?.locationId);
+  const canOpen = useAppState(
+    (s) =>
+      scope.hasSidePanel &&
+      locationId !== undefined &&
+      sessionId !== undefined &&
+      !(
+        s.blank === undefined &&
+        scope.locationId === locationId &&
+        scope.sessionId === sessionId
+      ) &&
+      (s.sessions[locationId]?.some((item) => item.sessionId === sessionId) ?? false),
+  );
+  const open =
+    canOpen && locationId !== undefined && sessionId !== undefined
+      ? () => {
+          void store.selectSession(locationId, sessionId);
+          // Only record and sync the sidebar when selectSession actually switched (not rejected on an away location).
+          const after = store.getState();
+          if (after.selectedLocation === locationId && after.selectedSession === sessionId) {
+            onOpenSession?.(locationId, sessionId);
+            store.track("session_opened_from_mention", {});
+          }
+        }
+      : undefined;
+  return <SessionMentionView shown={sessionChipText(said)} fullName={name} onClick={open} />;
+}
 
 /** What a message's words name with @ and draw as a chip: what the words say, and the chip. */
 type Chip = { said: string; chip: (key: string) => ReactNode };
@@ -127,7 +168,7 @@ const fileChipsOf = (
             onClick={() => show(path, folder)}
           >
             {folder ? <FolderIcon size={12} /> : <FileIcon size={12} />}
-            {words}
+            <span data-slot="mention-label">{words}</span>
           </button>
         ),
       },
@@ -200,10 +241,7 @@ function Blocks({ blocks }: { blocks: Block[] }) {
             <span key={key}>{withChips(String(block.text), chips)}</span>
           ) : isMention(block, words) ? null : sessionMentionsOf([block])[0] !== undefined ? (
             // A session the words no longer name: still its chip, so what the agent was given is never invisible.
-            <SessionChip
-              key={key}
-              {...(sessionMentionsOf([block])[0] as { said: string; name: string })}
-            />
+            <SessionChip key={key} {...(sessionMentionsOf([block])[0] as SessionMention)} />
           ) : block.type === "resource_link" ? (
             // A link that is not a mention in the text: its name, marked off, so it reads as what was attached.
             <span data-slot="block-note" key={key}>
@@ -567,6 +605,7 @@ export function ConversationView({
   awaitingApproval,
   sessionKey,
   follow,
+  onOpenSession,
 }: {
   conversation: Conversation;
   loading: boolean;
@@ -575,6 +614,8 @@ export function ConversationView({
   sessionKey: string;
   /** Changes each time the person sends a message: it is shown, wherever they were reading. */
   follow: number;
+  /** Called after a session @ mention chip opens another session, so the sidebar can follow and show archived rows. */
+  onOpenSession?: ((locationId: string, sessionId: string) => void) | undefined;
 }) {
   const { t } = useI18n();
   // Turns that have not changed give back the same blocks, so only the turn that is going is drawn again.
@@ -1067,52 +1108,54 @@ export function ConversationView({
   }
   if (prev < blocks.length - 1) rows.push(gapOf(prev + 1, blocks.length));
   return (
-    <FileLinksContext.Provider value={fileLinks}>
-      <LoaderClaimsProvider value={claims}>
-        <div
-          data-slot="conversation"
-          ref={ref}
-          onScroll={onScroll}
-          role="log"
-          tabIndex={-1}
-          aria-label={t("conversation.label")}
-          aria-busy={loading}
-        >
-          {loading ? (
-            <div data-slot="loading">
-              <StateBlock tone="loading" title={t("conversation.loading")} />
-            </div>
-          ) : null}
-          {!loading && conversation.items.length === 0 ? (
-            <div data-slot="conversation-empty">
-              <StateBlock tone="empty" title={t("conversation.empty")} />
-            </div>
-          ) : null}
-          {rows}
-          {!loading ? (
-            <StepLine
-              conversation={conversation}
-              awaitingApproval={awaitingApproval}
-              sessionKey={sessionKey}
-            />
-          ) : null}
-          {/* Held to the bottom of the view while the end is below it, and taking no room, so it moves nothing it floats over. */}
-          <div data-slot="to-end">
-            {away && !loading ? (
-              <Tip label={fresh ? t("conversation.toEndFresh") : t("conversation.toEnd")}>
-                <button
-                  type="button"
-                  data-slot="to-end-button"
-                  data-fresh={fresh || undefined}
-                  onClick={toEnd}
-                >
-                  <ArrowDownIcon size={16} />
-                </button>
-              </Tip>
+    <OpenSessionContext.Provider value={onOpenSession}>
+      <FileLinksContext.Provider value={fileLinks}>
+        <LoaderClaimsProvider value={claims}>
+          <div
+            data-slot="conversation"
+            ref={ref}
+            onScroll={onScroll}
+            role="log"
+            tabIndex={-1}
+            aria-label={t("conversation.label")}
+            aria-busy={loading}
+          >
+            {loading ? (
+              <div data-slot="loading">
+                <StateBlock tone="loading" title={t("conversation.loading")} />
+              </div>
             ) : null}
+            {!loading && conversation.items.length === 0 ? (
+              <div data-slot="conversation-empty">
+                <StateBlock tone="empty" title={t("conversation.empty")} />
+              </div>
+            ) : null}
+            {rows}
+            {!loading ? (
+              <StepLine
+                conversation={conversation}
+                awaitingApproval={awaitingApproval}
+                sessionKey={sessionKey}
+              />
+            ) : null}
+            {/* Held to the bottom of the view while the end is below it, and taking no room, so it moves nothing it floats over. */}
+            <div data-slot="to-end">
+              {away && !loading ? (
+                <Tip label={fresh ? t("conversation.toEndFresh") : t("conversation.toEnd")}>
+                  <button
+                    type="button"
+                    data-slot="to-end-button"
+                    data-fresh={fresh || undefined}
+                    onClick={toEnd}
+                  >
+                    <ArrowDownIcon size={16} />
+                  </button>
+                </Tip>
+              ) : null}
+            </div>
           </div>
-        </div>
-      </LoaderClaimsProvider>
-    </FileLinksContext.Provider>
+        </LoaderClaimsProvider>
+      </FileLinksContext.Provider>
+    </OpenSessionContext.Provider>
   );
 }

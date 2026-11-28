@@ -3,8 +3,12 @@ import {
   mentionableSessions,
   mentionQuery,
   mentionRow,
+  SESSION_CHIP_MAX_CHARS,
   SESSION_ROWS,
+  sessionChipText,
+  sessionIdOfUri,
   sessionLabel,
+  sessionUri,
 } from "../src/mention.ts";
 
 test("an @ at the start or after a space begins a name, up to the caret", () => {
@@ -73,4 +77,26 @@ test("a session is said by its title on one line, without Markdown's marks, and 
   expect(sessionLabel("Fix the *login*  bug\n`now`")).toBe("Fix the login bug now");
   expect(sessionLabel("x".repeat(100))).toHaveLength(60);
   expect(sessionLabel("**")).toBe("session");
+});
+
+test("a session chip truncates labels longer than 20 characters with an ellipsis", () => {
+  expect(SESSION_CHIP_MAX_CHARS).toBe(20);
+  expect(sessionChipText("short")).toBe("short");
+  expect(sessionChipText("a".repeat(20))).toBe("a".repeat(20));
+  expect(sessionChipText("a".repeat(21))).toBe(`${"a".repeat(20)}...`);
+  expect(sessionChipText("帮我看一下 咱们现在 itsaplan 里面，有哪些 workitem 过期了")).toBe(
+    "帮我看一下 咱们现在 itsaplan...",
+  );
+  // Surrogate pairs and ZWJ grapheme clusters count as one character and are never split.
+  expect(sessionChipText("😀".repeat(25))).toBe(`${"😀".repeat(20)}...`);
+  expect(sessionChipText("👨‍👩‍👧‍👦".repeat(21))).toBe(`${"👨‍👩‍👧‍👦".repeat(20)}...`);
+});
+
+test("sessionIdOfUri parses cycle://session/ addresses and rejects anything else", () => {
+  expect(sessionIdOfUri(sessionUri("s2"))).toBe("s2");
+  expect(sessionIdOfUri(sessionUri("a/b c"))).toBe("a/b c");
+  expect(sessionIdOfUri("cycle://session/")).toBeUndefined();
+  expect(sessionIdOfUri("cycle://session/%E0%A4%A")).toBeUndefined();
+  expect(sessionIdOfUri("file:///work/a.ts")).toBeUndefined();
+  expect(sessionIdOfUri(null)).toBeUndefined();
 });
