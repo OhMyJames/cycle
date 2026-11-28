@@ -4,13 +4,13 @@ import { useMemo, useRef, useState } from "react";
 import type { LoopBoardAnswer, LoopBoardColumn, LoopTicket } from "../api.ts";
 import { useI18n } from "./i18n.tsx";
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, RefreshIcon } from "./icons.tsx";
+import { priorityRank } from "./loop-board-layout.ts";
 import { GraphProgress } from "./loop-graph.tsx";
 import { BoardAlerts, type RetryIntents } from "./loop-notices.tsx";
 import {
   type Act,
   PRIORITIES,
   PriorityBadge,
-  priorityRank,
   TicketActions,
   TicketStage,
   useTicketDrawer,

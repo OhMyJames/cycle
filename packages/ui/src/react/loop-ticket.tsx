@@ -38,8 +38,6 @@ const STAGE_SLOW_MS = 30 * 60_000;
 const ESCAPE_KEY = "Esc";
 
 export const PRIORITIES = ["urgent", "high", "medium", "low"] as const;
-const PRIORITY_RANK: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 };
-export const priorityRank = (p: string | null): number => PRIORITY_RANK[p ?? ""] ?? 4;
 
 /** Items with keys that stay unique when two read the same: the text, and how many came before with it. */
 const keyedItems = (items: string[]) => {
