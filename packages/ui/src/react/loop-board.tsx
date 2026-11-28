@@ -3,8 +3,18 @@ import { Menu, MenuContent, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "@
 import { useMemo, useRef, useState } from "react";
 import type { LoopBoardAnswer, LoopBoardColumn, LoopTicket } from "../api.ts";
 import { useI18n } from "./i18n.tsx";
-import { CheckIcon, ChevronDownIcon, ChevronRightIcon, RefreshIcon } from "./icons.tsx";
-import { priorityRank } from "./loop-board-layout.ts";
+import { ChevronDownIcon, ChevronRightIcon, RefreshIcon } from "./icons.tsx";
+import {
+  type BacklogRow,
+  backlogRows,
+  filterRows,
+  foldedByDefault,
+  orderColumns,
+  type Progress,
+  pageRows,
+  parentProgress,
+  priorityRank,
+} from "./loop-board-layout.ts";
 import { GraphProgress } from "./loop-graph.tsx";
 import { BoardAlerts, type RetryIntents } from "./loop-notices.tsx";
 import {
@@ -24,6 +34,12 @@ type PriorityFilter = "all" | (typeof PRIORITIES)[number];
 /** The Backlog is the longest column by far: it opens on this many and shows this many more at a time. */
 const BACKLOG_PAGE = 20;
 
+type BoardView = {
+  projectKey: string;
+  columns: ReadonlyMap<number, boolean>;
+  groups: ReadonlySet<string>;
+};
+
 /** Started columns follow Loop's board-order convention: 1st In Progress, 2nd In Review, 3rd Blocked. */
 type ColumnRole = "progress" | "review" | "blocked";
 const columnRoleOf = (
@@ -36,94 +52,20 @@ const columnRoleOf = (
   return nth === 0 ? "progress" : nth === 1 ? "review" : nth === 2 ? "blocked" : undefined;
 };
 
-/** One sub-ticket of a parent card, with the state of the column it sits in. */
-type Child = {
-  identifier: string;
-  title: string;
-  stateType: string;
-  role: ColumnRole | undefined;
-  done: boolean;
-};
-
-/** `parent identifier -> its sub-tickets`, from every column (not only the ones shown), in board order. */
-const childrenByParent = (columns: readonly LoopBoardColumn[]): ReadonlyMap<string, Child[]> => {
-  const map = new Map<string, Child[]>();
-  for (const c of columns) {
-    const role = columnRoleOf(columns, c);
-    for (const tk of c.tickets) {
-      const parent = tk.parent?.identifier;
-      if (parent === undefined) continue;
-      const list = map.get(parent) ?? [];
-      list.push({
-        identifier: tk.identifier,
-        title: tk.title,
-        stateType: c.stateType,
-        role,
-        done: c.stateType === "completed",
-      });
-      map.set(parent, list);
-    }
-  }
-  return map;
-};
-
-/** The foldable sub-ticket list at the bottom of a parent card. Its controls sit above the card-wide title button. */
-function SubtaskList({ items, onOpen }: { items: readonly Child[]; onOpen: (id: string) => void }) {
-  const { t } = useI18n();
-  const [open, setOpen] = useState(false);
-  const done = items.filter((x) => x.done).length;
-  return (
-    <div data-slot="loop-subtasks" data-open={open || undefined}>
-      <button
-        type="button"
-        data-slot="loop-subtasks-toggle"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-      >
-        {open ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
-        <span>{t("loop.subtasks")}</span>
-        <span data-slot="loop-subtasks-count">
-          {done}/{items.length}
-        </span>
-      </button>
-      {open ? (
-        <ul data-slot="loop-subtask-list">
-          {items.map((c) => (
-            <li key={c.identifier}>
-              <button
-                type="button"
-                data-slot="loop-subtask"
-                data-id={c.identifier}
-                data-state-type={c.stateType}
-                data-role={c.role}
-                data-done={c.done ? "" : undefined}
-                title={c.title}
-                onClick={() => onOpen(c.identifier)}
-              >
-                <span data-slot="loop-subtask-dot" aria-hidden="true">
-                  {c.done ? <CheckIcon size={10} /> : null}
-                </span>
-                <span data-slot="loop-subtask-id">{c.identifier}</span>
-                <span data-slot="loop-subtask-title">{c.title}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-    </div>
-  );
-}
-
 function TicketCard({
   ticket,
-  subtasks,
+  progress,
+  hideParent,
   act,
   busyAction,
   active,
   onOpen,
 }: {
   ticket: LoopTicket;
-  subtasks?: readonly Child[] | undefined;
+  /** Read-only done/total of the tickets under this one, shown in the foot. */
+  progress?: Progress | undefined;
+  /** Inside a group the head already names the parent. */
+  hideParent?: boolean | undefined;
   act: Act;
   busyAction?: string | undefined;
   active: boolean;
@@ -131,7 +73,8 @@ function TicketCard({
 }) {
   const { t } = useI18n();
   const isPending = ticket.pending !== undefined;
-  const hasFooter = ticket.phase !== undefined || isPending || ticket.graph !== undefined;
+  const hasFooter =
+    ticket.phase !== undefined || isPending || ticket.graph !== undefined || progress !== undefined;
   // The title button stretches over the whole card (CSS), so clicking anywhere on the card opens the drawer;
   // the checkbox and action buttons sit above it, so pressing them does not open it.
   return (
@@ -144,7 +87,8 @@ function TicketCard({
       <div data-slot="loop-ticket-head">
         <span data-slot="loop-ticket-lead">
           <span data-slot="loop-ticket-id">{ticket.identifier}</span>
-          {ticket.parent ? (
+          {ticket.type ? <span data-slot="loop-ticket-type">{ticket.type}</span> : null}
+          {ticket.parent && hideParent !== true ? (
             <button
               type="button"
               data-slot="loop-ticket-parent"
@@ -184,6 +128,11 @@ function TicketCard({
             {isPending ? <PriorityBadge priority={ticket.priority} /> : null}
             {ticket.phase ? <TicketStage phase={ticket.phase} /> : null}
             {ticket.graph ? <GraphProgress graph={ticket.graph} /> : null}
+            {progress ? (
+              <span data-slot="loop-ticket-progress">
+                {t("loop.group.progress", { done: progress.done, total: progress.total })}
+              </span>
+            ) : null}
           </span>
           {isPending ? (
             // A ticket the server lists as waiting can be approved: the board does not ask for the other buttons.
@@ -196,8 +145,79 @@ function TicketCard({
           ) : null}
         </div>
       ) : null}
-      {subtasks !== undefined && subtasks.length > 0 ? (
-        <SubtaskList items={subtasks} onOpen={onOpen} />
+    </li>
+  );
+}
+
+/** A Backlog group: the head (arrow folds, title opens the head's drawer) and, when open, the children under it. */
+function GroupRow({
+  row,
+  open,
+  onToggle,
+  progressOf,
+  act,
+  busyAction,
+  openIdentifier,
+  onOpen,
+}: {
+  row: Extract<BacklogRow, { kind: "group" }>;
+  open: boolean;
+  onToggle: () => void;
+  progressOf: ReadonlyMap<string, Progress>;
+  act: Act;
+  busyAction?: string | undefined;
+  openIdentifier?: string | undefined;
+  onOpen: (identifier: string) => void;
+}) {
+  const { t } = useI18n();
+  const { head, progress } = row;
+  return (
+    <li data-slot="loop-group" data-key={row.key} data-open={open ? "" : undefined}>
+      <div data-slot="loop-group-head">
+        <button
+          type="button"
+          data-slot="loop-group-toggle"
+          aria-expanded={open}
+          aria-label={t("loop.group.toggle", { id: head.identifier })}
+          onClick={onToggle}
+        >
+          {open ? <ChevronDownIcon size={12} /> : <ChevronRightIcon size={12} />}
+        </button>
+        <span data-slot="loop-ticket-id">{head.identifier}</span>
+        {head.ticket?.type ? <span data-slot="loop-ticket-type">{head.ticket.type}</span> : null}
+        {progress ? (
+          <span data-slot="loop-group-progress">
+            {t("loop.group.progress", { done: progress.done, total: progress.total })}
+          </span>
+        ) : null}
+        {head.ticket ? <PriorityBadge priority={head.ticket.priority} /> : null}
+        <button
+          type="button"
+          data-slot="loop-group-title"
+          title={head.title}
+          onClick={() => onOpen(head.identifier)}
+        >
+          {head.title}
+        </button>
+        {row.elsewhere ? (
+          <span data-slot="loop-group-note">{t("loop.group.elsewhere")}</span>
+        ) : null}
+      </div>
+      {open ? (
+        <ul data-slot="loop-group-children">
+          {row.children.map((ticket) => (
+            <TicketCard
+              key={ticket.identifier}
+              ticket={ticket}
+              progress={progressOf.get(ticket.identifier)}
+              hideParent
+              act={act}
+              busyAction={busyAction}
+              active={openIdentifier === ticket.identifier}
+              onOpen={onOpen}
+            />
+          ))}
+        </ul>
       ) : null}
     </li>
   );
@@ -208,14 +228,20 @@ function Column({
   title,
   stateType,
   role,
-  tickets,
+  rows,
+  ticketCount,
   totalCount,
   more,
   filtered,
   pageSize,
   openIdentifier,
   pendingCount,
-  childrenOf,
+  progressOf,
+  collapsed,
+  canHide,
+  onFold,
+  groupOpen,
+  onToggleGroup,
   act,
   busyAction,
   onOpen,
@@ -224,27 +250,60 @@ function Column({
   title: string;
   stateType: string;
   role?: ColumnRole | undefined;
-  tickets: LoopTicket[];
+  /** What the column shows, top to bottom: cards, and (Backlog only) groups. */
+  rows: BacklogRow[];
+  /** How many tickets `rows` hold. */
+  ticketCount: number;
   totalCount: number;
   more?: boolean;
   filtered?: boolean;
   pageSize?: number;
   openIdentifier?: string | undefined;
   pendingCount?: number | undefined;
-  childrenOf?: ReadonlyMap<string, Child[]> | undefined;
+  progressOf: ReadonlyMap<string, Progress>;
+  collapsed: boolean;
+  /** An open column that starts folded can be folded again. */
+  canHide: boolean;
+  onFold: (fold: boolean) => void;
+  groupOpen: (key: string) => boolean;
+  onToggleGroup: (key: string, open: boolean) => void;
   act: Act;
   busyAction?: string | undefined;
   onOpen: (identifier: string) => void;
 }) {
   const { t } = useI18n();
-  const [shown, setShown] = useState(pageSize ?? Number.POSITIVE_INFINITY);
-  const visible = tickets.slice(0, shown);
+  const [limit, setLimit] = useState(pageSize ?? Number.POSITIVE_INFINITY);
+  const { shown, hidden } = pageRows(rows, limit);
   const countLabel =
-    filtered === true && tickets.length !== totalCount
-      ? `${tickets.length}/${totalCount}`
+    filtered === true && ticketCount !== totalCount
+      ? `${ticketCount}/${totalCount}`
       : more === true
         ? `${totalCount}+`
         : `${totalCount}`;
+  if (collapsed) {
+    return (
+      <section
+        data-slot="loop-column"
+        data-collapsed=""
+        data-column={id}
+        data-state-type={stateType}
+        data-role={role}
+        aria-label={title}
+      >
+        <button
+          type="button"
+          data-slot="loop-column-fold"
+          aria-expanded={false}
+          aria-label={t("loop.column.show", { name: title })}
+          onClick={() => onFold(false)}
+        >
+          <span data-slot="loop-column-dot" aria-hidden="true" />
+          <span data-slot="loop-column-title">{title}</span>
+          <span data-slot="loop-column-count">{countLabel}</span>
+        </button>
+      </section>
+    );
+  }
   return (
     <section
       data-slot="loop-column"
@@ -257,34 +316,59 @@ function Column({
         <span data-slot="loop-column-dot" aria-hidden="true" />
         <h3 data-slot="loop-column-title">{title}</h3>
         <span data-slot="loop-column-count">{countLabel}</span>
+        {canHide ? (
+          <button
+            type="button"
+            data-slot="loop-column-hide"
+            aria-expanded={true}
+            aria-label={t("loop.column.hide", { name: title })}
+            onClick={() => onFold(true)}
+          >
+            <ChevronRightIcon size={12} />
+          </button>
+        ) : null}
       </header>
       <div data-slot="loop-column-body">
-        {tickets.length === 0 ? (
+        {rows.length === 0 ? (
           <p data-slot="loop-column-empty">
             {filtered === true ? t("loop.filter.empty") : t("loop.column.empty")}
           </p>
         ) : (
           <ul data-slot="loop-tickets">
-            {visible.map((ticket) => (
-              <TicketCard
-                key={ticket.identifier}
-                ticket={ticket}
-                subtasks={childrenOf?.get(ticket.identifier)}
-                act={act}
-                busyAction={busyAction}
-                active={openIdentifier === ticket.identifier}
-                onOpen={onOpen}
-              />
-            ))}
+            {shown.map((row) =>
+              row.kind === "card" ? (
+                <TicketCard
+                  key={row.ticket.identifier}
+                  ticket={row.ticket}
+                  progress={progressOf.get(row.ticket.identifier)}
+                  act={act}
+                  busyAction={busyAction}
+                  active={openIdentifier === row.ticket.identifier}
+                  onOpen={onOpen}
+                />
+              ) : (
+                <GroupRow
+                  key={`group:${row.key}`}
+                  row={row}
+                  open={groupOpen(row.key)}
+                  onToggle={() => onToggleGroup(row.key, !groupOpen(row.key))}
+                  progressOf={progressOf}
+                  act={act}
+                  busyAction={busyAction}
+                  openIdentifier={openIdentifier}
+                  onOpen={onOpen}
+                />
+              ),
+            )}
           </ul>
         )}
-        {visible.length < tickets.length && pageSize !== undefined ? (
+        {hidden > 0 && pageSize !== undefined ? (
           <Button
             data-variant="ghost"
             data-kind="loop-more"
-            onClick={() => setShown((n) => n + pageSize)}
+            onClick={() => setLimit((n) => n + pageSize)}
           >
-            {t("loop.more", { count: tickets.length - visible.length })}
+            {t("loop.more", { count: hidden })}
           </Button>
         ) : null}
         {more === true && pendingCount !== undefined && pendingCount > 0 ? (
@@ -386,17 +470,29 @@ export function Board({
 
   const columns =
     answer !== undefined && answer !== "loading" && answer.kind === "ok" ? answer.columns : [];
-  // Done (completed) columns sit last; every other column keeps the server's order.
-  // Other consumers (pending counts, ticket lookup) deliberately use server order.
-  const displayColumns = useMemo(
-    () => [
-      ...columns.filter((c) => c.stateType !== "completed"),
-      ...columns.filter((c) => c.stateType === "completed"),
-    ],
-    [columns],
-  );
+  // Columns left to right by state; other consumers (pending counts, ticket lookup) deliberately use server order.
+  const displayColumns = useMemo(() => orderColumns(columns), [columns]);
+  const folded = useMemo(() => foldedByDefault(columns), [columns]);
+  const progressOf = useMemo(() => parentProgress(columns), [columns]);
 
-  const childrenOf = useMemo(() => childrenByParent(columns), [columns]);
+  // What a person opened or folded by hand, for this project only: switching project starts over.
+  const fresh = (key: string): BoardView => ({
+    projectKey: key,
+    columns: new Map(),
+    groups: new Set(),
+  });
+  const [view, setView] = useState<BoardView>(() => fresh(projectKey));
+  const mine = view.projectKey === projectKey ? view : fresh(projectKey);
+  if (mine !== view) setView(mine);
+  const isCollapsed = (id: number) => mine.columns.get(id) ?? folded.has(id);
+  const setCollapsed = (id: number, collapsed: boolean) =>
+    setView({ ...mine, columns: new Map(mine.columns).set(id, collapsed) });
+  const setGroupOpen = (key: string, open: boolean) => {
+    const groups = new Set(mine.groups);
+    if (open) groups.add(key);
+    else groups.delete(key);
+    setView({ ...mine, groups });
+  };
 
   if (answer === undefined || answer === "loading") return <BoardSkeleton />;
   if (answer.kind === "no_server")
@@ -513,24 +609,29 @@ export function Board({
       <div data-slot="loop-columns">
         {displayColumns.map((c) => {
           const isBacklog = c.stateType === "backlog";
-          // In Backlog, keep awaiting-approval tickets pinned at the top sorted by priority,
-          // followed by ordinary Backlog tickets — marked by card badge, never wrapped in a box.
           const byPriority = (list: LoopTicket[]) =>
             [...list].sort((x, y) => priorityRank(x.priority) - priorityRank(y.priority));
-          // Done keeps the server's most-recent-first order; every open column sorts by priority (stable).
-          const ordered =
-            c.stateType === "completed"
-              ? c.tickets
-              : isBacklog
-                ? [
-                    ...byPriority(c.tickets.filter((x) => x.pending !== undefined)),
-                    ...byPriority(c.tickets.filter((x) => x.pending === undefined)),
-                  ]
+          const cards = (list: LoopTicket[]): BacklogRow[] =>
+            list.map((ticket) => ({ kind: "card", ticket }));
+          // Done and Canceled keep the server's most-recent-first order; every open column sorts by priority (stable).
+          let rows: BacklogRow[];
+          if (isBacklog) {
+            rows = backlogRows(c.tickets, columns);
+            if (filtered) rows = filterRows(rows, matches);
+          } else {
+            const ordered =
+              c.stateType === "completed" || c.stateType === "canceled"
+                ? c.tickets
                 : byPriority(c.tickets);
-          const shownTickets = filtered ? ordered.filter(matches) : ordered;
-          const colPending = isBacklog
-            ? shownTickets.filter((x) => x.pending !== undefined).length
-            : 0;
+            rows = cards(filtered ? ordered.filter(matches) : ordered);
+          }
+          const ticketCount = rows.reduce(
+            (n, r) =>
+              n +
+              (r.kind === "card" ? 1 : r.children.length + (r.head.ticket !== undefined ? 1 : 0)),
+            0,
+          );
+          const colPending = rows.filter((r) => r.kind === "card" && r.ticket.pending).length;
           return (
             <Column
               key={c.id}
@@ -538,18 +639,20 @@ export function Board({
               title={c.name}
               stateType={c.stateType}
               role={columnRoleOf(columns, c)}
-              tickets={shownTickets}
+              rows={rows}
+              ticketCount={ticketCount}
               totalCount={c.tickets.length}
               more={c.more}
               filtered={filtered}
               openIdentifier={openIdentifier}
-              {...(isBacklog
-                ? {
-                    pageSize: BACKLOG_PAGE,
-                    pendingCount: colPending,
-                  }
-                : {})}
-              childrenOf={childrenOf}
+              {...(isBacklog ? { pageSize: BACKLOG_PAGE, pendingCount: colPending } : {})}
+              progressOf={progressOf}
+              collapsed={isCollapsed(c.id)}
+              canHide={folded.has(c.id)}
+              onFold={(fold) => setCollapsed(c.id, fold)}
+              // A filter opens the groups it leaves; clearing it brings back what the person had set.
+              groupOpen={(key) => filtered || mine.groups.has(key)}
+              onToggleGroup={setGroupOpen}
               act={act}
               busyAction={busyAction}
               onOpen={openTicket}
