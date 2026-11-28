@@ -2646,7 +2646,16 @@ test("Task Graph: multi-node Plan runs a fresh Dev session per node in topologic
   expect(graph?.nodes.map((n) => [n.id, n.status, n.commitSha])).toEqual([
     ["n1", "passed", "abc"],
     ["n2", "passed", "abc"],
+    ["qa-1", "passed", "abc"],
   ]);
+  const qaNode = graph?.nodes.find((n) => n.id === "qa-1");
+  expect(qaNode?.role).toBe("qa");
+  expect(qaNode?.verdict).toBe("pass");
+  expect(qaNode?.dependsOn).toEqual(["n2"]);
+  expect(qaNode?.sessionId).not.toBeNull();
+  expect(s.sessions.titles.filter((c) => c.role === "qa")).toHaveLength(1);
+  const qaPrompt = s.sessions.prompts.find((p) => p.role === "qa")?.prompt ?? "";
+  expect(qaPrompt).toContain("do not use `cd`");
 
   // Single PR opened, body includes Task Graph section.
   const prCreateCalls = s.world.calls.filter((c) => c.startsWith("gh pr create"));
@@ -2730,8 +2739,21 @@ test("Task Graph: whole-item QA rejection appends a fix-1 node (origin: fix) and
   expect(graph?.nodes.map((n) => [n.id, n.origin, n.status, n.dependsOn])).toEqual([
     ["n1", "planned", "passed", []],
     ["n2", "planned", "passed", ["n1"]],
-    ["fix-1", "fix", "passed", ["n1", "n2"]],
+    ["qa-1", "planned", "passed", ["n2"]],
+    ["fix-1", "fix", "passed", ["n1", "n2", "qa-1"]],
+    ["qa-2", "fix", "passed", ["fix-1"]],
   ]);
+  const qaNodes = graph?.nodes.filter((n) => n.role === "qa") ?? [];
+  expect(qaNodes.map((n) => n.verdict)).toEqual(["fail", "pass"]);
+  expect(qaNodes[0]?.report).not.toBeNull();
+  expect(qaNodes.every((n) => n.commitSha === "abc")).toBe(true);
+  // Each QA node ran in a session of its own; the second was told the first one's report.
+  expect(new Set(qaNodes.map((n) => n.sessionId)).size).toBe(2);
+  expect(s.sessions.titles.filter((c) => c.role === "qa")).toHaveLength(2);
+  const qaPrompts = s.sessions.prompts.filter((p) => p.role === "qa").map((p) => p.prompt);
+  expect(qaPrompts[0]).not.toContain("An earlier independent review");
+  expect(qaPrompts[1]).toContain("An earlier independent review");
+  expect(qaPrompts[1]).toContain(qaNodes[0]?.report as string);
 
   const prBody = await readFile(join(s.cfg.stateDir, "runs", "CYC-1", "pr-body.md"), "utf8");
   expect(prBody).toContain("`fix-1`");
@@ -2771,6 +2793,7 @@ test("Task Graph: node asking a <question> blocks on that node and resumes witho
   expect(finalGraph?.nodes.map((n) => [n.id, n.status])).toEqual([
     ["n1", "passed"],
     ["n2", "passed"],
+    ["qa-1", "passed"],
   ]);
 });
 
@@ -2811,6 +2834,9 @@ test("Task Graph: crash recovery resumes directly on the active node without re-
         summary: "n1 done before crash",
         startedAt: nowIso,
         finishedAt: nowIso,
+        role: "dev",
+        verdict: null,
+        report: null,
       },
       {
         id: "n2",
@@ -2829,6 +2855,9 @@ test("Task Graph: crash recovery resumes directly on the active node without re-
         summary: null,
         startedAt: nowIso,
         finishedAt: null,
+        role: "dev",
+        verdict: null,
+        report: null,
       },
     ],
   });
@@ -2875,5 +2904,342 @@ test("Task Graph: crash recovery resumes directly on the active node without re-
   expect(finalGraph?.nodes.map((n) => [n.id, n.status, n.commitSha])).toEqual([
     ["n1", "passed", "1111aaaa"],
     ["n2", "passed", "abc"],
+    ["qa-1", "passed", "abc"],
   ]);
+});
+
+test("Task Graph: a run left in qa by an older version gets a QA node and goes on", async () => {
+  const s = await setupFullFlow([fullFlowIssue({ columnId: 23 })], fourDocs(), {
+    dev: [],
+    qa: [done(PASS)],
+    review: [done(REVIEW_MERGE)],
+  });
+  s.tracker.docContent[103] = twoNodePlan;
+  const nowIso = "2026-11-25T00:00:00Z";
+  await s.store.saveCriteria(
+    "CYC-1",
+    CriteriaBook.fromSpecs([{ text: "check", verify: [["bun", "run", "check"]] }]),
+  );
+  await s.store.saveGraph({
+    runKey: "CYC-1",
+    source: "plan_doc",
+    revision: 1,
+    currentNodeId: null,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+    nodes: [
+      {
+        id: "n1",
+        position: 0,
+        origin: "planned",
+        title: "新增表结构",
+        goal: "Schema",
+        dependsOn: [],
+        filesHint: [],
+        verify: ["bun test ./cloud/loop/test/db.test.ts"],
+        status: "passed",
+        sessionId: "old-n1",
+        commitSha: "1111aaaa",
+        rounds: 0,
+        lastError: null,
+        summary: "n1 done before crash",
+        startedAt: nowIso,
+        finishedAt: nowIso,
+        role: "dev",
+        verdict: null,
+        report: null,
+      },
+      {
+        id: "n2",
+        position: 1,
+        origin: "planned",
+        title: "接入引擎",
+        goal: "Wire engine",
+        dependsOn: ["n1"],
+        filesHint: [],
+        verify: ["bun test ./cloud/loop/test/pipeline.test.ts"],
+        status: "passed",
+        sessionId: null,
+        commitSha: "abc",
+        rounds: 0,
+        lastError: null,
+        summary: null,
+        startedAt: nowIso,
+        finishedAt: nowIso,
+        role: "dev",
+        verdict: null,
+        report: null,
+      },
+    ],
+  });
+  await s.store.save({
+    key: "CYC-1",
+    kind: "dev",
+    issueId: 1,
+    issueNumber: 1,
+    title: "Test",
+    phase: "qa",
+    round: 0,
+    worktree: WT,
+    localBranch: "worktree-auto/cyc-1",
+    remoteBranch: "auto/cyc-1",
+    devSessionId: "old-n1",
+    qaSessionId: null,
+    replacedSessions: [],
+    blockedReason: null,
+    resumeFrom: null,
+    findings: null,
+    cleanedAt: null,
+    cleanupNote: null,
+    startedAt: nowIso,
+    updatedAt: nowIso,
+    dev: {
+      ciRound: 0,
+      ciFailedSha: null,
+      nodeModulesReleased: false,
+      conflictRound: 0,
+      conflict: null,
+      resolvedFiles: [],
+      reviewSessionId: null,
+      prUrl: null,
+      fullFlowDocs: fourDocs().map((d) => ({ id: d.id, title: d.title, version: d.version })),
+      activeNodeId: null,
+    },
+  });
+
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("delivered");
+  expect(s.sessions.titles.filter((c) => c.role === "dev")).toHaveLength(0);
+  const finalGraph = await s.store.loadGraph("CYC-1");
+  expect(finalGraph?.nodes.map((n) => [n.id, n.role, n.status, n.verdict])).toEqual([
+    ["n1", "dev", "passed", null],
+    ["n2", "dev", "passed", null],
+    ["qa-1", "qa", "passed", "pass"],
+  ]);
+});
+
+test("Task Graph: QA system fault blocks the QA node and the run", async () => {
+  const s = await setupFullFlow([fullFlowIssue({ columnId: 23 })], fourDocs(), {
+    dev: [],
+    qa: [done("a"), done("b"), done("c"), done("d"), done("e")],
+    review: [done(REVIEW_MERGE)],
+  });
+  s.tracker.docContent[103] = twoNodePlan;
+  const nowIso = "2026-11-25T00:00:00Z";
+  await s.store.saveCriteria(
+    "CYC-1",
+    CriteriaBook.fromSpecs([{ text: "check", verify: [["bun", "run", "check"]] }]),
+  );
+  await s.store.saveGraph({
+    runKey: "CYC-1",
+    source: "plan_doc",
+    revision: 1,
+    currentNodeId: null,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+    nodes: [
+      {
+        id: "n1",
+        position: 0,
+        origin: "planned",
+        title: "新增表结构",
+        goal: "Schema",
+        dependsOn: [],
+        filesHint: [],
+        verify: ["bun test ./cloud/loop/test/db.test.ts"],
+        status: "passed",
+        sessionId: "old-n1",
+        commitSha: "1111aaaa",
+        rounds: 0,
+        lastError: null,
+        summary: "n1 done before crash",
+        startedAt: nowIso,
+        finishedAt: nowIso,
+        role: "dev",
+        verdict: null,
+        report: null,
+      },
+      {
+        id: "n2",
+        position: 1,
+        origin: "planned",
+        title: "接入引擎",
+        goal: "Wire engine",
+        dependsOn: ["n1"],
+        filesHint: [],
+        verify: ["bun test ./cloud/loop/test/pipeline.test.ts"],
+        status: "passed",
+        sessionId: null,
+        commitSha: "abc",
+        rounds: 0,
+        lastError: null,
+        summary: null,
+        startedAt: nowIso,
+        finishedAt: nowIso,
+        role: "dev",
+        verdict: null,
+        report: null,
+      },
+    ],
+  });
+  await s.store.save({
+    key: "CYC-1",
+    kind: "dev",
+    issueId: 1,
+    issueNumber: 1,
+    title: "Test",
+    phase: "qa",
+    round: 0,
+    worktree: WT,
+    localBranch: "worktree-auto/cyc-1",
+    remoteBranch: "auto/cyc-1",
+    devSessionId: "old-n1",
+    qaSessionId: null,
+    replacedSessions: [],
+    blockedReason: null,
+    resumeFrom: null,
+    findings: null,
+    cleanedAt: null,
+    cleanupNote: null,
+    startedAt: nowIso,
+    updatedAt: nowIso,
+    dev: {
+      ciRound: 0,
+      ciFailedSha: null,
+      nodeModulesReleased: false,
+      conflictRound: 0,
+      conflict: null,
+      resolvedFiles: [],
+      reviewSessionId: null,
+      prUrl: null,
+      fullFlowDocs: fourDocs().map((d) => ({ id: d.id, title: d.title, version: d.version })),
+      activeNodeId: null,
+    },
+  });
+
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("blocked");
+  const finalGraph = await s.store.loadGraph("CYC-1");
+  const qaNode = finalGraph?.nodes.find((n) => n.id === "qa-1");
+  expect(qaNode?.status).toBe("blocked");
+  expect(qaNode?.verdict).toBeNull();
+  expect(qaNode?.sessionId).not.toBeNull();
+});
+
+/** A run whose Dev nodes are done and whose graph already has `qa-1` in the given state. */
+const seedQaNodeRun = async (
+  s: Awaited<ReturnType<typeof setupFullFlow>>,
+  input: { phase: "graph_plan" | "verify"; qaStatus: "pending" | "running" | "blocked" },
+) => {
+  s.tracker.docContent[103] = twoNodePlan;
+  const nowIso = "2026-11-25T00:00:00Z";
+  await s.store.saveCriteria(
+    "CYC-1",
+    CriteriaBook.fromSpecs([{ text: "check", verify: [["bun", "run", "check"]] }]),
+  );
+  const dev = (id: string, position: number, dependsOn: string[]) => ({
+    id,
+    position,
+    origin: "planned" as const,
+    title: id,
+    goal: id,
+    dependsOn,
+    filesHint: [],
+    verify: ["bun run check"],
+    status: "passed" as const,
+    sessionId: `old-${id}`,
+    commitSha: "abc",
+    rounds: 0,
+    lastError: null,
+    summary: null,
+    startedAt: nowIso,
+    finishedAt: nowIso,
+    role: "dev" as const,
+    verdict: null,
+    report: null,
+  });
+  await s.store.saveGraph({
+    runKey: "CYC-1",
+    source: "plan_doc",
+    revision: 1,
+    currentNodeId: "qa-1",
+    createdAt: nowIso,
+    updatedAt: nowIso,
+    nodes: [
+      dev("n1", 0, []),
+      dev("n2", 1, ["n1"]),
+      {
+        ...dev("qa-1", 2, ["n2"]),
+        role: "qa" as const,
+        goal: "独立验收提交 abc",
+        status: input.qaStatus,
+        sessionId: null,
+        commitSha: null,
+        finishedAt: null,
+      },
+    ],
+  });
+  await s.store.save({
+    key: "CYC-1",
+    kind: "dev",
+    issueId: 1,
+    issueNumber: 1,
+    title: "Test",
+    phase: input.phase,
+    round: 0,
+    worktree: WT,
+    localBranch: "worktree-auto/cyc-1",
+    remoteBranch: "auto/cyc-1",
+    devSessionId: "old-n1",
+    qaSessionId: null,
+    replacedSessions: [],
+    blockedReason: null,
+    resumeFrom: null,
+    findings: null,
+    cleanedAt: null,
+    cleanupNote: null,
+    startedAt: nowIso,
+    updatedAt: nowIso,
+    dev: {
+      ciRound: 0,
+      ciFailedSha: null,
+      nodeModulesReleased: false,
+      conflictRound: 0,
+      conflict: null,
+      resolvedFiles: [],
+      reviewSessionId: null,
+      prUrl: null,
+      fullFlowDocs: fourDocs().map((d) => ({ id: d.id, title: d.title, version: d.version })),
+      activeNodeId: input.phase === "verify" ? "qa-1" : null,
+    },
+  });
+};
+
+test("Task Graph: a QA node retried from the graph runs as QA, never as a Dev node", async () => {
+  const s = await setupFullFlow([fullFlowIssue({ columnId: 23 })], fourDocs(), {
+    dev: [],
+    qa: [done(PASS)],
+    review: [done(REVIEW_MERGE)],
+  });
+  await seedQaNodeRun(s, { phase: "graph_plan", qaStatus: "pending" });
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("delivered");
+  expect(s.sessions.titles.filter((c) => c.role === "dev")).toHaveLength(0);
+  const qaNode = (await s.store.loadGraph("CYC-1"))?.nodes.find((n) => n.id === "qa-1");
+  expect(qaNode).toMatchObject({ status: "passed", verdict: "pass", report: null });
+});
+
+test("Task Graph: whole-item verify failing in a run with an open QA node skips it and schedules the fix", async () => {
+  const s = await setupFullFlow([fullFlowIssue({ columnId: 23 })], fourDocs(), {
+    dev: [done(), done(), done()],
+    qa: [],
+    review: [],
+  });
+  await seedQaNodeRun(s, { phase: "verify", qaStatus: "running" });
+  s.world.fail.add("bun run check");
+  await s.pipeline.step();
+  const graph = await s.store.loadGraph("CYC-1");
+  expect(graph?.nodes.find((n) => n.id === "qa-1")?.status).toBe("skipped");
+  expect(graph?.nodes.find((n) => n.id === "fix-1")).toBeDefined();
+  expect(graph?.nodes.find((n) => n.id === "fix-1")?.dependsOn).toContain("qa-1");
 });

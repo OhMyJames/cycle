@@ -2447,6 +2447,16 @@ html[data-platform="darwin"] [data-slot="loop-crumb"] {
   font-variant-numeric: tabular-nums;
 }
 
+[data-slot="loop-graph-verdict"] {
+  font-size: var(--cycle-text-meta);
+  font-weight: 500;
+  color: var(--cycle-success);
+}
+
+[data-slot="loop-graph-verdict"][data-verdict="fail"] {
+  color: var(--cycle-attention);
+}
+
 [data-slot="loop-graph-tag"] {
   display: inline-flex;
   align-items: center;

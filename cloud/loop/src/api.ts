@@ -171,11 +171,13 @@ const summaryOf = (run: RunRecord): LoopRunSummary => ({
 
 /** A graph in short: counts by status and the node the loop is at. */
 export const graphSummaryOf = (graph: TaskGraph): LoopGraphSummary => {
-  const count = (status: string) => graph.nodes.filter((n) => n.status === status).length;
+  // Progress counts Dev nodes only: a QA node that rejects is itself `passed`, and QA rounds would inflate it.
+  const devNodes = graph.nodes.filter((n) => n.role !== "qa");
+  const count = (status: string) => devNodes.filter((n) => n.status === status).length;
   const current = graph.nodes.find((n) => n.id === graph.currentNodeId);
   return {
     source: graph.source,
-    total: graph.nodes.length,
+    total: devNodes.length,
     passed: count("passed"),
     failed: count("failed"),
     blocked: count("blocked"),
@@ -1034,7 +1036,7 @@ export class LoopApiHandler {
           steps.push({
             id: `node:${node.id}`,
             label: node.title,
-            role: "dev",
+            role: node.role,
             status: node.status,
             sessionId: node.sessionId,
             startedAt: node.startedAt,
