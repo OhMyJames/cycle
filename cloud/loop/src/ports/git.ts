@@ -514,8 +514,41 @@ export const gitWorkspace = (deps: {
       ]);
     });
 
+  const fetchPrBranch: Workspace["fetchPrBranch"] = (at, branch, localName) =>
+    withRepoLock(repoRoot, async () => {
+      const bad = (output: string) => ({ code: 1, output, timedOut: false });
+      if (!/^[A-Za-z0-9._][A-Za-z0-9._/-]*$/.test(branch) || branch.includes(".."))
+        return bad(`分支名不安全：${branch}`);
+      if (!/^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/.test(localName) || localName.includes(".."))
+        return bad(`本地分支名不安全：${localName}`);
+      const local: At = { cwd: repoRoot, timeoutMs: at.timeoutMs };
+      if (delivery === undefined) {
+        return gitDeliver(local, [
+          "fetch",
+          remote,
+          `+refs/heads/${branch}:refs/heads/${localName}`,
+        ]);
+      }
+      const repoOk = checkRepoConfig();
+      if (!repoOk.ok) return bad(repoOk.error);
+      const delOk = checkDeliveryConfig();
+      if (!delOk.ok) return bad(delOk.error);
+      const dAt: At = { cwd: stateDir ?? dirname(delivery.repo.dir), timeoutMs: at.timeoutMs };
+      const stageRef = `refs/loop-pr/${localName}`;
+      const fetched = await gitDeliver(dAt, [
+        "--git-dir",
+        delivery.repo.dir,
+        "fetch",
+        "origin",
+        `+refs/heads/${branch}:${stageRef}`,
+      ]);
+      if (fetched.code !== 0 || fetched.timedOut) return fetched;
+      return git(local, ["fetch", delivery.repo.dir, `+${stageRef}:refs/heads/${localName}`]);
+    });
+
   return {
     fetchMain,
+    fetchPrBranch,
     push: async (at, branch) => {
       if (delivery === undefined)
         return gitDeliver(at, ["push", remote, `HEAD:refs/heads/${branch}`]);

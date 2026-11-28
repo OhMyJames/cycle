@@ -26,6 +26,11 @@ export interface Workspace {
   fetchMain(at: At): Promise<Out>;
   /** Pushes HEAD to `refs/heads/<branch>` on the remote. */
   push(at: At, branch: string): Promise<Out>;
+  /**
+   * Brings a same-repository branch of the remote to the local branch `localName` of the main checkout. The
+   * credentialed fetch runs only in the delivery repository; `at.cwd` is not used for it.
+   */
+  fetchPrBranch(at: At, branch: string, localName: string): Promise<Out>;
   head(at: At): Promise<{ ok: true; sha: string } | Failed>;
   /** `<base>...HEAD`: the whole diff. */
   diff(at: At, base: string): Promise<string>;
