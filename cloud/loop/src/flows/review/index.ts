@@ -218,6 +218,7 @@ export async function reviewTask(h: FlowHost, input: ReviewInput): Promise<Revie
         at(h, config.repoRoot),
         input.branch,
         `loop-pr/${pr}`,
+        headSha,
       );
       if (fetched.code !== 0 || fetched.timedOut) {
         return { kind: "unavailable", reason: `拉取 PR 分支失败：${tail(fetched.output)}` };

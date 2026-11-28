@@ -540,9 +540,9 @@ const findUrl = (text: string): string | undefined =>
     .find((line) => /^https:\/\/\S+$/.test(line.trim()))
     ?.trim();
 
-/** The forge over `gh`: isolated cwd/env and `--repo` when configured, with outbound secret redaction (CYC-478). */
 const OPEN_PR_LIMIT = 1000;
 
+/** The forge over `gh`: isolated cwd/env and `--repo` when configured, with outbound secret redaction (CYC-478). */
 export const githubForge = (deps: {
   exec: Exec;
   env: Record<string, string | undefined>;

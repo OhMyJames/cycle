@@ -29,7 +29,7 @@ export async function review(
   // The review itself is the review task's: it confirms CI for this exact HEAD with GitHub, runs the read-only
   // sessions and keeps the conclusion for the commit. This flow acts on the conclusion.
   const parsedPr = /github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/.exec(prUrl);
-  const repo = parsedPr?.[1] ?? h.d.config.repoRoot;
+  const repo = parsedPr?.[1] ?? "";
   const pr = parsedPr ? Number(parsedPr[2]) : 0;
   const reviewInput: ReviewInput = {
     repo,
@@ -77,12 +77,17 @@ export async function review(
   };
 
   const result =
-    headSha === ""
+    parsedPr === null
       ? ({
           kind: "unavailable",
-          reason: `读取 HEAD 提交失败：${tail(head.ok ? "" : head.error)}`,
+          reason: `无法从 PR 地址读出仓库和编号：${tail(prUrl)}`,
         } as const)
-      : await reviewTask(h, reviewInput);
+      : headSha === ""
+        ? ({
+            kind: "unavailable",
+            reason: `读取 HEAD 提交失败：${tail(head.ok ? "" : head.error)}`,
+          } as const)
+        : await reviewTask(h, reviewInput);
   await assertNotClosed(h, run);
 
   if (result.kind !== "concluded") {

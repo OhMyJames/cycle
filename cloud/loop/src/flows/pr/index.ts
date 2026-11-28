@@ -64,7 +64,8 @@ export class PrFlow {
   #open = new Map<number, OpenPr>();
   /**
    * "<key>@<sha>" that ended without anything left to do until a new commit (no write access, cap, a conclusion).
-   * Kept in memory only (a departure from Design's persisted state), and pruned at each poll to the heads of open
+   * Kept in memory only (a departure from Design's persisted state; signals also use `<subject>:settled:<createdAt>`
+   * dedupe keys instead of Design's `ci:<repo>@<sha>`, so each wait is woken once), and pruned at each poll to the heads of open
    * pull requests: after a restart such a pull request is looked at once more, which reads GitHub again and costs a
    * review only if its task is not done (the cap still holds, it is in `pr_reviews`).
    */
@@ -208,7 +209,9 @@ export class PrFlow {
     const perm = await read("gh api permission", () =>
       this.#d.forge.authorPermission(at, info.author),
     );
-    if (!perm.ok || !WRITE.has(perm.permission)) {
+    // A read that failed (5xx, rate limit) says nothing about the author: look again later, do not settle.
+    if (!perm.ok) return this.#retryLater(key, sha, "permission-unreadable");
+    if (!WRITE.has(perm.permission)) {
       this.#settled.add(mark);
       await store.event(key, "pr_author_no_write", {});
       return done("no-write-access");
@@ -279,8 +282,11 @@ export class PrFlow {
     if (result.kind === "unavailable") return this.#retryLater(key, sha, "unavailable");
     // The conclusion is kept, but a comment that did not get onto the pull request comes first: no merge on a
     // review nobody could read. The task is done, so the next look only retries the comment.
-    // A failure of the review system is not a review of the commit: it neither counts toward the cap nor settles it.
+    // A failure of the review system is not a review of the commit and does not settle it, but it is counted (below).
+    // Each such attempt opens sessions, so it counts toward the cap: a commit cannot be tried without end, and at
+    // the cap the next look comments once and stops until a new commit.
     if (result.conclusion.decision === "system_error") {
+      db(store).countPrReview(slug, number, sha);
       await store.event(key, "pr_review_done", { decision: "system_error" });
       return this.#retryLater(key, sha, "system-error");
     }
@@ -339,14 +345,30 @@ export class PrFlow {
         this.#d.forge.ciStatus(at, ref, sha, config.ciChecks),
       );
       const paths = await read("gh pr diff", () => this.#d.forge.changedPaths(at, ref));
+      // An input that could not be read is not a refusal: the conclusion is kept and the merge is tried again.
+      if (!head.ok || !perm.ok || !ci.ok || !paths.ok)
+        return this.#retryLater(key, sha, "gate-unreadable");
+      if (head.sha !== sha) {
+        // A newer commit: this conclusion belongs to the old one, the new one is looked at as its own.
+        this.#settled.add(`${key}@${sha}`);
+        return done("head-moved");
+      }
+      if (ci.status.state === "pending") {
+        db(store).wait(
+          key,
+          `ci:${input.repo}@${sha}`,
+          new Date(this.#d.clock.now().getTime() + config.ciPollIntervalMs).toISOString(),
+        );
+        return done("waiting-ci");
+      }
       const gate = mayMerge({
         verdict: "merge",
         reviewedSha: sha,
-        headNow: head.ok ? head.sha : "",
-        ciAtHead: ci.ok ? ci.status.state : "unreadable",
-        changedPaths: paths.ok ? paths.paths : null,
+        headNow: head.sha,
+        ciAtHead: ci.status.state,
+        changedPaths: paths.paths,
         author: {
-          permission: perm.ok ? perm.permission : "",
+          permission: perm.permission,
           crossRepository: info.crossRepository,
         },
       });

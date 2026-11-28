@@ -514,20 +514,22 @@ export const gitWorkspace = (deps: {
       ]);
     });
 
-  const fetchPrBranch: Workspace["fetchPrBranch"] = (at, branch, localName) =>
+  const fetchPrBranch: Workspace["fetchPrBranch"] = (at, branch, localName, sha) =>
     withRepoLock(repoRoot, async () => {
       const bad = (output: string) => ({ code: 1, output, timedOut: false });
-      if (!/^[A-Za-z0-9._][A-Za-z0-9._/-]*$/.test(branch) || branch.includes(".."))
-        return bad(`分支名不安全：${branch}`);
+      // The commit itself is fetched when it is known: a push after the poll cannot take it away, and the branch
+      // name (which may hold characters the allowlist does not take) is not used at all.
+      const source = sha !== undefined && /^[0-9a-f]{40}$/.test(sha) ? sha : `refs/heads/${branch}`;
+      if (
+        source !== sha &&
+        (!/^[A-Za-z0-9._][A-Za-z0-9._/-]*$/.test(branch) || branch.includes(".."))
+      )
+        return bad(`不支持的分支名（不重试）：${branch}`);
       if (!/^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/.test(localName) || localName.includes(".."))
         return bad(`本地分支名不安全：${localName}`);
       const local: At = { cwd: repoRoot, timeoutMs: at.timeoutMs };
       if (delivery === undefined) {
-        return gitDeliver(local, [
-          "fetch",
-          remote,
-          `+refs/heads/${branch}:refs/loop-pr/${localName}`,
-        ]);
+        return gitDeliver(local, ["fetch", remote, `+${source}:refs/loop-pr/${localName}`]);
       }
       const repoOk = checkRepoConfig();
       if (!repoOk.ok) return bad(repoOk.error);
@@ -540,7 +542,7 @@ export const gitWorkspace = (deps: {
         delivery.repo.dir,
         "fetch",
         "origin",
-        `+refs/heads/${branch}:${stageRef}`,
+        `+${source}:${stageRef}`,
       ]);
       if (fetched.code !== 0 || fetched.timedOut) return fetched;
       // Into a ref under refs/loop-pr, never a branch: a branch checked out in an old worktree cannot be fetched into.
