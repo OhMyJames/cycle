@@ -283,3 +283,35 @@ test("appendQaNode follows the last Dev node, and QA nodes do not count toward t
   // Appending a QA node never fails on the cap.
   expect(() => appendQaNode(capped, { commitSha: "abc", verify: [], nowIso: NOW })).not.toThrow();
 });
+
+test("Plan nodes may declare role research with empty verify; design and qa are rejected", () => {
+  const ok = validateGraphSpecs([
+    { id: "r", title: "R", goal: "g", role: "research" },
+    { id: "d", title: "D", goal: "g", dependsOn: ["r"], verify: ["bun run check"] },
+  ]);
+  expect(ok.ok).toBe(true);
+  const graph = buildGraph("k", "plan_doc", ok.ok ? ok.specs : [], NOW);
+  expect(graph.nodes.map((n) => n.role)).toEqual(["research", "dev"]);
+  for (const role of ["design", "qa"]) {
+    const bad = validateGraphSpecs([{ id: "x", title: "X", goal: "g", role, verify: [] }]);
+    expect(bad.ok).toBe(false);
+  }
+  expect(validateGraphSpecs([{ id: "x", title: "X", goal: "g" }]).ok).toBe(false);
+});
+
+test("appendFixNode takes a role; QA follows the last non-QA node", () => {
+  const specs = validateGraphSpecs([{ id: "r", title: "R", goal: "g", role: "research" }]);
+  const graph = buildGraph("k", "plan_doc", specs.ok ? specs.specs : [], NOW);
+  const fix = appendFixNode(graph, {
+    title: "t",
+    goal: "g",
+    verify: ["bun run check"],
+    nowIso: NOW,
+    role: "research",
+  });
+  expect(fix.ok && fix.node.role).toBe("research");
+  expect(fix.ok && fix.node.verify).toEqual([]);
+  if (!fix.ok) return;
+  const qa = appendQaNode(fix.graph, { commitSha: "abcdef0123456789", verify: [], nowIso: NOW });
+  expect(qa.node.dependsOn).toEqual(["fix-1"]);
+});

@@ -11,7 +11,7 @@ import { ALLOWED_COMMANDS, findSection } from "./preflight.ts";
 
 /** Maximum planned nodes allowed in one Level-1 work item's Task Graph. */
 export const MAX_PLANNED_NODES = 8;
-/** Maximum Dev nodes (planned + automatically appended `fix-*`); QA nodes do not count. */
+/** Maximum non-QA nodes (planned + automatically appended `fix-*`); QA nodes do not count. */
 export const MAX_TOTAL_NODES = 12;
 
 export const NODE_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,31}$/;
@@ -53,7 +53,9 @@ export const TaskNodeSpecSchema = z.object({
   goal: z.string().trim().min(1),
   dependsOn: z.array(z.string().trim().min(1)).default([]),
   filesHint: z.array(z.string().trim().min(1)).default([]),
-  verify: z.array(z.string().trim().min(1)).min(1),
+  /** Plan nodes may only declare `research` (validated later for a clear message); absent means a Dev node. */
+  role: TaskNodeRoleSchema.optional(),
+  verify: z.array(z.string().trim().min(1)).default([]),
 });
 export type TaskNodeSpec = z.infer<typeof TaskNodeSpecSchema>;
 
@@ -163,6 +165,15 @@ export const validateGraphSpecs = (
       reasons.push(
         `Task Graph node "${spec.id}" cannot start with "qa-"; that prefix is reserved for automatic QA nodes.`,
       );
+    }
+    if (spec.role === "design" || spec.role === "qa") {
+      reasons.push(
+        spec.role === "qa"
+          ? `Task Graph node "${spec.id}" 不能写 role "qa":QA 节点由 Loop 追加。`
+          : `Task Graph node "${spec.id}" 不能写 role "design":功能图里只允许调研节点(role "research")。`,
+      );
+    } else if (spec.role !== "research" && spec.verify.length === 0) {
+      reasons.push(`Task Graph node "${spec.id}" needs at least one verify command.`);
     }
     if (seen.has(spec.id)) {
       reasons.push(`Duplicate Task Graph node id "${spec.id}".`);
@@ -309,6 +320,7 @@ export const buildGraph = (
       id: spec.id,
       position,
       origin: "planned",
+      role: spec.role ?? "dev",
       title: spec.title,
       goal: spec.goal,
       dependsOn: spec.dependsOn,
@@ -384,17 +396,21 @@ export const appendFixNode = (
     verify: string[];
     nowIso: string;
     maxTotalNodes?: number;
+    /** Role of the fix node; defaults to `dev`. Read-only roles carry no verify commands. */
+    role?: TaskNodeRole;
   },
 ): { ok: true; graph: TaskGraph; node: TaskNode } | { ok: false; reason: string } => {
   const cap = input.maxTotalNodes ?? MAX_TOTAL_NODES;
-  if (graph.nodes.filter((n) => n.role === "dev").length >= cap) {
+  if (graph.nodes.filter((n) => n.role !== "qa").length >= cap) {
     return {
       ok: false,
       reason: `Task Graph 已达最大节点数上限（${cap} 个），不再自动追加修补节点。`,
     };
   }
   const verify = input.verify.filter((cmd) => parseVerify(cmd) !== undefined);
-  const safeVerify = verify.length > 0 ? [...new Set(verify)] : ["bun run check"];
+  const role = input.role ?? "dev";
+  const readOnly = role === "research" || role === "design";
+  const safeVerify = readOnly ? [] : verify.length > 0 ? [...new Set(verify)] : ["bun run check"];
 
   let nextNum = 1;
   for (const existing of graph.nodes) {
@@ -420,7 +436,7 @@ export const appendFixNode = (
     summary: null,
     startedAt: null,
     finishedAt: null,
-    role: "dev",
+    role,
     verdict: null,
     report: null,
   };
@@ -434,7 +450,7 @@ export const appendFixNode = (
 };
 
 /**
- * Appends a `qa-<n>` node (role: "qa") after the last Dev node, once whole-item verify has passed. Its origin follows
+ * Appends a `qa-<n>` node (role: "qa") after the last non-QA node, once whole-item verify has passed. Its origin follows
  * that Dev node (`planned` or `fix`). QA nodes do not count toward the node cap.
  */
 export const appendQaNode = (
@@ -442,10 +458,10 @@ export const appendQaNode = (
   input: { commitSha: string; verify: string[]; nowIso: string },
 ): { graph: TaskGraph; node: TaskNode } => {
   const lastDev = [...graph.nodes]
-    .filter((n) => n.role === "dev")
+    .filter((n) => n.role !== "qa")
     .sort((a, b) => a.position - b.position)
     .at(-1);
-  if (lastDev === undefined) throw new Error(`no Dev node in ${graph.runKey} to follow with QA`);
+  if (lastDev === undefined) throw new Error(`no non-QA node in ${graph.runKey} to follow with QA`);
   const verify = input.verify.filter((cmd) => parseVerify(cmd) !== undefined);
   const safeVerify = verify.length > 0 ? [...new Set(verify)] : ["bun run check"];
   let nextNum = 1;
