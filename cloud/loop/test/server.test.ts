@@ -591,6 +591,18 @@ describe("loop/tickets/act", () => {
     expect(tracker.writes).toEqual([]);
     expect(store.actions().length).toBe(before);
   });
+
+  test("an operator cannot approve: refused, nothing is written", async () => {
+    tracker.seed(61, 1, [72]);
+    tracker.writes.length = 0;
+    const before = store.actions().length;
+    const reply = await act({ keys: ["CYC-61"], actorKind: "operator", actor: "ops" });
+    expect(reply.error).toMatchObject({ code: -32602, data: { reason: "desktop_only" } });
+    expect(tracker.writes).toEqual([]);
+    expect(store.actions().length).toBe(before);
+    const ok = await act({ keys: ["CYC-61"] });
+    expect(ok.error).toBeUndefined();
+  });
 });
 
 describe("loop/ticket/get and the move verbs", () => {
