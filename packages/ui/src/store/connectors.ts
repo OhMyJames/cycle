@@ -6,13 +6,9 @@ import type {
   ConnectorInfo,
   ConnectorProblem,
 } from "../api.ts";
-import { messageOf, type StoreKit } from "./core.ts";
+import { answered, messageOf, type StoreKit } from "./core.ts";
 
 type Problem = { problem: ConnectorProblem; message?: string };
-
-/** What main threw (it lost its connection, it is too old) as an answer the panel shows like the others. */
-const answered = <T>(answer: Promise<T>): Promise<T | Problem> =>
-  answer.catch((error: unknown) => ({ problem: "failed" as const, message: messageOf(error) }));
 
 export class ConnectorsSlice {
   readonly #kit: StoreKit;

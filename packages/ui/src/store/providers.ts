@@ -7,13 +7,9 @@ import type {
   ProviderProblem,
   ProvidersRead,
 } from "../api.ts";
-import { messageOf, type StoreKit } from "./core.ts";
+import { answered, messageOf, type StoreKit } from "./core.ts";
 
 type Problem = { problem: ProviderProblem; message?: string };
-
-/** What main threw (it lost its connection, it is too old) as an answer the page shows like the others. */
-const answered = <T>(answer: Promise<T>): Promise<T | Problem> =>
-  answer.catch((error: unknown) => ({ problem: "failed" as const, message: messageOf(error) }));
 
 export class ProvidersSlice {
   readonly #kit: StoreKit;
