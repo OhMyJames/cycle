@@ -1979,6 +1979,7 @@ const toolsAt400 = async (modelTitle: string) => {
 
 const expectToolsFit = ({ box, tools }: { box: HTMLElement; tools: HTMLElement }) => {
   const edge = box.getBoundingClientRect();
+  // The bar hangs out of the box by a chip's clear border and padding (composer.css), so the words' own edge is the box's.
   const controls = [
     ...tools.querySelectorAll<HTMLElement>(
       '[data-kind="setting-chip"], [data-kind="context-meter"]',
@@ -1989,15 +1990,16 @@ const expectToolsFit = ({ box, tools }: { box: HTMLElement; tools: HTMLElement }
   expect(new Set(tops).size).toBe(1);
   for (const c of controls) {
     const r = c.getBoundingClientRect();
-    expect(r.left).toBeGreaterThanOrEqual(edge.left - 8);
-    expect(r.right).toBeLessThanOrEqual(edge.right + 8);
-    // Not cropped: the words are all there, but a model's name too long for the line, which ends in an ellipsis and
+    expect(r.left).toBeGreaterThanOrEqual(edge.left - 7.5);
+    expect(r.right).toBeLessThanOrEqual(edge.right + 7.5);
+    // Not cropped: the words are all there, but a model's name too long for the line, which fades at its end and
     // keeps enough to read.
     const words = c.querySelector<HTMLElement>('[data-slot="setting-value"]');
     if (words && c.getAttribute("data-setting") !== "model")
       expect(words.scrollWidth).toBeLessThanOrEqual(words.clientWidth);
     if (words && c.getAttribute("data-setting") === "model")
-      expect(words.clientWidth).toBeGreaterThanOrEqual(Math.min(words.scrollWidth, 40));
+      if (words.scrollWidth > words.clientWidth)
+        expect(words.clientWidth).toBeGreaterThanOrEqual(48);
   }
   // No chip is squeezed on top of the next.
   const rects = controls.map((c) => c.getBoundingClientRect()).sort((a, b) => a.left - b.left);

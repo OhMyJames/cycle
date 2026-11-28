@@ -391,7 +391,7 @@
 }
 
 /* In a narrow conversation (720x480 leaves it 400px) the bar stays one line: the permission, effort and ring keep their
-   words, and only the model's name, the longest, gives way, with an ellipsis. */
+   words, and only the model's name, the longest, gives way, and its end fades (layout.css), never an ellipsis; the chip's title has the full name. */
 [data-slot="composer-tools-start"],
 [data-kind="context-meter"],
 [data-slot="menu-trigger"][data-variant="ghost"][data-kind="setting-chip"]:not(
