@@ -134,6 +134,19 @@ Finish what is left, run \`bun run check\`, commit (do not push), and report.
 
 ${PROGRESS_RULE}`;
 
+/** Longest research report a Dev node's prompt (or whole-item QA's) carries; longer ones are cut and say where the rest is. */
+export const MAX_NODE_REPORT = 12_000;
+
+/** A research node's full report for a prompt, cut to `MAX_NODE_REPORT` with a note of where the whole report is. */
+export const nodeReportBlock = (n: TaskNode): string => {
+  const report = n.report ?? "";
+  const body =
+    report.length > MAX_NODE_REPORT
+      ? `${report.slice(0, MAX_NODE_REPORT)}\n\n(报告已截断，全文见执行图节点 ${n.id})`
+      : report;
+  return `Research report of node \`${n.id}\` (${n.title}):\n<<<\n${body}\n>>>`;
+};
+
 const nodeSection = (graph: TaskGraph, node: TaskNode, gitLog: string): string => {
   const upstream = node.dependsOn
     .map((depId) => graph.nodes.find((n) => n.id === depId))
@@ -142,10 +155,14 @@ const nodeSection = (graph: TaskGraph, node: TaskNode, gitLog: string): string =
       (n) =>
         `- \`${n.id}\` (${n.title}): commit ${n.commitSha ? `\`${n.commitSha.slice(0, 8)}\`` : "none"}${n.summary ? ` — ${n.summary.replace(/\n/g, " ").slice(0, 240)}` : ""}`,
     );
+  const reports = node.dependsOn
+    .map((depId) => graph.nodes.find((n) => n.id === depId))
+    .filter((n): n is TaskNode => n !== undefined && n.role === "research" && n.report !== null)
+    .map(nodeReportBlock);
   return `Task Graph (${graph.nodes.filter((n) => n.status === "passed" || n.status === "skipped").length}/${graph.nodes.length} completed):
 ${formatGraphTable(graph)}
 
-${upstream.length > 0 ? `Upstream dependencies already committed on this branch:\n${upstream.join("\n")}\n\n` : ""}Commits already on this branch:
+${upstream.length > 0 ? `Upstream dependencies already committed on this branch:\n${upstream.join("\n")}\n\n` : ""}${reports.length > 0 ? `Research done for this node (use its findings; it was read-only and changed no code):\n${reports.join("\n\n")}\n\n` : ""}Commits already on this branch:
 ${gitLog.trim() === "" ? "(none)" : gitLog.trim()}
 
 Your assigned Level-2 Task Node — \`${node.id}\` (${node.origin}): ${node.title}

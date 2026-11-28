@@ -2759,6 +2759,126 @@ test("Task Graph: whole-item QA rejection appends a fix-1 node (origin: fix) and
   expect(prBody).toContain("`fix-1`");
 });
 
+const researchPlan = () => `# Plan
+
+## 执行图
+
+\`\`\`json
+{
+  "nodes": [
+    {
+      "id": "r1",
+      "role": "research",
+      "title": "查现有节点循环",
+      "goal": "弄清 devFlow 现在怎样驱动节点循环",
+      "dependsOn": [],
+      "filesHint": ["cloud/loop/src/flows/dev/"]
+    },
+    {
+      "id": "n1",
+      "title": "接入引擎",
+      "goal": "按调研结论改 devFlow",
+      "dependsOn": ["r1"],
+      "verify": ["bun test ./cloud/loop/test/pipeline.test.ts"]
+    }
+  ]
+}
+\`\`\`
+`;
+
+const researchReply = (report = "## 问题 1\n节点循环在 graph.ts，依据 `rg nodeDev`。") =>
+  `<summary>循环在 graph.ts。</summary>\n<report>\n${report}\n</report>\n<followup type="Bug" title="x">ignored</followup>`;
+
+test("Task Graph: a research node runs read-only, keeps its report, and the Dev node after it is given it", async () => {
+  const s = await setupFullFlow([fullFlowIssue()], fourDocs(), {
+    dev: [done("<progress>done: n1\nnext: qa</progress>")],
+    research: [done(researchReply())],
+    qa: [done(PASS)],
+    review: [done(REVIEW_MERGE)],
+  });
+  s.tracker.docContent[103] = researchPlan();
+
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("delivered");
+
+  const graph = await s.store.loadGraph("CYC-1");
+  const r1 = graph?.nodes.find((n) => n.id === "r1");
+  expect(r1?.status).toBe("passed");
+  expect(r1?.role).toBe("research");
+  expect(r1?.commitSha).toBeNull();
+  expect(r1?.summary).toBe("循环在 graph.ts。");
+  expect(r1?.report).toContain("节点循环在 graph.ts");
+  expect(graph?.nodes.map((n) => n.id)).toEqual(["r1", "n1", "qa-1"]);
+  // The follow-up draft is ignored; nothing is created in the tracker for it.
+  expect(s.tracker.written).toEqual([]);
+
+  const research = s.sessions.prompts.filter((p) => p.role === "research");
+  expect(research).toHaveLength(1);
+  expect(research[0]?.prompt).toContain("READ-ONLY");
+  expect(research[0]?.prompt).toContain("弄清 devFlow 现在怎样驱动节点循环");
+  // No checkpoint commit for the read-only node.
+  expect(s.world.calls.filter((c) => c.includes("r1]"))).toEqual([]);
+
+  const devPrompt = s.sessions.prompts.find((p) => p.role === "dev")?.prompt ?? "";
+  expect(devPrompt).toContain("Research report of node `r1`");
+  expect(devPrompt).toContain("节点循环在 graph.ts");
+  // Whole-item QA is given the report too, and there is no QA node after the research node.
+  const qaPrompt = s.sessions.prompts.find((p) => p.role === "qa")?.prompt ?? "";
+  expect(qaPrompt).toContain("节点循环在 graph.ts");
+});
+
+test("Task Graph: a research node's long report is cut in the Dev prompt and says where the rest is", async () => {
+  const s = await setupFullFlow([fullFlowIssue()], fourDocs(), {
+    dev: [done("<progress>done: n1\nnext: qa</progress>")],
+    research: [done(researchReply(`## 问题 1\n${"长".repeat(13_000)}`))],
+    qa: [done(PASS)],
+    review: [done(REVIEW_MERGE)],
+  });
+  s.tracker.docContent[103] = researchPlan();
+  expect((await s.pipeline.step()).status).toBe("delivered");
+  const devPrompt = s.sessions.prompts.find((p) => p.role === "dev")?.prompt ?? "";
+  expect(devPrompt).toContain("报告已截断，全文见执行图节点 r1");
+  expect(devPrompt).not.toContain("长".repeat(12_100));
+  const graph = await s.store.loadGraph("CYC-1");
+  expect(graph?.nodes[0]?.report).toContain("长".repeat(13_000));
+});
+
+test("Task Graph: a research reply missing the report is sent back in the same session", async () => {
+  const s = await setupFullFlow([fullFlowIssue()], fourDocs(), {
+    dev: [done("<progress>done: n1\nnext: qa</progress>")],
+    research: [done("<summary>只有摘要</summary>"), done(researchReply())],
+    qa: [done(PASS)],
+    review: [done(REVIEW_MERGE)],
+  });
+  s.tracker.docContent[103] = researchPlan();
+  expect((await s.pipeline.step()).status).toBe("delivered");
+  const research = s.sessions.prompts.filter((p) => p.role === "research");
+  expect(research).toHaveLength(2);
+  expect(research[1]?.sessionId).toBe(research[0]?.sessionId);
+  expect(research[1]?.prompt).toContain("There is no <report>");
+  const graph = await s.store.loadGraph("CYC-1");
+  expect(graph?.nodes[0]?.rounds).toBe(1);
+});
+
+test("Task Graph: a research node that changes the worktree blocks the run", async () => {
+  const s = await setupFullFlow([fullFlowIssue()], fourDocs(), {
+    dev: [],
+    research: [done(researchReply())],
+    qa: [],
+  });
+  s.tracker.docContent[103] = researchPlan();
+  const original = s.sessions.turn.bind(s.sessions);
+  s.sessions.turn = async (id, prompt, ctx) => {
+    const out = await original(id, prompt, ctx);
+    if (ctx.role === "research") s.world.dirty = true;
+    return out;
+  };
+  const result = await s.pipeline.step();
+  expect(result.status).toBe("blocked");
+  if (result.status === "blocked") expect(result.reason).toContain("修改了工作区");
+  expect(s.sessions.prompts.filter((p) => p.role === "dev")).toEqual([]);
+});
+
 test("Task Graph: node asking a <question> blocks on that node and resumes without re-running passed nodes", async () => {
   const s = await setupFullFlow([fullFlowIssue()], fourDocs(), {
     dev: [

@@ -4,7 +4,15 @@ import type { Criterion } from "../criteria.ts";
 import { formatGraphTable, type TaskGraph } from "../graph.ts";
 import type { Issue } from "../types.ts";
 import { criteriaTable, diffBlock, docBlock, MAX_DIFF } from "./common.ts";
-import type { FullFlowTexts } from "./dev.ts";
+import { type FullFlowTexts, nodeReportBlock } from "./dev.ts";
+
+/** The reports of the graph's research nodes: what the Dev nodes were told, so QA can judge the change by it. */
+const researchReports = (graph: TaskGraph | undefined): string => {
+  const nodes = (graph?.nodes ?? []).filter((n) => n.role === "research" && n.report !== null);
+  return nodes.length === 0
+    ? ""
+    : `\nThe graph's read-only research nodes reported the following; the Dev nodes were told it:\n${nodes.map(nodeReportBlock).join("\n\n")}\n\n`;
+};
 
 export const qaBrief = (
   issue: Issue,
@@ -34,7 +42,7 @@ ${
     ? ""
     : `\nExecution Task Graph (executed sequentially on this branch; verify that all nodes fit together with no integration gaps):\n${formatGraphTable(graph, { includeCommits: true })}\n`
 }
-${
+${researchReports(graph)}${
   previousReport === undefined
     ? ""
     : `An earlier independent review of this work item reported the following. Confirm for yourself whether each problem is now solved, and report any that is not:\n---\n${previousReport}\n---\n\n`
