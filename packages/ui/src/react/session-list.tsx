@@ -5,7 +5,7 @@ import { type RefObject, type SyntheticEvent, useRef, useState } from "react";
 import type { SessionSummary } from "../api.ts";
 import { markOf, type SessionGroup, type SessionList, sessionKey } from "../sessions.ts";
 import { useI18n } from "./i18n.tsx";
-import { MoreIcon, PinIcon, UnpinIcon } from "./icons.tsx";
+import { DraftIcon, MoreIcon, PinIcon, UnpinIcon } from "./icons.tsx";
 import { RenameField, RenameProblem, useRename } from "./rename-field.tsx";
 import { SessionAgent } from "./session-agent.tsx";
 import { COPY_VALUES, SessionCopyMenu } from "./session-copy-menu.tsx";
@@ -13,6 +13,7 @@ import { SessionTime } from "./session-time.tsx";
 import { MARK_STYLE, MARK_WORD, StatusDot } from "./status.tsx";
 import { useAppStore } from "./store-context.tsx";
 import { Tip } from "./tip.tsx";
+import { useHasDraft } from "./use-has-draft.ts";
 
 /** The last part of a path, for a session that has no title yet. */
 const place = (cwd: string): string => cwd.split("/").filter(Boolean).at(-1) ?? cwd;
@@ -145,6 +146,8 @@ function Row({
   // One thing a row says. A session of a location that is away is the last list read: it says nothing.
   const mark = away !== undefined ? undefined : markOf(session);
   const style = mark !== undefined ? MARK_STYLE[mark] : undefined;
+  // Unsent text, kept per session. Like the mark, an away row says nothing of it.
+  const hasDraft = useHasDraft(sessionKey(session)) && away === undefined;
   return (
     <ListboxItem
       ref={rowRef}
@@ -169,6 +172,7 @@ function Row({
         <SessionAgent session={session} quiet={away !== undefined} />
       </span>
       {mark !== undefined ? <span data-slot="visually-hidden">{t(MARK_WORD[mark])}. </span> : null}
+      {hasDraft ? <span data-slot="visually-hidden">{t("session.hasDraft")}. </span> : null}
       {editing ? (
         <RenameField
           initial={title}
@@ -181,6 +185,12 @@ function Row({
       ) : (
         <>
           <span data-slot="session-title">{shown}</span>
+          {/* Beside the time or the mark, replacing neither; the row's name carries its words. */}
+          {hasDraft ? (
+            <span data-slot="session-draft">
+              <DraftIcon size={12} />
+            </span>
+          ) : null}
           {/* A mark says more than the time does: it takes the time's place at the row's end. */}
           {style !== undefined ? (
             <span data-slot="session-dot">

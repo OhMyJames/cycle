@@ -472,3 +472,10 @@ export const ExpandIcon = ({ size = 16, ...rest }: IconProps) => (
     </g>
   </Svg>
 );
+
+/** Pencil: something written and not yet sent. */
+export const DraftIcon = ({ size = 16, ...rest }: IconProps) => (
+  <Svg size={size} {...rest}>
+    <path d="M10.5 2.5l3 3-7.5 7.5H3v-3z" />
+  </Svg>
+);

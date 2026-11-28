@@ -272,6 +272,7 @@
    The lead holds the agent's logo; every row keeps its 16px, logo or not, so titles start on one line with the
    actions' labels. A mark (needs you, running, unread) stands where the time would, at the row's end. */
 [data-slot="session-lead"],
+[data-slot="session-draft"],
 [data-slot="session-dot"] {
   flex: none;
   display: grid;
@@ -286,6 +287,17 @@
 [data-slot="session-dot"] {
   margin-left: auto;
   min-width: 1rem;
+}
+
+/* An unsent draft: a small quiet pencil before the time or the mark. It is a line icon in the muted colour, so it
+   reads in light and dark and does not compete with the mark's dot. It never shrinks, the title gives way. */
+[data-slot="session-draft"] {
+  margin-left: auto;
+  color: var(--ui-muted-foreground);
+}
+
+[data-slot="session-draft"] + :is([data-slot="session-time"], [data-slot="session-dot"]) {
+  margin-left: 0.375rem;
 }
 
 [data-slot="session-title"] {
@@ -392,7 +404,7 @@
 /* The mark gives way to them as the time does; the row's name still says it (its hidden word). */
 [data-slot="sidebar"]
   [role="option"]:is(:hover, :has([aria-expanded="true"]))
-  [data-slot="session-dot"] {
+  :is([data-slot="session-dot"], [data-slot="session-draft"]) {
   display: none;
 }
 
