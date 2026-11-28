@@ -37,8 +37,11 @@ describe("select", () => {
     ".github/workflows/ci.yml",
     "scripts/check.ts",
     "scripts/check-extra.ts",
+    "scripts/integration-suites.ts",
     "scripts/boundaries.ts",
+    "scripts/boundaries.test.ts",
     "scripts/workspaces.ts",
+    "scripts/workspaces.test.ts",
     "scripts/module-graph.ts",
     "scripts/module-graph.test.ts",
   ])("%s selects everything", (file) => {

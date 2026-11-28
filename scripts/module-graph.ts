@@ -14,6 +14,8 @@ export async function moduleGraph(directory: string) {
   }
   const ts = new Bun.Transpiler({ loader: "ts" });
   const tsx = new Bun.Transpiler({ loader: "tsx" });
+  // Iterating a Map also visits entries added below. Shared source outside a workspace
+  // src directory belongs in the graph when a production entry actually imports it.
   for (const [file, edges] of graph) {
     const source = (await Bun.file(join(root, file)).text()).replace(/^#![^\n]*/, "");
     const parser = file.endsWith(".tsx") ? tsx : ts;
@@ -24,7 +26,14 @@ export async function moduleGraph(directory: string) {
         .join("/");
       if (!path.startsWith(".") && !packages.has(name)) continue;
       const target = relative(root, Bun.resolveSync(path, join(root, dirname(file))));
-      if (graph.has(target) && !edges.includes(target)) edges.push(target);
+      if (
+        target.startsWith("../") ||
+        target.split("/").includes("node_modules") ||
+        !/\.tsx?$/.test(target)
+      )
+        continue;
+      if (!graph.has(target)) graph.set(target, []);
+      if (!edges.includes(target)) edges.push(target);
     }
   }
   return graph;

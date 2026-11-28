@@ -10,7 +10,7 @@ test("workspace discovery follows the root manifest, including overlapping patte
     await Bun.write(
       join(root, "package.json"),
       JSON.stringify({
-        workspaces: { packages: ["extensions/*", "extensions/active"] },
+        workspaces: { packages: ["extensions/*", "./extensions/active"] },
       }),
     );
     for (const dir of ["extensions/active", "packages/unlisted"]) {

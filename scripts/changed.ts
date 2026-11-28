@@ -16,9 +16,7 @@ const FULL = [
   /^bunfig\.toml$/,
   /^\.github\//,
   /^scripts\/check/,
-  /^scripts\/boundaries\.ts$/,
-  /^scripts\/workspaces\.ts$/,
-  /^scripts\/module-graph(?:\.test)?\.ts$/,
+  /^scripts\/(?:boundaries|workspaces|module-graph|integration-suites)(?:\.test)?\.ts$/,
 ];
 
 export type Selection = { full: true } | { full: false; dirs: string[] };

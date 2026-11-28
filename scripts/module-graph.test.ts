@@ -46,10 +46,25 @@ test("resolves workspace exports and literal lazy imports, omitting type-only ed
       'import type { Item } from "./types"; export const value = () => import("./lazy.tsx");',
     );
     await Bun.write(join(root, "modules/lib/src/types.ts"), "export type Item = string;");
-    await Bun.write(join(root, "modules/lib/src/lazy.tsx"), "export const node = <p>Hello</p>;");
+    // A checked-in helper outside src can close a cycle back into a production entry.
+    await Bun.write(
+      join(root, "modules/lib/src/lazy.tsx"),
+      'import "../../../shared/helper.ts"; export const node = <p>Hello</p>;',
+    );
+    await Bun.write(join(root, "shared/helper.ts"), 'import "../modules/app/src/index.ts";');
+    await Bun.write(join(root, "shared/unused.ts"), "export const ignored = 1;");
     const graph = await moduleGraph(root);
     expect(graph.get("modules/app/src/index.ts")).toEqual(["modules/lib/src/index.ts"]);
     expect(graph.get("modules/lib/src/index.ts")).toEqual(["modules/lib/src/lazy.tsx"]);
+    expect(graph.get("shared/helper.ts")).toEqual(["modules/app/src/index.ts"]);
+    expect(graph.has("shared/unused.ts")).toBe(false);
+    expect(firstCycle(graph)).toEqual([
+      "modules/app/src/index.ts",
+      "modules/lib/src/index.ts",
+      "modules/lib/src/lazy.tsx",
+      "shared/helper.ts",
+      "modules/app/src/index.ts",
+    ]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
