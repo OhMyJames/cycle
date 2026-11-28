@@ -184,10 +184,14 @@ export function Composer({
   const root = useRef<HTMLDivElement>(null);
   const fieldRef = useRef<HTMLDivElement>(null);
   const input = useRef<InputHandle | null>(null);
+  const sessionTarget = useMemo(
+    () => (!blank && sessionId !== undefined ? { locationId, sessionId } : undefined),
+    [blank, locationId, sessionId],
+  );
   // Something put a message back to be sent again (a failed turn's "Edit message"): the box takes the focus, to read it.
   const focusAsked = useAppState((s) => s.composerFocus);
   useEffect(() => {
-    if (focusAsked > 0) input.current?.focus();
+    if (focusAsked > 0 && root.current?.closest("[inert]") === null) input.current?.focus();
   }, [focusAsked]);
   // What is being named after a slash or an @, and which of the matches is under the arrows. Escape closes the menu until
   // what was typed changes.
@@ -213,7 +217,7 @@ export function Composer({
     }
     let current = true;
     const timer = setTimeout(() => {
-      void store.searchFiles(query).then((result) => {
+      void store.searchFiles(query, sessionTarget).then((result) => {
         if (current) setFound({ query, result });
       });
     }, MENTION_DELAY);
@@ -221,7 +225,7 @@ export function Composer({
       current = false;
       clearTimeout(timer);
     };
-  }, [typed.mention, canFind, store]);
+  }, [typed.mention, canFind, store, sessionTarget]);
   const commandRows: PickerRow[] =
     typed.slash === undefined
       ? []
@@ -544,11 +548,15 @@ export function Composer({
     recalled.current = NOT_RECALLING;
     setProblem(undefined);
     onSent?.();
-    await store.send(steer ? { steer: true, via } : { via });
+    await store.send({
+      ...(steer ? { steer: true } : {}),
+      via,
+      ...(sessionTarget !== undefined ? { target: sessionTarget } : {}),
+    });
   };
 
   const edit = async (queueId: string) => {
-    if ((await store.dequeue(queueId)) !== undefined) {
+    if ((await store.dequeue(queueId, sessionTarget)) !== undefined) {
       input.current?.focus();
     }
   };
@@ -945,7 +953,7 @@ export function Composer({
                 data-kind="round"
                 data-action="stop"
                 disabled={!connected}
-                onClick={() => void store.cancel()}
+                onClick={() => void store.cancel(sessionTarget)}
               >
                 <StopIcon size={10} />
               </Button>

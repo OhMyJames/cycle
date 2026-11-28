@@ -23,6 +23,7 @@ import { ErrorCircleIcon, WarningIcon } from "./icons.tsx";
 import { Elapsed, InlineAiStatus } from "./inline-ai-status.tsx";
 import { useLoaderClaim } from "./loader-claim.ts";
 import { BACKGROUND_KIND, backgroundOf } from "./overview.tsx";
+import { useSessionScope } from "./session-scope.tsx";
 import { useStartScope } from "./start-scope.ts";
 import { MARK_STYLE, StatusDot } from "./status.tsx";
 import { useSteady } from "./steady.ts";
@@ -204,8 +205,15 @@ export function EndBlock({ stop, resend }: { stop: StopReason; resend?: Resend |
 function TurnAgain({ resend }: { resend: Resend }) {
   const { t, list } = useI18n();
   const store = useAppStore();
+  const sessionScope = useSessionScope();
+  const target =
+    sessionScope.locationId !== undefined && sessionScope.sessionId !== undefined
+      ? { locationId: sessionScope.locationId, sessionId: sessionScope.sessionId }
+      : undefined;
   const connected = useAppState(
-    (s) => s.selectedLocation !== undefined && s.status[s.selectedLocation]?.state === "connected",
+    (s) =>
+      sessionScope.locationId !== undefined &&
+      s.status[sessionScope.locationId]?.state === "connected",
   );
   const [asking, setAsking] = useState<"retry" | "edit" | undefined>();
   const [sending, setSending] = useState(false);
@@ -224,7 +232,7 @@ function TurnAgain({ resend }: { resend: Resend }) {
     // then would send the message twice. It goes away when the turn it ends is no longer the last.
     let sent = false;
     try {
-      sent = await store.retry(resend);
+      sent = await store.retry(resend, target);
     } finally {
       if (!sent) setSending(false);
     }
@@ -236,7 +244,7 @@ function TurnAgain({ resend }: { resend: Resend }) {
           type="button"
           data-variant="ghost"
           data-size="sm"
-          onClick={() => (changed ? setAsking("edit") : store.resend(resend))}
+          onClick={() => (changed ? setAsking("edit") : store.resend(resend, target))}
         >
           {t("turn.resend")}
         </Button>
@@ -267,7 +275,7 @@ function TurnAgain({ resend }: { resend: Resend }) {
               : t("turn.resend.changedBody", { tools: list(shown) })
           }
           confirmLabel={asking === "retry" ? t("turn.retry") : t("turn.resend.changedConfirm")}
-          onConfirm={() => (asking === "retry" ? retry() : store.resend(resend))}
+          onConfirm={() => (asking === "retry" ? retry() : store.resend(resend, target))}
         />
       ) : null}
     </div>

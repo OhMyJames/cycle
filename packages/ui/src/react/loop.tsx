@@ -217,7 +217,9 @@ export function LoopMain({
   onOpenProject,
   onBack,
   onClose,
-  onTimelineSessionOpened,
+  activeTimelineSessionId,
+  onOpenTimelineSession,
+  onCloseTimelineSession,
   active = true,
 }: {
   view: LoopView;
@@ -232,8 +234,12 @@ export function LoopMain({
   onBack: () => void;
   /** Out of the Loop: a conversation about a ticket was started. */
   onClose: () => void;
-  /** Called when a session is opened from Timeline so the session view can offer a one-click return (CYC-534). */
-  onTimelineSessionOpened?: (projectKey: string, sessionId: string) => void;
+  /** The session currently open in the right panel beside Timeline, if any. */
+  activeTimelineSessionId?: string | undefined;
+  /** Opens a Timeline step's session in the right panel beside Timeline. */
+  onOpenTimelineSession?: (projectKey: string, locationId: string, sessionId: string) => void;
+  /** Closes the right-side session panel opened from Timeline (Escape). */
+  onCloseTimelineSession?: () => void;
   /** False while Settings or Connectors is over the window: Escape is theirs then. */
   active?: boolean;
 }) {
@@ -305,24 +311,43 @@ export function LoopMain({
     if (unknown || failed) store.takeLoopRequest(request.n);
   }, [store, request, requestedBoard, connected, projects]);
 
-  // Escape closes the ticket drawer (one level up). It does not leave Loop: picking a session or New session does.
-  // What is drawn over the page (a dialog, a menu) takes its own Escape first, and the board's batch selection before this.
+  // Escape closes the ticket drawer (one level up) or Timeline's right-side session panel. It does not leave Loop:
+  // picking a session or New session does. What is drawn over the page (a dialog, a menu) takes its own Escape first.
   const goBack = useRef(onBack);
   goBack.current = onBack;
   const viewRef = useRef(view);
   viewRef.current = view;
+  const activeTimelineSessionRef = useRef(activeTimelineSessionId);
+  activeTimelineSessionRef.current = activeTimelineSessionId;
+  const closeTimelineSessionRef = useRef(onCloseTimelineSession);
+  closeTimelineSessionRef.current = onCloseTimelineSession;
   useEffect(() => {
     if (!active) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented || isComposing(event)) return;
       const target = event.target as Node | null;
-      const inMain =
+      const inLoop =
         target instanceof Element &&
-        target.closest('[data-slot="main"], [data-slot="sidebar"]') !== null;
-      if (target !== null && target !== document.body && !inMain) return;
-      // Only a ticket's drawer is closed by it; elsewhere the key is left alone.
-      if (document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]') !== null)
+        target.closest(
+          '[data-slot="main"], [data-slot="sidebar"], [data-slot="loop-session-panel"]',
+        ) !== null;
+      if (target !== null && target !== document.body && !inLoop) return;
+      if (
+        document.querySelector(
+          '[role="dialog"], [role="alertdialog"], [role="menu"], [data-slot="select-content"], [data-slot="picker"]',
+        ) !== null
+      )
         return;
+      if (
+        viewRef.current.at === "project" &&
+        viewRef.current.tab === "timeline" &&
+        activeTimelineSessionRef.current !== undefined &&
+        closeTimelineSessionRef.current !== undefined
+      ) {
+        event.preventDefault();
+        closeTimelineSessionRef.current();
+        return;
+      }
       if (up(viewRef.current) === undefined) return;
       event.preventDefault();
       goBack.current();
@@ -387,11 +412,14 @@ export function LoopMain({
           <LoopTimeline
             key={chosen.projectKey}
             projectKey={chosen.projectKey}
+            activeSessionId={activeTimelineSessionId}
             onOpenTicket={(identifier) =>
               onView({ at: "ticket", projectKey: chosen.projectKey, identifier })
             }
             onOpenKanban={() => openProject(chosen.projectKey, "kanban", "timeline")}
-            onSessionOpened={(key, sessionId) => onTimelineSessionOpened?.(key, sessionId)}
+            onOpenSession={(key, locationId, sessionId) =>
+              onOpenTimelineSession?.(key, locationId, sessionId)
+            }
           />
         ) : chosen !== undefined ? (
           <Board

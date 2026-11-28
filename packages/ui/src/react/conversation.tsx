@@ -32,7 +32,7 @@ import {
   textOf,
 } from "../model/index.ts";
 import { blockHolds, heldIds, reveal } from "../reveal.ts";
-import { BLANK_KEY, filesRootOf } from "../store/index.ts";
+import { BLANK_KEY } from "../store/index.ts";
 import { CopyButton } from "./copy-button.tsx";
 import { useI18n } from "./i18n.tsx";
 import {
@@ -49,8 +49,9 @@ import { type FileLinks, FileLinksContext, Markdown } from "./markdown.tsx";
 import { MessageTime } from "./message-time.tsx";
 import { PlanBlock } from "./plan.tsx";
 import { ReviewCard } from "./review.tsx";
+import { useScopedFilesRoot } from "./session-scope.tsx";
 import { StateBlock } from "./state-block.tsx";
-import { useAppState, useAppStore } from "./store-context.tsx";
+import { useAppStore } from "./store-context.tsx";
 import { SubagentCard, subagentWorkOf } from "./subagent.tsx";
 import { ThoughtText, useDisplayMode } from "./thought.tsx";
 import { Tip } from "./tip.tsx";
@@ -169,7 +170,7 @@ const linkName = (block: Block): string =>
 function Blocks({ blocks }: { blocks: Block[] }) {
   const { t } = useI18n();
   const store = useAppStore();
-  const filesRoot = useAppState(filesRootOf);
+  const filesRoot = useScopedFilesRoot();
   const words = blocks.map((b) => (b.type === "text" ? String(b.text) : "")).join("");
   const chips: Chip[] = [
     ...sessionMentionsOf(blocks).map((mention) => ({
@@ -1002,7 +1003,7 @@ export function ConversationView({
   // The thought still arriving: the last thing the turn that is going has said.
   const lastItem = conversation.items.at(-1);
   // A file a reply names, in the session's folder, opens in the Files tab.
-  const filesRoot = useAppState(filesRootOf);
+  const filesRoot = useScopedFilesRoot();
   const fileLinks = useMemo<FileLinks | undefined>(
     () =>
       filesRoot === undefined

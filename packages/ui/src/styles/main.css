@@ -83,7 +83,8 @@ html[data-platform="darwin"] [data-slot="titlebar"] button {
   overflow: clip;
 }
 
-[data-slot="resizable-panel"]#panel > [data-slot="side-panel"] {
+[data-slot="resizable-panel"]#panel
+  > :is([data-slot="side-panel"], [data-slot="loop-session-panel"]) {
   flex: 1 0 0;
   min-width: var(--cycle-panel-width, 0);
 }
@@ -91,7 +92,9 @@ html[data-platform="darwin"] [data-slot="titlebar"] button {
 /* Closed or hidden by a mode, the panel takes no room, even before its column is fitted on starting (the saved layout
    may have it open), and its handle is not drawn at the window's edge. */
 [data-slot="resizable-panel"]#panel:empty,
-[data-slot="resizable-panel"]#panel:has(> [data-slot="side-panel"][hidden]) {
+[data-slot="resizable-panel"]#panel:has(> [data-slot="side-panel"][hidden]):not(
+  :has(> [data-slot="loop-session-panel"])
+) {
   max-width: 0;
 }
 
