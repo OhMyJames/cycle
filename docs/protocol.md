@@ -279,7 +279,7 @@ daemon 在索引里记 `prompted`;在这个规则之前写的索引条目没有�
 
 **动作**:在 session 的终端里跑。`_cycle/terminal/create` 加可选参数 `actionId`:daemon 从 session 存的快照里取这个动作的命令(按自己的系统选),用登录 shell 的 `-c` 跑,标题是动作的名字。客户端不能借这个参数跑任意命令:命令只来自 session 创建时存下的快照。`actionId` 不存在以 `-32602`、`data.reason: "unknown_action"` 拒绝。
 
-**setup 和 cleanup**:只在 daemon 新建 worktree 之后、删除它之前,在这个 worktree 的根目录运行,不在主 checkout 里运行(见下一节 "Worktree")。
+**setup 和 cleanup**:只在 worktree 新建之后、删除它之前,在这个 worktree 的根目录运行,不在主 checkout 里运行(见下一节 "Worktree")。新建和删除的可以是 daemon,也可以是 Claude 自己的 `EnterWorktree` / `ExitWorktree`。
 
 ### Worktree(2026-11-24,CYC-273)
 
@@ -309,13 +309,17 @@ daemon 在索引里记 `prompted`;在这个规则之前写的索引条目没有�
 
 **中途进出**:
 
-- **Claude** 用自己的 `EnterWorktree` / `ExitWorktree`,Cycle 不屏蔽、不替换。
+- **Claude** 用自己的 `EnterWorktree` / `ExitWorktree`,Cycle 不屏蔽、不替换,但通过 hook 观察(CYC-403)。工具在 Claude 进程里建和删 worktree,只有进程会等的 hook 才能让 cleanup 排在删除之前,所以用 SDK 的回调 hook,而不是读工具结果:适配进程对 `EnterWorktree`、`ExitWorktree` 各注册 `PreToolUse` 和 `PostToolUse`,向 daemon 发请求 `_cycle/worktree/hook`(agent → daemon,参数 `{ sessionId, phase: "before" | "after", tool, toolUseId, input, response? }`,响应 `{ note? }`),等 daemon 答完才放行。hook 不做任何决定,工具照常进行;`note` 在 `after` 时作为 `additionalContext` 告诉 Claude。daemon 这样处理:
+  - `EnterWorktree` 的 `before`:记下仓库此刻的 `git worktree list`。`after`:工具答的 `worktreePath` 不在那份清单里,才算这次新建的(按 `name` 进入已有目录、按 `path` 进入已有 worktree 都不算),此时在 worktree 根目录运行 setup(超时 10 分钟,只给字面变量,不给密钥,理由同上)。失败只记日志、把输出末尾通过 `note` 告诉 Claude,不阻止。
+  - `ExitWorktree` 的 `before`:`action` 为 `remove`、且这个 worktree 是本 session 里 Claude 建的,先看有没有没提交的文件或没合并的提交;有而没传 `discard_changes: true` 时 Claude 会拒绝删除,cleanup 不运行。否则运行 cleanup(超时 60 秒,失败只记日志,不阻止删除)。`keep` 不运行。
+  - 不是本 session 里 Claude 建的 worktree(Cycle 建的、人建的、Claude 只进入的),setup 和 cleanup 都不碰。「本 session 里建的」只记在 daemon 内存里,daemon 重启后忘记,这样的 worktree 此后不再被触发。
+  - Claude 自己的目录由它的工具管;Cycle 不改 session 的 `cwd`、`worktree`(`session/list` 行不显示这样建的 worktree),也不标过期。
 - **Codex、agy** 由 daemon 的 MCP 网关(§14)给 session 一个名为 `cycle-worktree` 的内置服务器,里面是同名、同契约的 `EnterWorktree` / `ExitWorktree`(只在 session 的目录在 git 仓库里、且 agent 是 Codex 或 agy 时给)。入参、出参和拒绝的条件照 Claude SDK 0.3.327 的类型定义:
   - `EnterWorktree`:`name?` 和 `path?` 互斥;`path` 必须在 `git worktree list` 里;出参 `worktreePath`、`worktreeBranch?`、`message`。已经在 worktree 里时拒绝。
   - `ExitWorktree`:`action: "keep" | "remove"`,`discard_changes?`;`remove` 且有没提交的文件或没合并的提交时,必须传 `discard_changes: true`,否则拒绝并列出;只删 Cycle 建的;出参 `action`、`originalCwd`、`worktreePath`、`worktreeBranch?`、`discardedFiles?`、`discardedCommits?`、`message`。
   - 工具名在 agent 里会带前缀(如 `mcp__cycle-worktree__EnterWorktree`);服务器的 `instructions` 说明它们就是 Claude 那两个工具。
 - session 的 `cwd`、`worktree` 立刻变(文件、diff、终端跟着变);**agent 自己的目录从下一个 turn 起变**:daemon 把 agent 标为过期,这个 turn 结束后结束它的进程,下一条 prompt 用 `session/resume` 带新的 `cwd` 把它拉起。这条路对 Codex 和 agy 一样;agy 恢复时换 `cwd` 能否保留上下文没有用真实账号验证过。队列里还有 prompt 时,过期的重启要等队列处理完。
-- Claude 自己建的 worktree 目前**不会**触发 Cycle 的 setup / cleanup,Cycle 也不观察 `EnterWorktree` 的结果(见"待定")。
+- Claude 自己建的 worktree 会触发 setup / cleanup(上面),但 Cycle 不跟着改 session 的 `cwd`,所以这样建的 worktree 不进 `session/list`,`session/delete` 不会替它运行 cleanup(见"待定")。
 
 ### 会话来源(2026-11-28,CYC-534)
 
@@ -929,7 +933,7 @@ session 索引是另一个文件,记录 sessionId、agent id、agent 侧 session
 - `attentionSeq` 里"值得看"的记录是否还要包括用户取消的 turn(`stopReason: cancelled`)。现在按"都算",因为取消时用户通常在看,客户端会立刻标记已读。
 - `cycle/background` 要不要在 daemon 重启后重建:agent 进程已不在,v1 不重建。
 - connector(§14):loopback 回调的随机端口哪些授权服务器接受(没有在真实服务器上验证);agent 在云端 sandbox 时网关的地址;正在运行的 agent 要不要在 connector 变化后重启。
-- Worktree(§6):Claude 原生 `EnterWorktree` 建出来的 worktree 怎么触发 Cycle 的 setup/cleanup、cwd 变化怎么观察;agy 恢复时换 `cwd` 的真实验证;远程(SSH)工作位置;起始分支是否允许先 fetch。
+- Worktree(§6):Claude 原生 `EnterWorktree` 之后 session 的 `cwd` 变化怎么观察(setup/cleanup 已经触发),以及 daemon 重启后怎么记得哪些是 Claude 建的;agy 恢复时换 `cwd` 的真实验证;远程(SSH)工作位置;起始分支是否允许先 fetch。
 - plugin(§15):项目级范围;运行中的 session 即时生效(Claude 有 `reloadPlugins`);来源自己声明要运行命令才能取到的 plugin;agent 给 plugin 服务器起的名字变了时怎么发现。
 
 ## 14. Connector

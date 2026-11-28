@@ -269,6 +269,7 @@ export class Daemon {
   #counter = 0;
   #closing = false;
   readonly #updateState: (() => DaemonUpdateState) | undefined;
+  readonly #worktrees: ReturnType<typeof worktreeHost>;
   readonly #onSettled: (() => void) | undefined;
   #draining = false;
 
@@ -327,14 +328,13 @@ export class Daemon {
     this.#trust = trust;
     this.#connectors = connectors;
     // Codex and agy have no worktree tools of their own: Cycle gives them the ones Claude has.
-    connectors.useWorktrees(
-      worktreeHost({
-        session: (id) => this.#sessions.get(id),
-        remember: (session, patch) => this.#remember(session, patch),
-        warn: (event) => this.#log.warn(event, {}),
-      }),
-      ["codex", "agy"],
-    );
+    const worktrees = worktreeHost({
+      session: (id) => this.#sessions.get(id),
+      remember: (session, patch) => this.#remember(session, patch),
+      warn: (event) => this.#log.warn(event, {}),
+    });
+    this.#worktrees = worktrees;
+    connectors.useWorktrees(worktrees, ["codex", "agy"]);
     this.#modelProviders = modelProviders;
     modelProviders.onChange(() => this.#clients.broadcast(NOTIFICATIONS.providersChanged, {}));
     this.#terminals = new Terminals({
@@ -828,6 +828,7 @@ export class Daemon {
         update: () => {},
         permission: async () => ({ outcome: { outcome: "cancelled" } }),
         elicitation: async () => ({ action: "cancel" }),
+        worktree: async () => ({}),
         closed: () => {
           if (connected === undefined) endedEarly = true;
           else if (this.#standby.get(agentId)?.link === connected) this.#takeStandby(agentId);
@@ -992,6 +993,7 @@ export class Daemon {
       },
       permission: (params, signal) => this.#onPermission(session, params, signal),
       elicitation: (params, signal) => this.#onElicitation(session, params, signal),
+      worktree: (call) => this.#worktrees.native(session.id, call),
       closed: () => {
         if (connected === undefined) endedEarly = true;
         else this.#onAgentClosed(session, connected);
