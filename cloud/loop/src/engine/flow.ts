@@ -42,6 +42,8 @@ export type StepResult =
   /** A research work item is published and Done (CYC-447): its report, and the follow-ups made in Backlog. */
   | { status: "researched"; key: string; docId: number; followups: string[] }
   | { status: "blocked"; key: string; reason: string }
+  /** The run registered a wait and its step ended (CYC-550): the worker is free; a signal or the recheck time wakes it. */
+  | { status: "waiting"; key: string; on: string }
   /** GitHub could not be reached after the retries: the run stays where it was and the loop waits (CYC-444). */
   | { status: "network_wait"; key: string; command: string }
   /** A planning round ended (CYC-322): how many work items it shaped, asked about, stopped on and left alone. */
@@ -277,6 +279,11 @@ export interface Flow {
   afterRemoved?(): RunPatch;
   /** A run ended or stopped: what the flow held in memory for it can go. */
   forget?(key: string): void;
+  /**
+   * Looks at what the runs waiting on the outside wait for, and signals the ones that can go on (CYC-550). Read-only
+   * towards the runs; failures are the engine's to log. No worker, no choice lock.
+   */
+  watch?(): Promise<void>;
   /** Stops a run that cannot go on without a person, and says so. */
   block(args: BlockArgs): Promise<StepResult>;
   /** A run whose work item is in Done: whether its worktree can go now, or the event to note once instead. */
