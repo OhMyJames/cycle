@@ -4,6 +4,7 @@ import type {
   AgentInfo,
   AnalyticsStatus,
   ConnectorInfo,
+  DaemonDraining,
   EnvironmentsState,
   GitBranches,
   InterfaceState,
@@ -142,6 +143,8 @@ export type AppState = {
   plugins: Record<string, { sources?: PluginSourceInfo[]; list?: PluginInfo[]; error?: string }>;
   /** Each location's plan usage, by agent: the latest its daemon heard (docs/protocol.md §8 "套餐用量"). */
   planUsage: Record<string, Record<string, PlanUsage>>;
+  /** Each location whose daemon is draining for its own update (CYC-547); absent while it is not. */
+  daemonDraining: Record<string, DaemonDraining>;
   /** The environments and each workspace's default (docs/desktop.md "环境"). Undefined until main has said. */
   environments: EnvironmentsState | undefined;
   selectedLocation: string | undefined;
@@ -188,6 +191,7 @@ export const initialState = (): AppState => ({
   vault: {},
   plugins: {},
   planUsage: {},
+  daemonDraining: {},
   environments: undefined,
   selectedLocation: undefined,
   selectedSession: undefined,

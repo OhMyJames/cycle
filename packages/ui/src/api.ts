@@ -761,6 +761,13 @@ export type SessionSnapshot = {
 };
 
 /** Where the app's own updating stands. `current` is the version that is running. */
+/** A daemon that no longer starts turns, waiting to switch to its new version (CYC-547). */
+export type DaemonDraining = {
+  version: string;
+  /** When it will switch whatever still runs, ISO 8601 UTC. */
+  forceAt?: string;
+};
+
 export type UpdateState = {
   current: string;
 } /** Not an installed app (a development run), or not a build that can replace itself. */ & (
@@ -878,6 +885,11 @@ export type AppEvent =
   | { type: "connectors"; locationId: string }
   /** The location's model providers changed, here or elsewhere: read them, and its agents, again. */
   | { type: "providers"; locationId: string }
+  /**
+   * The location's daemon began draining for its own update, or stopped (`draining` absent: waiting, or switched;
+   * docs/protocol.md §3, CYC-547). Waiting says nothing: it is short.
+   */
+  | { type: "daemon-update"; locationId: string; draining?: DaemonDraining }
   /** An agent's plugins on that location changed, here or elsewhere: read them again. */
   | { type: "plugins"; locationId: string; agentId: string }
   /** A session was deleted elsewhere while the connection was away: nothing of it is kept. */

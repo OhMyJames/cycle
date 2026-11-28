@@ -351,6 +351,10 @@ export const enUS = {
 
   // Messages sent while the agent works, waiting their turn
   "composer.queued.label": "Queued messages",
+  "composer.updating":
+    "Cycle is updating. It restarts when the running tasks end; messages sent now go out after the restart.",
+  "composer.updating.until":
+    "Cycle is updating. It restarts when the running tasks end, by {time} at the latest; messages sent now go out after the restart.",
   "composer.queued.tag": "Queued",
   "composer.queued.edit": "Edit queued message: {preview}",
   "composer.queued.editShort": "Edit",
