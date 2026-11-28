@@ -1,9 +1,12 @@
 // The Files tab of the right panel (CYCL-92): the open session's folder as a tree read one folder at a time, and a file
 // shown in its place. Read-only, and read by the daemon where the files are (docs/protocol.md §8 "浏览和预览文件"), so
-// it is the same for a remote location. What the agent wrote is shown through the conversation's Markdown, which is
+// it is the same for a remote location. The panel's one shape: a bar (where it is, and its actions), then the tree, with
+// what git says changed marked in it and a box that finds a file by name, or the file: its lines numbered, all of them,
+// across the panel's whole width. What the agent wrote is shown through the conversation's Markdown, which is
 // already made safe: no HTML, no image or link loaded from elsewhere (.agents/notes/2026-11-22-files-and-diff-sources.md).
 import { Button } from "@ui-sdk/react/button";
 import {
+  Fragment,
   memo,
   type ReactNode,
   type RefObject,
@@ -13,16 +16,19 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import type { FileContent, FileEntry, FileListing } from "../api.ts";
-import type { FilesState, LineTarget } from "../files-view.ts";
+import type { FileContent, FileEntry, FileListing, FileSearch, WorkspaceFile } from "../api.ts";
+import { type FilesState, foldersOf, type LineTarget } from "../files-view.ts";
 import type { Translator } from "../i18n.ts";
 import { viewKey } from "../store/index.ts";
+import { WorkspaceMark } from "./diff.tsx";
 import { useI18n } from "./i18n.tsx";
 import { ChevronLeftIcon, ChevronRightIcon, FileIcon, FolderIcon, RefreshIcon } from "./icons.tsx";
 import { Markdown } from "./markdown.tsx";
+import { PanelAction, PanelBar, PathLabel } from "./panel-parts.tsx";
+import { SearchField } from "./search-field.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
-import { Tip } from "./tip.tsx";
+import { Counts } from "./tool.tsx";
 
 /** Text past this many characters is shown plain: colouring a whole large file would hold the page up. */
 const COLOURED = 200_000;
@@ -239,24 +245,175 @@ function Tree({
   }, [openKey, round, load, hidden]);
   const top = folders.get("");
   const root = top?.state === "ok" ? top.value.root : undefined;
+  // What git says differs from the last commit, marked on its files and on the folders they are in. Read with the
+  // tree, where the daemon can compare; not known (no repository, not trusted, a failure), nothing is marked.
+  const canMark = useAppState((s) => s.status[where.locationId]?.capabilities?.diff === true);
+  const [changed, setChanged] = useState<Changed>(UNMARKED);
+  // Once a round, like the folders: behind a file it waits, and an answer to an older round is dropped.
+  const markedIn = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (!canMark || hidden || markedIn.current === round) return;
+    markedIn.current = round;
+    store.workspaceStatus(where.locationId, where.sessionId).then(
+      (status) => {
+        if (markedIn.current === round)
+          setChanged(status.state === "ok" ? changedOf(status.files) : UNMARKED);
+      },
+      () => {
+        if (markedIn.current === round) setChanged(UNMARKED);
+      },
+    );
+  }, [store, where.locationId, where.sessionId, canMark, hidden, round]);
+  // Finding a file by name is the daemon's search, the one an @ in the message box uses: the tree is read a folder at
+  // a time, so the page cannot look through it itself.
+  const canFind = useAppState((s) => s.status[where.locationId]?.capabilities?.files === true);
+  const [query, setQuery] = useState("");
+  const finding = query.trim() !== "";
+  // A folder asked for in the tree (a name found, a part of a file's path, a folder named in the conversation): the
+  // tree is shown, so what was typed is let go.
+  const revealed = view.revealed;
+  useEffect(() => {
+    if (revealed !== undefined) setQuery("");
+  }, [revealed]);
+  // Counted once for a session's box, not for each letter or each name looked for, and never what was typed.
+  const counted = useRef(false);
+  const onFound = useCallback(() => {
+    if (counted.current) return;
+    counted.current = true;
+    store.track("files_found", {});
+  }, [store]);
   return (
     <div data-slot="files-tree" hidden={hidden}>
-      <div data-slot="files-head">
-        <span data-slot="files-root" title={root}>
+      <PanelBar
+        actions={
+          <PanelAction label={t("files.refresh")} onClick={() => setRefreshed((n) => n + 1)}>
+            <RefreshIcon />
+          </PanelAction>
+        }
+      >
+        <span data-slot="panel-bar-title" title={root}>
           {root !== undefined ? nameOf(root) || root : t("files.title")}
         </span>
-        <Tip label={t("files.refresh")} side="bottom">
-          <Button
-            data-variant="ghost"
-            data-kind="files-action"
-            onClick={() => setRefreshed((n) => n + 1)}
-          >
-            <RefreshIcon />
-          </Button>
-        </Tip>
-      </div>
-      <Folder path="" folders={folders} where={where} view={view} retry={load} />
+      </PanelBar>
+      {canFind ? (
+        <div data-slot="files-find">
+          <SearchField value={query} onChange={setQuery} label={t("files.find")} />
+        </div>
+      ) : null}
+      {finding ? (
+        <Found query={query.trim()} where={where} changed={changed} onFound={onFound} />
+      ) : (
+        <Folder
+          path=""
+          folders={folders}
+          where={where}
+          view={view}
+          retry={load}
+          changed={changed}
+        />
+      )}
     </div>
+  );
+}
+
+type Paths = ReadonlySet<string>;
+
+/** What git says changed in the session's folder: each file by its path, and every folder one of them is in. */
+type Changed = { folders: Paths; files: ReadonlyMap<string, WorkspaceFile> };
+
+const UNMARKED: Changed = { folders: new Set(), files: new Map() };
+
+const changedOf = (files: readonly WorkspaceFile[]): Changed => ({
+  // A repository inside that git does not track is one entry, a folder: it is marked itself, with the folders it is in.
+  folders: new Set(
+    files.flatMap((file) =>
+      file.folder === true ? [...foldersOf(file.path), file.path] : foldersOf(file.path),
+    ),
+  ),
+  files: new Map(files.map((file) => [file.path, file])),
+});
+
+/** After a file's name in the tree or among what was found: what became of it and how much, when git says it changed. */
+function ChangeMark({ file }: { file: WorkspaceFile | undefined }) {
+  if (file === undefined) return null;
+  return (
+    <>
+      <WorkspaceMark status={file.status} />
+      {file.binary === true ? null : (
+        <Counts additions={file.additions} deletions={file.deletions} />
+      )}
+    </>
+  );
+}
+
+/** How long after the last key the daemon is asked: a name typed is one question, not one a letter. */
+const FIND_MS = 150;
+
+/** The files and folders whose names fit what is typed, in place of the tree: a row each, its folder quiet. */
+function Found({
+  query,
+  where,
+  changed,
+  onFound,
+}: {
+  query: string;
+  where: Where;
+  changed: Changed;
+  /** The daemon answered what was typed. */
+  onFound: () => void;
+}) {
+  const { t } = useI18n();
+  const store = useAppStore();
+  // Undefined inside: the daemon could not say.
+  const [found, setFound] = useState<{ value: FileSearch | undefined } | undefined>(undefined);
+  useEffect(() => {
+    let current = true;
+    const timer = setTimeout(() => {
+      void store.searchFiles(query).then((value) => {
+        if (!current) return;
+        setFound({ value });
+        // A search the daemon could not answer found nothing to count.
+        if (value !== undefined) onFound();
+      });
+    }, FIND_MS);
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
+  }, [store, query, onFound]);
+  if (found === undefined)
+    return <StateBlock tone="loading" size="inline" align="start" title={t("files.finding")} />;
+  if (found.value === undefined)
+    return <StateBlock tone="error" size="inline" align="start" title={t("files.findFailed")} />;
+  const { entries, truncated } = found.value;
+  if (entries.length === 0)
+    return <StateBlock tone="empty" size="inline" title={t("files.findNone")} />;
+  return (
+    <ul data-slot="files-list" data-kind="found">
+      {entries.map((hit) => (
+        <li key={`${hit.kind}:${hit.path}`}>
+          <button
+            type="button"
+            data-slot="files-row"
+            data-kind={hit.kind}
+            onClick={() => {
+              if (hit.kind === "folder") {
+                // The tree takes the names' place, the folder open in it (the box is cleared by the tree).
+                store.filesViews.reveal(where.key, hit.path);
+                store.track("files_folder_revealed", { from: "found" });
+              } else store.filesViews.show(where.key, hit.path);
+            }}
+          >
+            {hit.kind === "folder" ? <FolderIcon size={14} /> : <FileIcon size={14} />}
+            <PathLabel path={hit.path} />
+            <ChangeMark file={hit.kind === "file" ? changed.files.get(hit.path) : undefined} />
+          </button>
+        </li>
+      ))}
+      {truncated ? (
+        <li data-slot="files-quiet">{t("files.findTruncated", { count: entries.length })}</li>
+      ) : null}
+    </ul>
   );
 }
 
@@ -266,12 +423,14 @@ function Folder({
   where,
   view,
   retry,
+  changed,
 }: {
   path: string;
   folders: ReadonlyMap<string, Load<FileListing>>;
   where: Where;
   view: FilesState;
   retry: (path: string) => void;
+  changed: Changed;
 }) {
   const { t } = useI18n();
   const store = useAppStore();
@@ -302,6 +461,17 @@ function Folder({
             <Row
               entry={entry}
               open={view.expanded.has(full)}
+              mark={
+                entry.kind === "folder" ? (
+                  changed.folders.has(full) ? (
+                    <span data-slot="files-dot">
+                      <span data-slot="visually-hidden">{t("files.changedInside")}</span>
+                    </span>
+                  ) : null
+                ) : (
+                  <ChangeMark file={changed.files.get(full)} />
+                )
+              }
               onOpen={() => {
                 if (entry.kind === "folder") store.filesViews.toggle(where.key, full);
                 else if (entry.kind === "file") store.filesViews.show(where.key, full);
@@ -309,7 +479,14 @@ function Folder({
             />
             {entry.kind === "folder" && view.expanded.has(full) ? (
               <div data-slot="files-nest">
-                <Folder path={full} folders={folders} where={where} view={view} retry={retry} />
+                <Folder
+                  path={full}
+                  folders={folders}
+                  where={where}
+                  view={view}
+                  retry={retry}
+                  changed={changed}
+                />
               </div>
             ) : null}
           </li>
@@ -322,7 +499,18 @@ function Folder({
   );
 }
 
-function Row({ entry, open, onOpen }: { entry: FileEntry; open: boolean; onOpen: () => void }) {
+function Row({
+  entry,
+  open,
+  mark,
+  onOpen,
+}: {
+  entry: FileEntry;
+  open: boolean;
+  /** After the name: what git says of it. */
+  mark: ReactNode;
+  onOpen: () => void;
+}) {
   const { t } = useI18n();
   const lead =
     entry.kind === "folder" ? (
@@ -360,6 +548,7 @@ function Row({ entry, open, onOpen }: { entry: FileEntry; open: boolean; onOpen:
     >
       {lead}
       {name}
+      {mark}
       {entry.ignored === true ? (
         <span data-slot="visually-hidden">{t("files.ignored")}</span>
       ) : null}
@@ -448,7 +637,7 @@ const scrollTo = (box: HTMLElement, lines: Box): void => {
   if (scroller === undefined) return;
   const seen = scroller.getBoundingClientRect();
   const head =
-    box.parentElement?.querySelector(':scope > [data-slot="files-head"]')?.getBoundingClientRect()
+    box.parentElement?.querySelector(':scope > [data-slot="panel-bar"]')?.getBoundingClientRect()
       .height ?? 0;
   const room = seen.height - head;
   const under = lines.height >= room ? head : head + (room - lines.height) / 2;
@@ -594,29 +783,24 @@ function Preview({
 
   return (
     <>
-      <div data-slot="files-head">
-        <Tip label={t("files.back")} side="bottom">
-          <Button
-            data-variant="ghost"
-            data-kind="files-action"
-            onClick={() => store.filesViews.back(where.key)}
-          >
-            <ChevronLeftIcon />
-          </Button>
-        </Tip>
-        <span data-slot="files-path" title={path}>
-          <bdi>{path}</bdi>
-        </span>
-        <Tip label={t("files.refresh")} side="bottom">
-          <Button
-            data-variant="ghost"
-            data-kind="files-action"
-            onClick={() => setRefreshed((n) => n + 1)}
-          >
+      <PanelBar
+        actions={
+          <PanelAction label={t("files.refresh")} onClick={() => setRefreshed((n) => n + 1)}>
             <RefreshIcon />
-          </Button>
-        </Tip>
-      </div>
+          </PanelAction>
+        }
+      >
+        <PanelAction label={t("files.back")} onClick={() => store.filesViews.back(where.key)}>
+          <ChevronLeftIcon />
+        </PanelAction>
+        <Crumbs
+          path={path}
+          onFolder={(folder) => {
+            store.filesViews.reveal(where.key, folder);
+            store.track("files_folder_revealed", { from: "crumb" });
+          }}
+        />
+      </PanelBar>
       {content.state === "loading" ? (
         <StateBlock tone="loading" size="inline" title={t("files.reading")} />
       ) : content.state === "error" ? (
@@ -663,6 +847,36 @@ function Preview({
 }
 
 /**
+ * Where a file is, in its bar: each folder it is in goes back to the tree with that folder open, and its name, last, is
+ * where the person is. Too long for the bar, it is cut from its start: the name stays.
+ */
+function Crumbs({ path, onFolder }: { path: string; onFolder: (folder: string) => void }) {
+  const { t } = useI18n();
+  const parts = path.split("/");
+  return (
+    <nav data-slot="files-crumbs" aria-label={t("files.path")} title={path}>
+      <span data-slot="files-crumbs-row">
+        {parts.map((part, at) => {
+          const upTo = parts.slice(0, at + 1).join("/");
+          return at < parts.length - 1 ? (
+            <Fragment key={upTo}>
+              <button type="button" data-slot="files-crumb" onClick={() => onFolder(upTo)}>
+                {part}
+              </button>
+              <span aria-hidden="true">/</span>
+            </Fragment>
+          ) : (
+            <span key={upTo} data-slot="files-crumb" aria-current="page">
+              {part}
+            </span>
+          );
+        })}
+      </span>
+    </nav>
+  );
+}
+
+/**
  * A file as it is shown. Text drawn as text is in `box`, with `mark` over the lines gone to; `unfold` shows its code whole
  * when it goes up (`Markdown`).
  */
@@ -705,7 +919,12 @@ function Shown({
       {plain ? (
         <pre data-slot="files-plain">{content.text}</pre>
       ) : (
-        <Code text={content.text} language={LANGUAGES[extension] ?? extension} unfold={unfold} />
+        // Whole, never in part: a file is read here, it is not an aside in a reply. One more than any line asked for.
+        <Code
+          text={content.text}
+          language={LANGUAGES[extension] ?? extension}
+          unfold={unfold + 1}
+        />
       )}
       {mark}
     </div>

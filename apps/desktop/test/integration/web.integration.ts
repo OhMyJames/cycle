@@ -167,7 +167,9 @@ test.skipIf(!built)(
           .locator('[data-slot="terminal-screen"] .xterm-rows')
           .textContent()
           .catch(() => "");
-      await page.getByRole("button", { name: "Show terminal" }).click();
+      await page.getByRole("button", { name: "Show panel" }).click();
+      await page.getByRole("button", { name: "Open a tab" }).click();
+      await page.getByRole("menuitem", { name: "New terminal" }).click();
       await page.getByRole("tab", { selected: true, name: /sh$/ }).waitFor();
       await until(
         () =>

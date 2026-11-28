@@ -96,6 +96,14 @@ test("the Overview shows the goal, the todo list, the background, and the sessio
   expect(panel.textContent).toContain("1 ended");
   // This history is from before the agent told its scheduled calls: not known, not "none".
   expect(panel.textContent).toContain("Not reported for this session");
+  // The one block with nothing in it is a line at the end; the blocks that have something keep their heading.
+  const nothing = within(panel).getByRole("region", { name: "Nothing to show yet" });
+  expect(
+    within(nothing)
+      .getAllByRole("term")
+      .map((term) => term.textContent),
+  ).toEqual(["Scheduled"]);
+  expect(within(panel).getByRole("heading", { name: "Todo" })).toBeDefined();
   expect(panel.textContent).toContain("Opus");
   // A setting left to the agent is said to be the default, not guessed at.
   expect(panel.textContent).toContain("Default");
@@ -123,6 +131,14 @@ test("a session from before these updates says what it has not got, block by blo
   expect(panel.textContent).toContain("Nothing running in the background");
   expect(panel.textContent).toContain("No usage reported yet");
   expect(panel.textContent).toContain("Not reported for this session");
+  // Each of them a line at the end, under its block's name, not a block of its own saying "nothing".
+  const nothing = within(panel).getByRole("region", { name: "Nothing to show yet" });
+  expect(
+    within(nothing)
+      .getAllByRole("term")
+      .map((term) => term.textContent),
+  ).toEqual(["Todo", "Background", "Scheduled"]);
+  expect(within(panel).queryByRole("heading", { name: "Todo" })).toBeNull();
 });
 
 const scheduled = (jobs: object[], dormant?: boolean) =>

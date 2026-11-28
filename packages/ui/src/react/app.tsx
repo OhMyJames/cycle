@@ -524,6 +524,7 @@ function AppWindow() {
                         sessionId={session?.sessionId ?? ""}
                         state={sidePanel}
                         onShow={sessionPanel.showTab}
+                        onClose={sessionPanel.closeTab}
                       />
                     ),
                     onClose: () => sessionPanel.toggleSidePanel("handle"),

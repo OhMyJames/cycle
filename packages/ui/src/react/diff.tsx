@@ -4,29 +4,45 @@
 //   commands are not in it, and it says so.
 // - Workspace: the session's folder against HEAD, as the daemon's git says it (docs/protocol.md §8 "工作区的改动"),
 //   in a trusted repository only. Whoever made them.
-import { Button } from "@ui-sdk/react/button";
+// Both are the panel's one shape: a bar (which view, how much changed, and the actions on all of it), then a row a file,
+// its folder quiet and its name in ink, opening to its change across the panel's whole width.
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "@ui-sdk/react/collapsible";
 import {
   SegmentedControl,
   SegmentedControlIndicator,
   SegmentedControlItem,
 } from "@ui-sdk/react/segmented-control";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import {
+  type ReactNode,
+  type Ref,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { WorkspaceFile, WorkspacePatch, WorkspaceStatus } from "../api.ts";
 import { insideFolder, shownPath } from "../files-view.ts";
 import { diffLines, type SessionEdit, sessionEdits, type TurnEdits } from "../model/index.ts";
 import { reveal, revealInDiff } from "../reveal.ts";
 import { filesRootOf, viewKey } from "../store/index.ts";
 import { useI18n } from "./i18n.tsx";
-import { ChevronRightIcon, FolderIcon, RefreshIcon } from "./icons.tsx";
+import {
+  ChevronRightIcon,
+  FolderIcon,
+  FoldIcon,
+  RefreshIcon,
+  UnfoldIcon,
+  WrapIcon,
+} from "./icons.tsx";
+import { PanelAction, PanelBar, PathLabel } from "./panel-parts.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
-import { Tip } from "./tip.tsx";
 import { Counts, DiffView } from "./tool.tsx";
 
 export type DiffMode = "session" | "workspace";
 
-/** A path as the panel shows it: inside the session's folder, relative to it; elsewhere, as the agent gave it. */
 type Load<T> =
   | { state: "loading" }
   | { state: "ok"; value: T }
@@ -34,6 +50,92 @@ type Load<T> =
 
 const reasonOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
+
+/**
+ * How many files "Expand all" opens: each draws its change, and in the workspace asks the daemon for it. Past this the
+ * first ones open and the rest are a press each, rather than the panel standing still while hundreds are drawn.
+ */
+const EXPAND_ALL = 100;
+
+/** How many files' changes are asked of the daemon at once: each is a git process there, on a machine with two cores. */
+const READ_AT_ONCE = 4;
+
+/** Runs what it is given a few at a time, in the order asked: the rest wait their turn. */
+type Queue = <T>(run: () => Promise<T>) => Promise<T>;
+
+const queueOf = (atOnce: number): Queue => {
+  let running = 0;
+  const waiting: (() => void)[] = [];
+  return (run) =>
+    new Promise((resolve, reject) => {
+      const start = () => {
+        running += 1;
+        run()
+          .then(resolve, reject)
+          .finally(() => {
+            running -= 1;
+            waiting.shift()?.();
+          });
+      };
+      if (running < atOnce) start();
+      else waiting.push(start);
+    });
+};
+
+/** Which files of a list are open, and the bar's action that opens or closes them all. */
+function useOpenFiles(ids: readonly string[], view: DiffMode) {
+  const store = useAppStore();
+  const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
+  const set = useCallback((id: string, next: boolean) => {
+    setOpen((old) => {
+      if (old.has(id) === next) return old;
+      const now = new Set(old);
+      if (next) now.add(id);
+      else now.delete(id);
+      return now;
+    });
+  }, []);
+  // Files that are in the list now: one that went (a change undone, a new round) is not counted as open.
+  const some = ids.some((id) => open.has(id));
+  const toggleAll = () => {
+    setOpen(some ? new Set() : new Set(ids.slice(0, EXPAND_ALL)));
+    store.track("diff_all_toggled", { open: !some, view });
+  };
+  return { open, set, some, toggleAll };
+}
+
+/** The actions on every file of a view: open or close them all, and whether long lines wrap. */
+function ListActions({
+  files,
+  some,
+  onToggleAll,
+}: {
+  files: number;
+  some: boolean;
+  onToggleAll: () => void;
+}) {
+  const { t } = useI18n();
+  const store = useAppStore();
+  const wrap = useSyncExternalStore(store.diffModes.subscribe, store.diffModes.wraps);
+  if (files === 0) return null;
+  return (
+    <>
+      <PanelAction label={t(some ? "diff.collapseAll" : "diff.expandAll")} onClick={onToggleAll}>
+        {some ? <FoldIcon /> : <UnfoldIcon />}
+      </PanelAction>
+      <PanelAction
+        label={t("diff.wrap")}
+        pressed={wrap}
+        onClick={() => {
+          store.diffModes.setWrap(!wrap);
+          store.track("diff_wrap_toggled", { wrap: !wrap });
+        }}
+      >
+        <WrapIcon />
+      </PanelAction>
+    </>
+  );
+}
 
 export function Diff() {
   const { t } = useI18n();
@@ -60,6 +162,7 @@ export function Diff() {
     useSyncExternalStore(store.diffModes.subscribe, () =>
       key !== undefined ? store.diffModes.get(key) : undefined,
     ) ?? "session";
+  const wrap = useSyncExternalStore(store.diffModes.subscribe, store.diffModes.wraps);
   const shown: DiffMode = canWorkspace ? mode : "session";
 
   if (key === undefined || locationId === undefined || sessionId === undefined)
@@ -70,33 +173,43 @@ export function Diff() {
     );
   // Working, as opposed to stopped for a question: what it changed so far is on disk when it asks.
   const running = session?.state === "running";
+  // Which view, first in each view's bar. A daemon that cannot compare has one view, which its bar names in words.
+  const views = canWorkspace ? (
+    <SegmentedControl
+      value={shown}
+      aria-label={t("diff.view")}
+      onValueChange={(next) => {
+        if ((next === "session" || next === "workspace") && next !== shown) {
+          store.diffModes.set(key, next);
+          store.track("diff_view_changed", { view: next });
+        }
+      }}
+    >
+      <SegmentedControlIndicator />
+      <SegmentedControlItem value="session">{t("diff.view.session")}</SegmentedControlItem>
+      <SegmentedControlItem value="workspace">{t("diff.view.workspace")}</SegmentedControlItem>
+    </SegmentedControl>
+  ) : (
+    <span data-slot="panel-bar-title">{t("diff.view.session")}</span>
+  );
   return (
-    <div data-slot="diff">
-      {canWorkspace ? (
-        <div data-slot="diff-modes">
-          <SegmentedControl
-            value={shown}
-            aria-label={t("diff.view")}
-            onValueChange={(next) => {
-              if ((next === "session" || next === "workspace") && next !== shown) {
-                store.diffModes.set(key, next);
-                store.track("diff_view_changed", { view: next });
-              }
-            }}
-          >
-            <SegmentedControlIndicator />
-            <SegmentedControlItem value="session">{t("diff.view.session")}</SegmentedControlItem>
-            <SegmentedControlItem value="workspace">
-              {t("diff.view.workspace")}
-            </SegmentedControlItem>
-          </SegmentedControl>
-        </div>
-      ) : null}
+    <div data-slot="diff" data-wrap={wrap || undefined}>
       {shown === "session" ? (
-        <SessionView sessionKey={key} conversation={conversation} cwd={session?.cwd} />
+        <SessionView
+          sessionKey={key}
+          conversation={conversation}
+          cwd={session?.cwd}
+          views={views}
+        />
       ) : (
         // One per session: another session's workspace and turns are its own.
-        <WorkspaceView key={key} locationId={locationId} sessionId={sessionId} running={running} />
+        <WorkspaceView
+          key={key}
+          locationId={locationId}
+          sessionId={sessionId}
+          running={running}
+          views={views}
+        />
       )}
     </div>
   );
@@ -106,22 +219,33 @@ function SessionView({
   sessionKey,
   conversation,
   cwd,
+  views,
 }: {
   sessionKey: string;
   conversation: Parameters<typeof sessionEdits>[0] | undefined;
   cwd: string | undefined;
+  views: ReactNode;
 }) {
   const { t } = useI18n();
   const turns = useMemo(
     () => (conversation !== undefined ? sessionEdits(conversation) : []),
     [conversation],
   );
-  if (conversation === undefined)
-    return <StateBlock tone="loading" size="inline" title={t("overview.loading")} />;
+  const ids = useMemo(() => turns.flatMap((turn) => turn.edits.map((e) => e.toolId)), [turns]);
+  const files = useOpenFiles(ids, "session");
+  const additions = turns.reduce((n, turn) => n + turn.additions, 0);
+  const deletions = turns.reduce((n, turn) => n + turn.deletions, 0);
   return (
     <>
-      <p data-slot="diff-scope">{t("diff.session.scope")}</p>
-      {turns.length === 0 ? (
+      <PanelBar
+        actions={<ListActions files={ids.length} some={files.some} onToggleAll={files.toggleAll} />}
+      >
+        {views}
+        {ids.length > 0 ? <Counts additions={additions} deletions={deletions} /> : null}
+      </PanelBar>
+      {conversation === undefined ? (
+        <StateBlock tone="loading" size="inline" title={t("overview.loading")} />
+      ) : turns.length === 0 ? (
         <StateBlock
           tone="empty"
           size="inline"
@@ -130,9 +254,18 @@ function SessionView({
         />
       ) : (
         turns.map((turn) => (
-          <TurnSection key={turn.turn} turn={turn} sessionKey={sessionKey} cwd={cwd} />
+          <TurnSection
+            key={turn.turn}
+            turn={turn}
+            sessionKey={sessionKey}
+            cwd={cwd}
+            open={files.open}
+            onOpen={files.set}
+          />
         ))
       )}
+      {/* What this view covers, under what it shows: said every time, since a change made by a command is not here. */}
+      {conversation !== undefined ? <p data-slot="diff-scope">{t("diff.session.scope")}</p> : null}
     </>
   );
 }
@@ -141,10 +274,14 @@ function TurnSection({
   turn,
   sessionKey,
   cwd,
+  open,
+  onOpen,
 }: {
   turn: TurnEdits;
   sessionKey: string;
   cwd: string | undefined;
+  open: ReadonlySet<string>;
+  onOpen: (id: string, open: boolean) => void;
 }) {
   const { t } = useI18n();
   return (
@@ -156,7 +293,13 @@ function TurnSection({
       <ul data-slot="diff-files">
         {turn.edits.map((edit) => (
           <li key={edit.toolId}>
-            <EditRow edit={edit} sessionKey={sessionKey} cwd={cwd} />
+            <EditRow
+              edit={edit}
+              sessionKey={sessionKey}
+              cwd={cwd}
+              open={open.has(edit.toolId)}
+              onOpen={onOpen}
+            />
           </li>
         ))}
       </ul>
@@ -164,18 +307,60 @@ function TurnSection({
   );
 }
 
+/** What became of a file, as a letter after its name (git's), with the word for a screen reader and on hover. */
+function Status({ letter, word, tone }: { letter: string; word: string; tone: "new" | "gone" }) {
+  return (
+    <span data-slot="diff-status" data-tone={tone} title={word}>
+      <span aria-hidden="true">{letter}</span>
+      <span data-slot="visually-hidden">{word}</span>
+    </span>
+  );
+}
+
+/** A file of either view: its row, and under it, open, what `children` show of its change. */
+function FileRow({
+  path,
+  mark,
+  open,
+  onOpenChange,
+  children,
+  ref,
+}: {
+  path: string;
+  /** After the path: what became of the file, and how much changed. */
+  mark: ReactNode;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  children: ReactNode;
+  ref?: Ref<HTMLDivElement>;
+}) {
+  return (
+    <Collapsible ref={ref} data-kind="diff-file" open={open} onOpenChange={onOpenChange}>
+      <CollapsibleTrigger data-kind="diff-row">
+        <ChevronRightIcon size={12} data-slot="diff-chevron" aria-hidden="true" />
+        <PathLabel path={path} />
+        {mark}
+      </CollapsibleTrigger>
+      <CollapsiblePanel>{children}</CollapsiblePanel>
+    </Collapsible>
+  );
+}
+
 function EditRow({
   edit,
   sessionKey,
   cwd,
+  open,
+  onOpen,
 }: {
   edit: SessionEdit;
   sessionKey: string;
   cwd: string | undefined;
+  open: boolean;
+  onOpen: (id: string, open: boolean) => void;
 }) {
   const { t } = useI18n();
   const store = useAppStore();
-  const [open, setOpen] = useState(false);
   const row = useRef<HTMLDivElement>(null);
   // Asked for from the conversation (the header of the call's diff): opened, and brought into view.
   useEffect(() => {
@@ -184,7 +369,7 @@ function EditRow({
       if (asked === undefined || asked.sessionKey !== sessionKey || asked.itemId !== edit.toolId)
         return;
       revealInDiff.done(asked.serial);
-      setOpen(true);
+      onOpen(edit.toolId, true);
       requestAnimationFrame(() => {
         row.current?.scrollIntoView({ block: "nearest" });
         row.current
@@ -194,7 +379,7 @@ function EditRow({
     };
     check();
     return revealInDiff.subscribe(check);
-  }, [sessionKey, edit.toolId]);
+  }, [sessionKey, edit.toolId, onOpen]);
   const path = edit.path !== undefined ? shownPath(edit.path, cwd) : t("diff.noPath");
   // Inside the session's folder, and its daemon shows files: the file can be opened there.
   const filesRoot = useAppState(filesRootOf);
@@ -203,34 +388,32 @@ function EditRow({
       ? insideFolder(edit.path, filesRoot)
       : undefined;
   return (
-    <Collapsible
+    <FileRow
       ref={row}
-      data-kind="diff-file"
+      path={path}
       open={open}
       onOpenChange={(next) => {
-        setOpen(next);
+        onOpen(edit.toolId, next);
         if (next) store.track("diff_file_opened", { view: "session" });
       }}
+      mark={
+        <>
+          {edit.staged ? (
+            // Held for review: shown as it would be, but the file on disk is as it was. In words: it is not git's.
+            <span data-slot="diff-status">{t("tool.facts.staged")}</span>
+          ) : edit.created ? (
+            <Status letter="A" word={t("diff.status.created")} tone="new" />
+          ) : null}
+          <Counts additions={edit.additions} deletions={edit.deletions} />
+        </>
+      }
     >
-      <CollapsibleTrigger data-kind="diff-row">
-        <ChevronRightIcon size={12} data-slot="diff-chevron" aria-hidden="true" />
-        <span data-slot="diff-path" title={path}>
-          <bdi>{path}</bdi>
-        </span>
-        {edit.staged ? (
-          // Held for review: shown as it would be, but the file on disk is as it was.
-          <span data-slot="diff-status">{t("tool.facts.staged")}</span>
-        ) : edit.created ? (
-          <span data-slot="diff-status">{t("diff.status.created")}</span>
-        ) : null}
-        <Counts additions={edit.additions} deletions={edit.deletions} />
-      </CollapsibleTrigger>
-      <CollapsiblePanel>
-        {edit.lines !== undefined ? (
-          <DiffView lines={edit.lines} />
-        ) : (
-          <p data-slot="tool-note">{t("tool.diff.tooLarge")}</p>
-        )}
+      {edit.lines !== undefined ? (
+        <DiffView lines={edit.lines} />
+      ) : (
+        <p data-slot="tool-note">{t("tool.diff.tooLarge")}</p>
+      )}
+      <div data-slot="diff-links">
         <button
           type="button"
           data-slot="diff-link"
@@ -246,8 +429,8 @@ function EditRow({
             {t("files.showInFiles")}
           </button>
         ) : null}
-      </CollapsiblePanel>
-    </Collapsible>
+      </div>
+    </FileRow>
   );
 }
 
@@ -255,10 +438,12 @@ function WorkspaceView({
   locationId,
   sessionId,
   running,
+  views,
 }: {
   locationId: string;
   sessionId: string;
   running: boolean;
+  views: ReactNode;
 }) {
   const { t } = useI18n();
   const store = useAppStore();
@@ -286,78 +471,118 @@ function WorkspaceView({
       current = false;
     };
   }, [store, locationId, sessionId, round]);
-  const refresh = (
-    <Tip label={t("files.refresh")} side="bottom">
-      <Button data-variant="ghost" data-kind="files-action" onClick={() => setRound((n) => n + 1)}>
-        <RefreshIcon />
-      </Button>
-    </Tip>
+  const value = status.state === "ok" && status.value.state === "ok" ? status.value : undefined;
+  // A repository inside has no change of its own to open.
+  const ids = useMemo(
+    () => (value?.files ?? []).filter((f) => f.folder !== true).map((f) => f.path),
+    [value],
+  );
+  const files = useOpenFiles(ids, "workspace");
+  // Every open file reads its change; "Expand all" opens many at once, so they take turns.
+  const [queue] = useState(() => queueOf(READ_AT_ONCE));
+  const again = () => setRound((n) => n + 1);
+  const bar = (
+    <PanelBar
+      actions={
+        <>
+          <ListActions files={ids.length} some={files.some} onToggleAll={files.toggleAll} />
+          {value !== undefined ? (
+            <PanelAction label={t("files.refresh")} onClick={again}>
+              <RefreshIcon />
+            </PanelAction>
+          ) : null}
+        </>
+      }
+    >
+      {views}
+      {value !== undefined && value.files.length > 0 ? (
+        <Counts
+          additions={value.files.reduce((n, f) => n + (f.additions ?? 0), 0)}
+          deletions={value.files.reduce((n, f) => n + (f.deletions ?? 0), 0)}
+        />
+      ) : null}
+    </PanelBar>
   );
   if (status.state === "loading")
-    return <StateBlock tone="loading" size="inline" title={t("diff.workspace.loading")} />;
+    return (
+      <>
+        {bar}
+        <StateBlock tone="loading" size="inline" title={t("diff.workspace.loading")} />
+      </>
+    );
   if (status.state === "error")
     return (
-      <StateBlock
-        tone="error"
-        size="inline"
-        title={t("diff.workspace.failed")}
-        reason={status.reason}
-        action={{ label: t("files.retry"), onAction: () => setRound((n) => n + 1) }}
-      />
+      <>
+        {bar}
+        <StateBlock
+          tone="error"
+          size="inline"
+          title={t("diff.workspace.failed")}
+          reason={status.reason}
+          action={{ label: t("files.retry"), onAction: again }}
+        />
+      </>
     );
-  const value = status.value;
-  if (value.state === "not_git")
+  if (status.value.state === "not_git")
     return (
-      <StateBlock
-        tone="empty"
-        size="inline"
-        title={t("diff.workspace.notGit")}
-        body={t("diff.workspace.notGitBody")}
-        action={{ label: t("diff.workspace.checkAgain"), onAction: () => setRound((n) => n + 1) }}
-      />
+      <>
+        {bar}
+        <StateBlock
+          tone="empty"
+          size="inline"
+          title={t("diff.workspace.notGit")}
+          body={t("diff.workspace.notGitBody")}
+          action={{ label: t("diff.workspace.checkAgain"), onAction: again }}
+        />
+      </>
     );
-  if (value.state === "untrusted")
+  if (status.value.state === "untrusted")
     return (
-      <StateBlock
-        tone="empty"
-        size="inline"
-        title={t("diff.workspace.untrusted")}
-        body={t("diff.workspace.untrustedBody", { folder: value.repository })}
-        // Trusted since in the workspace menu: asked again, it compares.
-        action={{ label: t("diff.workspace.checkAgain"), onAction: () => setRound((n) => n + 1) }}
-      />
+      <>
+        {bar}
+        <StateBlock
+          tone="empty"
+          size="inline"
+          title={t("diff.workspace.untrusted")}
+          body={t("diff.workspace.untrustedBody", { folder: status.value.repository })}
+          // Trusted since in the workspace menu: asked again, it compares.
+          action={{ label: t("diff.workspace.checkAgain"), onAction: again }}
+        />
+      </>
     );
+  const { head, files: changed, truncated } = status.value;
   return (
     <>
-      <div data-slot="files-head">
-        <span data-slot="diff-scope">
-          {value.head !== null
-            ? t("diff.workspace.against", { commit: value.head.slice(0, 7) })
-            : t("diff.workspace.noCommit")}
-        </span>
-        {refresh}
-      </div>
-      {value.files.length === 0 ? (
+      {bar}
+      {changed.length === 0 ? (
         <StateBlock tone="empty" size="inline" title={t("diff.workspace.clean")} />
       ) : (
         <ul data-slot="diff-files">
-          {value.files.map((file) => (
+          {changed.map((file) => (
             <li key={file.path}>
               <WorkspaceRow
                 file={file}
                 locationId={locationId}
                 sessionId={sessionId}
                 round={round}
+                queue={queue}
+                open={files.open.has(file.path)}
+                onOpen={files.set}
               />
             </li>
           ))}
-          {value.truncated ? (
+          {truncated ? (
             <li data-slot="files-quiet">
-              {t("diff.workspace.truncated", { count: value.files.length })}
+              {t("diff.workspace.truncated", { count: changed.length })}
             </li>
           ) : null}
         </ul>
       )}
+      <p data-slot="diff-scope">
+        {head !== null
+          ? t("diff.workspace.against", { commit: head.slice(0, 7) })
+          : t("diff.workspace.noCommit")}
+      </p>
     </>
   );
 }
@@ -369,20 +594,42 @@ const STATUS_KEY = {
   untracked: "diff.status.untracked",
 } as const;
 
+/** Git's letter for what became of a file. */
+const STATUS_LETTER = { added: "A", modified: "M", deleted: "D", untracked: "U" } as const;
+
+/** What became of a workspace file, after its name. Modified is what most are: it is said to a screen reader only. */
+export function WorkspaceMark({ status }: { status: WorkspaceFile["status"] }) {
+  const { t } = useI18n();
+  const word = t(STATUS_KEY[status]);
+  if (status === "modified") return <span data-slot="visually-hidden">{word}</span>;
+  return (
+    <Status
+      letter={STATUS_LETTER[status]}
+      word={word}
+      tone={status === "deleted" ? "gone" : "new"}
+    />
+  );
+}
+
 function WorkspaceRow({
   file,
   locationId,
   sessionId,
   round,
+  queue,
+  open,
+  onOpen,
 }: {
   file: WorkspaceFile;
   locationId: string;
   sessionId: string;
   round: number;
+  queue: Queue;
+  open: boolean;
+  onOpen: (id: string, open: boolean) => void;
 }) {
   const { t } = useI18n();
   const store = useAppStore();
-  const [open, setOpen] = useState(false);
   const [patch, setPatch] = useState<Load<WorkspacePatch> | undefined>(undefined);
   // Which read is current: an answer to an older one (before a new round, a Retry, or after the row went) is dropped.
   const reading = useRef(0);
@@ -395,16 +642,19 @@ function WorkspaceRow({
   const load = useCallback(() => {
     reading.current += 1;
     const serial = reading.current;
-    setPatch({ state: "loading" });
-    store.workspaceFile(locationId, sessionId, file.path).then(
-      (value) => {
+    // A new round reads over the change shown, so the list does not jump; a failure shown is replaced by the reading.
+    setPatch((old) => (old?.state === "ok" ? old : { state: "loading" }));
+    // Its turn come, a read nobody waits for any more (the row gone, or asked again since) is not made.
+    void queue(async () => {
+      if (reading.current !== serial) return;
+      try {
+        const value = await store.workspaceFile(locationId, sessionId, file.path);
         if (reading.current === serial) setPatch({ state: "ok", value });
-      },
-      (error: unknown) => {
+      } catch (error) {
         if (reading.current === serial) setPatch({ state: "error", reason: reasonOf(error) });
-      },
-    );
-  }, [store, locationId, sessionId, file.path]);
+      }
+    });
+  }, [store, locationId, sessionId, file.path, queue]);
   // Read when first opened, and again in a new round while open; a closed one is read when it opens.
   const readIn = useRef<number | undefined>(undefined);
   useEffect(() => {
@@ -413,11 +663,6 @@ function WorkspaceRow({
     load();
   }, [open, round, load]);
   const lines = useMemo(() => (patch?.state === "ok" ? diffLines(patch.value.patch) : []), [patch]);
-  const status = (
-    <span data-slot="diff-status" data-status={file.status}>
-      {t(STATUS_KEY[file.status])}
-    </span>
-  );
   if (file.folder === true)
     // A repository inside, not tracked: no patch of its own. Its files are in the Files tab.
     return (
@@ -428,61 +673,57 @@ function WorkspaceRow({
         onClick={() => store.showInFiles(file.path, { folder: true })}
       >
         <FolderIcon size={12} data-slot="diff-chevron" />
-        <span data-slot="diff-path" title={file.path}>
-          <bdi>{file.path}</bdi>
-        </span>
-        {status}
+        <PathLabel path={file.path} />
+        <WorkspaceMark status={file.status} />
       </button>
     );
   return (
-    <Collapsible
-      data-kind="diff-file"
+    <FileRow
+      path={file.path}
       open={open}
       onOpenChange={(next) => {
-        setOpen(next);
+        onOpen(file.path, next);
         if (next) store.track("diff_file_opened", { view: "workspace" });
       }}
+      mark={
+        <>
+          <WorkspaceMark status={file.status} />
+          {file.binary === true ? (
+            <span data-slot="diff-status">{t("diff.binary")}</span>
+          ) : (
+            <Counts additions={file.additions} deletions={file.deletions} />
+          )}
+        </>
+      }
     >
-      <CollapsibleTrigger data-kind="diff-row">
-        <ChevronRightIcon size={12} data-slot="diff-chevron" aria-hidden="true" />
-        <span data-slot="diff-path" title={file.path}>
-          <bdi>{file.path}</bdi>
-        </span>
-        {status}
-        {file.binary === true ? (
-          <span data-slot="diff-status">{t("diff.binary")}</span>
-        ) : (
-          <Counts additions={file.additions} deletions={file.deletions} />
-        )}
-      </CollapsibleTrigger>
-      <CollapsiblePanel>
-        {patch === undefined || patch.state === "loading" ? (
-          <StateBlock tone="loading" size="inline" align="start" title={t("files.reading")} />
-        ) : patch.state === "error" ? (
-          <StateBlock
-            tone="error"
-            size="inline"
-            align="start"
-            title={t("diff.workspace.fileFailed")}
-            reason={patch.reason}
-            action={{ label: t("files.retry"), onAction: load }}
-          />
-        ) : patch.value.binary ? (
-          <p data-slot="tool-note">{t("diff.binaryBody")}</p>
-        ) : lines.length === 0 ? (
-          <p data-slot="tool-note">{t("diff.noChange")}</p>
-        ) : (
-          <>
-            <DiffView lines={lines} />
-            {patch.value.truncated ? <p data-slot="tool-note">{t("diff.truncated")}</p> : null}
-          </>
-        )}
-        {file.status !== "deleted" ? (
+      {patch === undefined || patch.state === "loading" ? (
+        <StateBlock tone="loading" size="inline" align="start" title={t("files.reading")} />
+      ) : patch.state === "error" ? (
+        <StateBlock
+          tone="error"
+          size="inline"
+          align="start"
+          title={t("diff.workspace.fileFailed")}
+          reason={patch.reason}
+          action={{ label: t("files.retry"), onAction: load }}
+        />
+      ) : patch.value.binary ? (
+        <p data-slot="tool-note">{t("diff.binaryBody")}</p>
+      ) : lines.length === 0 ? (
+        <p data-slot="tool-note">{t("diff.noChange")}</p>
+      ) : (
+        <>
+          <DiffView lines={lines} />
+          {patch.value.truncated ? <p data-slot="tool-note">{t("diff.truncated")}</p> : null}
+        </>
+      )}
+      {file.status !== "deleted" ? (
+        <div data-slot="diff-links">
           <button type="button" data-slot="diff-link" onClick={() => store.showInFiles(file.path)}>
             {t("files.showInFiles")}
           </button>
-        ) : null}
-      </CollapsiblePanel>
-    </Collapsible>
+        </div>
+      ) : null}
+    </FileRow>
   );
 }

@@ -10,8 +10,7 @@ import {
 import type { SessionSummary } from "../api.ts";
 import type { PanelTabId, PanelTabKind } from "../side-panel.ts";
 import { type BlankConversation, viewKey } from "../store/index.ts";
-import { tabKind, terminalOfTab } from "../terminals.ts";
-import { FIRST_SIZE, terminalToShow } from "./side-panel.tsx";
+import { tabKind } from "../terminals.ts";
 import { slideColumns } from "./split-layout.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
 
@@ -74,7 +73,7 @@ export function useSidebarFold(appRef: RefObject<HTMLElement | null>, ready: boo
 }
 
 /**
- * The open session's right panel (CYCL-90) and what its header's buttons do with it: a blank conversation or no
+ * The open session's right panel (CYCL-90), and what its header's button and its own strip do with it: a blank conversation or no
  * session has none. Its terminals (CYCL-98) are read once its daemon can open them.
  */
 export function useSessionPanel(
@@ -98,35 +97,29 @@ export function useSessionPanel(
       tab: tabKind(sidePanel.active),
     });
   };
-  // A tab's own button in the header: opens the panel on that tab; on it already, closes the panel.
-  const toggleTab = (tab: PanelTabKind) => {
-    if (panelKey === undefined || sidePanel === undefined) return;
-    if (sidePanel.open && sidePanel.active === tab) {
-      sidePanels.setOpen(panelKey, false);
-      store.track("side_panel_toggled", { open: false, via: "tab_button", tab });
-    } else if (sidePanel.open) {
-      sidePanels.show(panelKey, tab);
-      store.track("side_panel_tab_shown", { tab });
-    } else {
-      sidePanels.show(panelKey, tab);
-      store.track("side_panel_toggled", { open: true, via: "tab_button", tab });
-    }
-  };
-  // A tab picked in the panel's own strip.
+  // A tab picked in the panel's own strip, or in its menu of tabs to open.
   const showTab = (tab: PanelTabId) => {
     if (panelKey === undefined) return;
     sidePanels.show(panelKey, tab);
     store.track("side_panel_tab_shown", { tab: tabKind(tab) });
   };
-  // The session's terminals, once its daemon can open them: the Terminal button shows one, or opens one.
+  // A view's tab closed in the strip. The strip's last tab closes the panel instead, and is there when it opens again.
+  const closeTab = (tab: PanelTabKind, next: PanelTabId | undefined) => {
+    if (panelKey === undefined) return;
+    if (next === undefined) {
+      sidePanels.setOpen(panelKey, false);
+      store.track("side_panel_toggled", { open: false, via: "click", tab });
+      return;
+    }
+    sidePanels.close(panelKey, tab, next);
+    store.track("side_panel_tab_closed", { tab });
+  };
+  // The session's terminals are read once its daemon can open them: each is a tab of the panel.
   const canOpenTerminals = useAppState((s) =>
     session !== undefined ? s.status[session.locationId]?.capabilities?.terminal === true : false,
   );
   const terminalsConnected = useAppState((s) =>
     session !== undefined ? s.status[session.locationId]?.state === "connected" : false,
-  );
-  const sessionTerminals = useAppState((s) =>
-    panelKey !== undefined ? s.terminals[panelKey] : undefined,
   );
   const terminalsOf = panelKey !== undefined ? session : undefined;
   const terminalsLocation = terminalsOf?.locationId;
@@ -136,51 +129,8 @@ export function useSessionPanel(
     if (!canOpenTerminals || !terminalsConnected) return;
     void store.loadTerminals(terminalsLocation, terminalsSession);
   }, [store, terminalsLocation, terminalsSession, canOpenTerminals, terminalsConnected]);
-  const terminalShown =
-    sidePanel?.open === true &&
-    terminalOfTab(sidePanel.active) !== undefined &&
-    (sessionTerminals ?? []).some((x) => x.terminalId === terminalOfTab(sidePanel.active));
-  // The header's Terminal button: on a terminal already, it closes the panel; else it shows the terminal shown last,
-  // or the newest; with none, it opens one.
-  const toggleTerminal = async () => {
-    if (panelKey === undefined || sidePanel === undefined || session === undefined) return;
-    if (terminalShown) {
-      sidePanels.setOpen(panelKey, false);
-      store.track("side_panel_toggled", { open: false, via: "tab_button", tab: "terminal" });
-      return;
-    }
-    // Pressed before the list came: it is read first, so a terminal already there is shown, not another one opened.
-    await store.loadTerminals(session.locationId, session.sessionId);
-    const panel = sidePanels.get(panelKey);
-    const tab = terminalToShow(panel, store.getState().terminals[panelKey] ?? []);
-    if (tab === undefined) {
-      void store.createTerminal(session.locationId, session.sessionId, FIRST_SIZE, "header");
-      return;
-    }
-    sidePanels.show(panelKey, tab);
-    if (panel.open) store.track("side_panel_tab_shown", { tab: "terminal" });
-    else store.track("side_panel_toggled", { open: true, via: "tab_button", tab: "terminal" });
-  };
-  // Files needs a daemon that reads a session's folder (docs/protocol.md §8): an older one is not offered it.
-  const canShowFiles = useAppState((s) =>
-    session !== undefined ? s.status[session.locationId]?.capabilities?.fs === true : false,
-  );
-  const shows = (tab: PanelTabKind) => sidePanel?.open === true && sidePanel.active === tab;
 
-  return {
-    panelKey,
-    sidePanel,
-    toggleSidePanel,
-    toggleTab,
-    showTab,
-    shows,
-    canShowFiles,
-    canOpenTerminals,
-    terminalsConnected,
-    hasTerminals: (sessionTerminals ?? []).length > 0,
-    terminalShown,
-    toggleTerminal,
-  };
+  return { panelKey, sidePanel, toggleSidePanel, showTab, closeTab };
 }
 
 export type SessionPanel = ReturnType<typeof useSessionPanel>;
