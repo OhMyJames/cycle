@@ -542,13 +542,12 @@ export class Daemon {
   }
 
   /**
-   * What was queued for an update goes on: in a session with no turn, its held prompts are sent, one after the other
-   * (docs/protocol.md §8). Prompts that were already queued before draining are not held, and are not sent by this:
-   * after a restart they are handed back as interrupted.
+   * Draining is over without a restart: in a session with no turn, what waits goes on, one after the other. That
+   * includes prompts queued before draining, whose turn ended while no next prompt was taken.
    */
   #sendHeld(): void {
     for (const session of this.#sessions.values()) {
-      if (session.closed || !session.queue.some((e) => e.hold === "update")) continue;
+      if (session.closed || session.queue.length === 0) continue;
       const status = session.status();
       if (status !== "idle" && status !== "stopped") continue;
       if (this.#turnInProgress(session)) continue;
@@ -569,8 +568,11 @@ export class Daemon {
         const held = session.queue.filter((e) => e.hold === "update");
         session.queue = session.queue.filter((e) => e.hold !== "update");
         this.#returnQueue(session, "interrupted", true);
-        session.queue = held;
+        session.queue = [...held, ...session.queue];
         this.#log.info("held_prompts_resumed", { session: id, count: held.length });
+        // A prompt that came in while the session was loading has started a turn: the held ones go after it.
+        const status = session.status();
+        if ((status !== "idle" && status !== "stopped") || this.#turnInProgress(session)) continue;
         this.#dispatchNext(session);
       } catch (error) {
         this.#log.warn("held_prompts_resume_failed", { session: id, error: errorText(error) });

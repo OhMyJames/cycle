@@ -155,3 +155,39 @@ test("a switch called off: this daemon sends the held prompts", async () => {
   await until(() => fake.log.prompts.length === 1, "the held prompt");
   expect(fake.log.prompts).toEqual(["held"]);
 });
+
+test("a prompt that comes in before the held ones are resumed starts the turn, and the held ones go after it", async () => {
+  const fake = fakeAgent();
+  const daemon = await start(fake);
+  const c = await connectClient(daemon);
+  const { sessionId } = await c.agent.request(methods.agent.session.new, { cwd: "/tmp" });
+  await c.agent.request(methods.agent.session.resume, { sessionId, cwd: "/tmp" });
+  daemon.setDraining(true);
+  await c.agent.request(methods.agent.session.prompt, { sessionId, prompt: text("held") });
+  await untilAsync(queuedOnDisk, "the index");
+  await daemon.close();
+  open.length = 0;
+  const next = fakeAgent();
+  const second = await start(next);
+  const c2 = await connectClient(second);
+  await c2.agent.request(methods.agent.session.resume, { sessionId, cwd: "/tmp" });
+  await c2.agent.request(methods.agent.session.prompt, { sessionId, prompt: text("later") });
+  await until(() => next.log.prompts.length === 2, "both prompts");
+  expect(new Set(next.log.prompts)).toEqual(new Set(["held", "later"]));
+});
+
+test("a switch called off sends what waited from before draining too", async () => {
+  const fake = fakeAgent();
+  const daemon = await start(fake);
+  const c = await connectClient(daemon);
+  const { sessionId } = await c.agent.request(methods.agent.session.new, { cwd: "/tmp" });
+  await c.agent.request(methods.agent.session.resume, { sessionId, cwd: "/tmp" });
+  await c.agent.request(methods.agent.session.prompt, { sessionId, prompt: text("running") });
+  await until(() => fake.log.prompts.length === 1, "the first prompt");
+  await c.agent.request(methods.agent.session.prompt, { sessionId, prompt: text("queued") });
+  daemon.setDraining(true);
+  await until(() => fake.log.prompts.length >= 1, "settle");
+  daemon.setDraining(false);
+  await until(() => fake.log.prompts.length === 2, "the queued prompt", 5000).catch(() => {});
+  expect(fake.log.prompts).toContain("queued");
+});

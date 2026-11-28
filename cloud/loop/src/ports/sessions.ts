@@ -56,6 +56,23 @@ export class LeftRequests {
   }
 }
 
+/** The text of a prompt's blocks. */
+function promptText(prompt: unknown): string {
+  if (!Array.isArray(prompt)) return "";
+  return prompt
+    .map((b) =>
+      (b as { type?: string; text?: unknown }).type === "text"
+        ? String((b as { text: unknown }).text)
+        : "",
+    )
+    .join("");
+}
+
+/** A failure of the connection, not an answer from the daemon (those carry a JSON-RPC code). */
+function isTransportError(error: unknown): boolean {
+  return typeof (error as { code?: unknown } | null)?.code !== "number";
+}
+
 type Turn = {
   run: string;
   role: SessionRole;
@@ -64,6 +81,9 @@ type Turn = {
   text: string;
   stop: string | undefined;
   interrupted: boolean;
+  /** The prompt being sent, and whether the daemon was seen holding it for its update. */
+  sending?: string;
+  held?: boolean;
   /** Permission requests nobody has answered yet: the time they wait does not count against the turn. */
   waiting: number;
   finish: () => void;
@@ -179,6 +199,16 @@ export class DaemonSessions implements Sessions {
     if (update.sessionUpdate === "agent_message_chunk") {
       const content = update.content as { type?: string; text?: string } | undefined;
       if (content?.type === "text" && typeof content.text === "string") turn.text += content.text;
+    } else if (update.sessionUpdate === "_cycle/queue_update") {
+      // A prompt the daemon holds for its update is sent by the new daemon: seeing it queued, the loop must not resend.
+      const entries = Array.isArray(update.entries)
+        ? (update.entries as Record<string, unknown>[])
+        : [];
+      if (
+        turn.sending !== undefined &&
+        entries.some((e) => e.hold === "update" && promptText(e.prompt) === turn.sending)
+      )
+        turn.held = true;
     } else if (update.sessionUpdate === "state_update") {
       // `state` is a string; only an `idle` that carries a `stopReason` ends a turn (one without it is a snapshot of the
       // state: docs/protocol.md "turn 的状态由 state_update 表达").
@@ -330,19 +360,27 @@ export class DaemonSessions implements Sessions {
 
   /**
    * Sends the prompt. If the connection dropped under it (Cycle is switching to a new version: docs/protocol.md §3),
-   * waits for it to come back and sends again, once; that is not a lost session. A prompt the old daemon had taken is
-   * ended by its stop, not replayed, so the resend does not double it. Any other failure is a lost session.
+   * waits for it to come back and sends again, once; that is not a lost session. A prompt the old daemon had taken
+   * is ended by its stop, not replayed, so the resend does not double it; one it had queued for the update (`hold:
+   * "update"`) is sent by the new daemon, so it is not sent again either. Any other failure is a lost session.
    */
   async #send(sessionId: string, prompt: string): Promise<void> {
     const content = [{ type: "text" as const, text: prompt }];
+    const turn = this.#turns.get(sessionId);
+    if (turn !== undefined) {
+      turn.sending = prompt;
+      turn.held = false;
+    }
     try {
       await this.#client.prompt(sessionId, content);
       return;
     } catch (error) {
-      if (!(await this.#connectionDropped())) throw new SessionLost(String(error));
+      if (!isTransportError(error) || !(await this.#connectionDropped()))
+        throw new SessionLost(String(error));
     }
     try {
       await this.#connected();
+      if (turn?.held === true) return;
       await this.#client.prompt(sessionId, content);
     } catch (error) {
       throw new SessionLost(String(error));

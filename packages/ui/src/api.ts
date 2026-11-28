@@ -760,7 +760,6 @@ export type SessionSnapshot = {
   version: number;
 };
 
-/** Where the app's own updating stands. `current` is the version that is running. */
 /** A daemon that no longer starts turns, waiting to switch to its new version (CYC-547). */
 export type DaemonDraining = {
   version: string;
@@ -768,6 +767,7 @@ export type DaemonDraining = {
   forceAt?: string;
 };
 
+/** Where the app's own updating stands. `current` is the version that is running. */
 export type UpdateState = {
   current: string;
 } /** Not an installed app (a development run), or not a build that can replace itself. */ & (
