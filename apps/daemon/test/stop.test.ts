@@ -47,17 +47,21 @@ const serving = async (fake: ReturnType<typeof fakeAgent>) => {
   return { daemon, socket, stop };
 };
 
-/** A session whose turn runs until `finish`. */
+/** Return only when the fake agent's running turn is visible through L1. */
 const busy = async (daemon: Daemon) => {
-  let finish: () => void = () => {};
-  const done = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
   const c = await connectClient(daemon);
   const { sessionId } = await c.agent.request(methods.agent.session.new, { cwd: "/tmp" });
   await c.agent.request(methods.agent.session.resume, { sessionId, cwd: "/tmp" });
   await c.agent.request(methods.agent.session.prompt, { sessionId, prompt: text("go") });
-  return { c, sessionId, finish: () => finish(), done };
+  await until(
+    () =>
+      c.seen.some(
+        ({ update }) => update.sessionUpdate === "state_update" && update.state === "running",
+      ),
+    "the running turn to be visible",
+    1_000,
+  );
+  return c;
 };
 
 const deps = (
@@ -141,14 +145,22 @@ test("--wait stops once the turn has ended, and not before", async () => {
     release = resolve;
   });
   const { daemon, socket, stop } = await serving(fakeAgent({ onPrompt: () => held }));
-  const { c } = await busy(daemon);
-  const d = deps(socket, stop, { wait: true });
+  const c = await busy(daemon);
+  let busyReads = 0;
+  const d = deps(socket, stop, {
+    wait: true,
+    working: async () => {
+      const working = await askWorking(socket, 2_000);
+      if (working.length) busyReads++;
+      return working;
+    },
+  });
   const stopping = stopDaemon(d);
-  await until(() => d.said.some((l) => l.startsWith("Waiting")), "it to wait");
-  await Bun.sleep(100);
+  await until(() => busyReads >= 2, "stop to poll while the turn is still running", 1_000);
+  expect(d.said.some((line) => line.startsWith("Waiting"))).toBe(true);
   expect(d.signals()).toBe(0);
   release();
-  await until(() => c.ended() === 1, "the turn to end");
+  await until(() => c.ended() === 1, "the turn to end", 1_000);
   expect(await stopping).toBe(0);
   expect(d.signals()).toBe(1);
   // It ended by itself: nothing was interrupted.
