@@ -33,7 +33,7 @@ import {
   LoopTicketDetailSchema,
   LoopTicketsActResultSchema,
   LoopTimelineListResultSchema,
-} from "@cycle/protocol";
+} from "@cycle/protocol/loop";
 import type {
   LoopActFailure,
   LoopAction,

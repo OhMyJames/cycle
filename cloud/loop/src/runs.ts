@@ -1,6 +1,6 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { type LoopProjectRuns, type LoopRun, LoopRunSchema } from "@cycle/protocol";
+import { type LoopProjectRuns, type LoopRun, LoopRunSchema } from "@cycle/protocol/loop";
 import type { Config } from "./config.ts";
 import { RunStore } from "./store.ts";
 

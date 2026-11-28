@@ -1,4 +1,4 @@
-import type { LoopProject } from "@cycle/protocol";
+import type { LoopProject } from "@cycle/protocol/loop";
 import type { Config } from "./config.ts";
 
 /** `owner/name` from a repository address (https, ssh or scp form): no host, scheme or credentials. */

@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { LOOP_TIMELINE_LIST, LoopTimelineListResultSchema } from "@cycle/protocol";
+import { LOOP_TIMELINE_LIST, LoopTimelineListResultSchema } from "@cycle/protocol/loop";
 import { type ApiError, type ApiTracker, LoopApiHandler } from "../src/api.ts";
 import { SqliteStore } from "../src/db/store.ts";
 import type { TaskGraph, TaskNode } from "../src/graph.ts";

@@ -15,7 +15,7 @@ import {
   type LoopTicketChat,
   LoopTicketDetailSchema,
   LoopTicketsActResultSchema,
-} from "@cycle/protocol";
+} from "@cycle/protocol/loop";
 import { type ApiTracker, sessionOfId } from "../src/api.ts";
 import { loadConfig } from "../src/config.ts";
 import { SqliteStore } from "../src/db/store.ts";

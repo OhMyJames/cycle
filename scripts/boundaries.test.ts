@@ -195,7 +195,11 @@ const cases: [string, string, boolean][] = [
     true,
   ],
   ["packages/ui/src/store/store.ts", 'import { x } from "@cycle/loop";', true],
-  ["apps/desktop/src/main/loop.ts", 'import { LoopProjectSchema } from "@cycle/protocol";', false],
+  [
+    "apps/desktop/src/main/loop.ts",
+    'import { LoopProjectSchema } from "@cycle/protocol/loop";',
+    false,
+  ],
   // CYC-481: Loop engine stays agnostic of flows/dev, ports/github, ports/git; desktop drops itsaplan-key
   ["cloud/loop/src/engine/engine.ts", 'import { x } from "../flows/dev/index.ts";', true],
   ["cloud/loop/src/engine/engine.ts", 'import { x } from "../ports/github.ts";', true],

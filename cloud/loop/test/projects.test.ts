@@ -3,7 +3,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { LoopProjectsListResultSchema } from "@cycle/protocol";
+import { LoopProjectsListResultSchema } from "@cycle/protocol/loop";
 import { ConfigError, loadConfig } from "../src/config.ts";
 import { repoDisplayName } from "../src/projects.ts";
 import { listen } from "../src/server.ts";
