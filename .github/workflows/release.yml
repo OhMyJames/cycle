@@ -205,7 +205,7 @@ jobs:
           contract=$(jq -r '.contract // empty' assets/latest-darwin-arm64.json)
           if [ -z "$contract" ]; then
             echo "::warning::This release's manifest names no contract major: its app will take no interface updates."
-          elif ! gh release download ui-latest --repo "$GITHUB_REPOSITORY" -p "ui-c$contract.json" -O /dev/null 2>/dev/null; then
+          elif ! gh release download ui-latest --repo "$GITHUB_REPOSITORY" -p "ui-c$contract.json" -O - >/dev/null 2>&1; then
             echo "::warning::No interface bundle for contract $contract is on ui-latest yet: the app of this release takes no interface update until ui-release has published one."
           fi
       - name: Publish
