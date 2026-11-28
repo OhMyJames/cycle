@@ -168,38 +168,6 @@ test("a stale board says its data may be out of date, and a fresh one does not",
   expect(screen.queryByText("Data may be out of date")).toBeNull();
 });
 
-test("clicking Loop always opens Overview; sidebar Kanban and Timeline open the matched project", async () => {
-  const { user } = await mount({
-    loopProjects: { kind: "ok", projects: [cycle] },
-    loopBoards: { CYC: board },
-    loopTimelines: {
-      CYC: {
-        kind: "ok",
-        project: "CYC",
-        entries: [],
-        hasMore: false,
-        nextBefore: null,
-        knownSessionIds: [],
-      },
-    },
-  });
-  // Clicking Loop lands directly on Overview (even with a single project).
-  await screen.findByRole("region", { name: "Projects" });
-  await user.keyboard("{Escape}");
-  expect(document.querySelector('[data-kind="loop-overview"]')).not.toBeNull();
-  // Sidebar Kanban opens the project's Kanban board.
-  await user.click(await screen.findByRole("button", { name: "Kanban" }));
-  await screen.findByRole("region", { name: "In Progress" });
-  // Sidebar Timeline opens the Timeline view, with a button back to Kanban when empty.
-  await user.click(await screen.findByRole("button", { name: "Timeline" }));
-  await screen.findByText("No Loop activity yet");
-  await user.click(screen.getByRole("button", { name: "Open Kanban" }));
-  await screen.findByRole("region", { name: "In Progress" });
-  // Clicking Loop in the top actions always returns to Overview.
-  await user.click(await screen.findByRole("button", { name: "Loop" }));
-  await screen.findByRole("region", { name: "Projects" });
-});
-
 test("unmatched workspaces hide Kanban and Timeline, and switching projects updates them", async () => {
   const fake = fakeBridge({
     connected: true,
@@ -439,6 +407,8 @@ test("even with one Project, clicking top Loop opens Overview instead of redirec
   });
   await screen.findByRole("region", { name: "Projects" });
   expect(document.querySelector('[data-kind="loop-board"]')).toBeNull();
+  await user.keyboard("{Escape}");
+  expect(document.querySelector('[data-kind="loop-overview"]')).not.toBeNull();
   await openOverviewProject(user, "CYC");
   await screen.findByRole("region", { name: "In Progress" });
 });
