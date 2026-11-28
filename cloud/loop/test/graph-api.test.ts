@@ -9,6 +9,7 @@ import {
   LOOP_TICKET_GET,
   LoopBoardSchema,
   LoopGraphActResultSchema,
+  LoopGraphNodeSchema,
   LoopRunDetailSchema,
   LoopTicketDetailSchema,
 } from "@cycle/protocol";
@@ -24,7 +25,7 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 const now = () => new Date("2026-11-26T10:00:00.000Z");
 
 class Tracker implements ApiTracker {
-  issues = [2, 3].map((n) => ({
+  issues = [2, 3, 4].map((n) => ({
     id: 100 + n,
     sequenceNumber: n,
     title: `ticket ${n}`,
@@ -202,6 +203,42 @@ describe("graph in reads", () => {
     expect(detail.graph?.nodes.map((x) => x.position)).toEqual([0, 1, 2, 3, 4, 5]);
     const plainRun = (await api.call(LOOP_RUN_GET, { project: "CYC", key: "CYC-3" })) as object;
     expect("graph" in plainRun).toBe(false);
+  });
+});
+
+describe("role, verdict and report", () => {
+  test("QA node carries them in ticket and run detail; old nodes without them still parse", async () => {
+    await store.save(run("CYC-4"));
+    await store.saveGraph({
+      ...graphOf([
+        node("n1", 0, { status: "passed" }),
+        node("qa-1", 1, {
+          role: "qa",
+          status: "passed",
+          verdict: "fail",
+          report: "Found a bug",
+          commitSha: "abc",
+          dependsOn: ["n1"],
+        }),
+      ]),
+      runKey: "CYC-4",
+    });
+    const ticket = LoopTicketDetailSchema.parse(
+      await api.call(LOOP_TICKET_GET, { project: "CYC", key: "CYC-4" }),
+    );
+    expect(ticket.graph?.nodes.map((x) => [x.role, x.verdict, x.report])).toEqual([
+      ["dev", null, null],
+      ["qa", "fail", "Found a bug"],
+    ]);
+    const detail = LoopRunDetailSchema.parse(
+      await api.call(LOOP_RUN_GET, { project: "CYC", key: "CYC-4" }),
+    );
+    expect(detail.graph?.nodes[1]).toMatchObject({ role: "qa", verdict: "fail" });
+    const card = LoopBoardSchema.parse(await api.call(LOOP_BOARD_GET, { project: "CYC" }));
+    expect(JSON.stringify(card)).not.toContain("Found a bug");
+
+    const { role, verdict, report, ...old } = node("n1", 0);
+    expect(LoopGraphNodeSchema.parse(old)).toMatchObject({ id: "n1" });
   });
 });
 

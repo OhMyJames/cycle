@@ -172,6 +172,8 @@ export const LoopGraphNodeSchema = z.object({
   /** Topological order, from 0. */
   position: z.number().int().min(0),
   origin: z.enum(["planned", "fix"]),
+  /** Who runs the node; absent (older servers) means `dev`. */
+  role: z.enum(["dev", "qa"]).optional(),
   title: z.string().min(1),
   goal: z.string().min(1),
   dependsOn: z.array(z.string().min(1)),
@@ -183,6 +185,10 @@ export const LoopGraphNodeSchema = z.object({
   rounds: z.number().int().min(0),
   lastError: z.string().nullable(),
   summary: z.string().nullable(),
+  /** QA's conclusion once it has one; null for Dev nodes. `status` says whether the run finished, `verdict` what QA found. */
+  verdict: z.enum(["pass", "fail"]).nullable().optional(),
+  /** QA's report in full; only in the full graph of `loop/run/get` and `loop/ticket/get`. */
+  report: z.string().nullable().optional(),
   startedAt: z.string().nullable(),
   finishedAt: z.string().nullable(),
 });
