@@ -99,49 +99,10 @@ body {
   background: var(--cycle-accent);
 }
 
-/* Under a page that takes the whole window, the sessions stay in the document, not drawn. */
-[data-slot="app-body"] {
-  height: 100%;
-}
-
-[data-slot="app-body"][hidden] {
-  display: none;
-}
-
-/* A page in place of the sessions (CYCL-78, `page-layout.tsx`): Settings and Connectors. The sessions' frame
-   (CYCL-219): where the sidebar was, as wide, on its surface and with its rule, the way back and the page's sections;
-   beside it a title bar as the session's, and under it the section, in the conversation's column. */
-[data-slot="page"],
+/* A page (CYCL-78, `page-layout.tsx`): Settings and Connectors, a place of the shell (CYC-530). Its tabs are laid out
+   in the frame: the sections in the sidebar, the chosen one under the title bar. */
 [data-kind="page"] {
-  height: 100%;
-}
-
-[data-kind="page"] {
-  display: flex;
-  min-width: 0;
-  background: var(--cycle-surface-workspace);
-}
-
-/* The sidebar's box: its padding and gap, and its width as the user left it (`--cycle-sidebar-width`, set on the app by
-   split-layout.tsx), plus the split's 1px handle drawn as the rule at its edge. On a window too narrow for that and the
-   conversation's least width (MAIN_MIN) it gives way, down to the sidebar's least (SIDEBAR.min): the nav cannot fold. */
-[data-slot="page-nav"] {
-  --sidebar-inset: 0.5rem;
-
-  display: flex;
-  flex: none;
-  flex-direction: column;
-  gap: 0.5rem;
-  width: clamp(12.5rem, calc(100% - 25rem), calc(var(--cycle-sidebar-width, 16rem) + 1px));
-  padding: var(--cycle-gap) var(--sidebar-inset) 0.5rem;
-  border-right: 1px solid var(--ui-border);
-  overflow-x: hidden;
-  overflow-y: auto;
-  background: var(--cycle-surface-sidebar);
-}
-
-[data-slot="page-nav"] > * {
-  flex: none;
+  display: contents;
 }
 
 [data-slot="page-title"] {
@@ -154,7 +115,7 @@ body {
   color: var(--ui-muted-foreground);
 }
 
-[data-kind="page"] [data-slot="tabs-list"] {
+[data-kind="page-nav"][data-slot="tabs-list"] {
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -164,7 +125,7 @@ body {
 }
 
 /* A section is a row of the sidebar: the same height, the same selected surface as an open session. */
-[data-kind="page"] [data-slot="tabs-tab"] {
+[data-kind="page-nav"] [data-slot="tabs-tab"] {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -184,28 +145,28 @@ body {
   transition: background-color var(--cycle-motion-state) var(--cycle-ease);
 }
 
-[data-kind="page"] [data-slot="tabs-tab"]:hover {
+[data-kind="page-nav"] [data-slot="tabs-tab"]:hover {
   background: var(--cycle-surface-hover);
 }
 
-[data-kind="page"] [data-slot="tabs-tab"][data-selected] {
+[data-kind="page-nav"] [data-slot="tabs-tab"][data-selected] {
   background: var(--cycle-surface-selected);
   color: var(--cycle-ink);
   font-weight: 500;
 }
 
-[data-kind="page"] [data-slot="tabs-tab"]:focus-visible {
+[data-kind="page-nav"] [data-slot="tabs-tab"]:focus-visible {
   outline: 1.5px solid var(--cycle-focus-ring);
   outline-offset: -1.5px;
 }
 
 /* A section that is not there yet: listed so it is known to come, and out of the way of the keys. */
-[data-kind="page"] [data-slot="tabs-tab"][data-disabled] {
+[data-kind="page-nav"] [data-slot="tabs-tab"][data-disabled] {
   color: var(--ui-muted-foreground);
   cursor: default;
 }
 
-[data-kind="page"] [data-slot="tabs-tab"][data-disabled]:hover {
+[data-kind="page-nav"] [data-slot="tabs-tab"][data-disabled]:hover {
   background: transparent;
 }
 
@@ -306,28 +267,6 @@ body {
   flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
-}
-
-[data-slot="page-main"] {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-}
-
-/* The session's title bar (`session-header`): one row of 42px at the top, level with the traffic lights, the name at
-   its start in the header title's type. What the window is dragged by on a Mac. */
-[data-slot="page-header"] {
-  display: flex;
-  flex: none;
-  align-items: center;
-  height: 2.625rem;
-  padding: 0 0.5rem 0 var(--cycle-gap);
-}
-
-html[data-platform="darwin"] [data-slot="page-header"] {
-  -webkit-app-region: drag;
 }
 
 [data-slot="page-heading"] {

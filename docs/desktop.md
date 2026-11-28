@@ -304,9 +304,9 @@ Streamdown 的标记用 Tailwind 的工具类,而且用的是 shadcn 的颜色�
 
 ## 设置页(CYCL-56)
 
-应用级的设置在一个**整窗页面**里,不再分散在菜单和对话框中。侧栏底部的按钮或 `⌘,`(非 Mac 为 `Ctrl+,`)打开;页面打开时,侧栏的位置换成"Back to sessions"和分区导航,右边是选中的分区。`Esc`、Back 或再按一次 `⌘,` 回到会话;`⌘N`、`⌘K` 在页面上仍然可用,新建或选中会话就离开页面,系统通知点开的会话也一样。会话那一侧在页面下面保持挂载、只是不显示(`hidden` 加 `inert`),所以回来时对话的位置、展开的工具、没写完的消息都在。
+应用级的设置在一个**整窗页面**里,不再分散在菜单和对话框中。侧栏底部的按钮或 `⌘,`(非 Mac 为 `Ctrl+,`)打开;页面是窗口外壳(`shell.tsx`,CYC-530)里的一个地方:侧栏仍是窗口的侧栏(同样可拖宽、可折叠),顶行之下的会话列表换成"Back to sessions"(从 Loop 打开时是"Back to Loop")和分区导航,右边是选中的分区。`Esc`、Back 或再按一次 `⌘,` 回到打开它的地方(会话或 Loop);`⌘N`、`⌘K` 在页面上仍然可用,新建或选中会话就离开页面,系统通知点开的会话也一样。会话那一侧在页面下面保持挂载、只是不显示(`hidden` 加 `inert`),所以回来时对话的位置、展开的工具、没写完的消息都在。
 
-- **框架**(`page-layout.tsx`):`PageLayout`(返回、分区导航、分区内容)、`PageGroup`、`PageRows`、`PageRow`。分区导航是 SDK 的 Tabs 竖排:方向键切换,只挂载当前分区。Connectors 页(CYCL-82,见下面的 "Connector")用的是同一套。
+- **框架**(`page-layout.tsx`):`PageLayout`(返回、分区导航、分区内容;导航经外壳的 `ShellSidebar` 放进侧栏,分区名经 `ShellTitle` 放进标题栏)、`PageGroup`、`PageRows`、`PageRow`。分区导航是 SDK 的 Tabs 竖排:方向键切换,只挂载当前分区。Connectors 页(CYCL-82,见下面的 "Connector")用的是同一套。
 - **General**:界面语言(见下);版本、更新状态、"Check for updates"(开发运行不能更新时不显示按钮,只说明原因)、有新版本或安装失败时的 "Update and restart";统计开关(Usage statistics)。没有上报目标,或用环境变量 `DO_NOT_TRACK` / `CYCLE_ANALYTICS=off` 关掉时,不显示开关,规则与以前的菜单项相同(docs/analytics.md);首次启动的说明仍在会话页顶部,文字改为指向 Settings。
 - **Appearance**:主题(Match system、Light、Dark,见下)、代码配色和示例。
 - **Work in**(工作位置):每个工作位置一行:状态(点、词)、名字、远程的 ssh 地址,断开时下面是 ssh 的原话和 "Connect again";远程工作位置行尾的菜单里是 Edit、Remove(先确认)。"Add location" 在分区右上。增、改仍是原来的表单对话框,开在设置页上面。

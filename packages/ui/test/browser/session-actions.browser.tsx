@@ -84,7 +84,8 @@ test("pin moves the row to the top under Pinned without opening it; unpin puts i
   await user.click(within(actionsOf("Second")).getByRole("button", { name: "Pin session" }));
   await waitFor(() => expect(groupOf("Second")).toBe("pinned"));
   expect(option("Second").getAttribute("aria-selected")).not.toBe("true");
-  expect(document.querySelector('[data-slot="session-header"]')).toBeNull();
+  // Not opened: the title bar names no session.
+  expect(document.querySelector('[data-slot="main-title"] h1')).toBeNull();
   await user.hover(option("Second"));
   await user.click(within(actionsOf("Second")).getByRole("button", { name: "Unpin session" }));
   await waitFor(() => expect(groupOf("Second")).not.toBe("pinned"));
@@ -101,7 +102,8 @@ test("the row's menu archives that row's session, in its own location", async ()
   await user.click(within(actionsOf("Second")).getByRole("button", { name: "More actions" }));
   await user.click(await screen.findByRole("menuitem", { name: "Archive" }));
   expect(script.named("archiveSession")).toEqual([["archiveSession", "local", "b", true]]);
-  expect(document.querySelector('[data-slot="session-header"]')).toBeNull();
+  // Not opened: the title bar names no session.
+  expect(document.querySelector('[data-slot="main-title"] h1')).toBeNull();
 });
 
 test("Delete from the row's menu asks first, and deletes that row's session", async () => {

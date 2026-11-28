@@ -1744,9 +1744,9 @@ test("a long plan does not lengthen the window: nothing scrolls the header off i
     document.querySelector('[data-slot="plan"] li:last-child')?.scrollIntoView({ block: "end" });
     expect(page.scrollTop).toBe(0);
     expect(columns?.scrollTop).toBe(0);
-    expect(
-      document.querySelector('[data-slot="session-header"]')?.getBoundingClientRect().top,
-    ).toBe(0);
+    expect(document.querySelector('[data-slot="main-header"]')?.getBoundingClientRect().top).toBe(
+      0,
+    );
   } finally {
     root.remove();
   }

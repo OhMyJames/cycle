@@ -1,6 +1,5 @@
 import { Button } from "@ui-sdk/react/button";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@ui-sdk/react/menu";
-import type { ReactNode } from "react";
 import type { LocationConfig, LocationStatus, SessionSummary } from "../api.ts";
 import type { Elsewhere, SessionList, Workspace } from "../sessions.ts";
 import { useI18n } from "./i18n.tsx";
@@ -10,9 +9,26 @@ import { LOCATION_STATE, StatusDot } from "./status.tsx";
 import { Tip } from "./tip.tsx";
 import { WorkspaceSwitcher } from "./workspace-switcher.tsx";
 
-export type SidebarProps = {
-  /** The button that folds the sidebar, in its top-right corner (beside the traffic lights on a Mac). */
-  toggle?: ReactNode;
+/** The sidebar's actions, the same in the sessions and the Loop: a new session, search, Connectors, and the two modes. */
+export type SidebarActionsProps = {
+  locations: LocationConfig[];
+  status: Record<string, LocationStatus>;
+  onNewSession: () => void;
+  onSearch: () => void;
+  /** Opens the Connectors page: what the daemons keep for every agent. */
+  onConnectors?: () => void;
+  /** Switches to the Loop mode: the Projects of the Loop server and their boards. */
+  onLoop?: () => void;
+  /** Switches back to the Sessions mode. */
+  onSessions?: () => void;
+  /** Which of the two is shown. */
+  mode: "sessions" | "loop";
+  /** How many Loop Notices currently need the person, for the badge on the Loop mode switch. */
+  loopNoticeCount?: number;
+};
+
+/** What the sidebar shows under its actions in the sessions: the workspace, the locations that are away, the sessions. */
+export type SessionsNavProps = {
   locations: LocationConfig[];
   status: Record<string, LocationStatus>;
   /** Every workspace, and the one shown (sessions.ts). */
@@ -33,20 +49,6 @@ export type SidebarProps = {
   onSelectSession: (session: SessionSummary) => void;
   /** What a row's own controls ask: pin, archive, delete. */
   onSessionAction: (session: SessionSummary, action: RowAction) => void;
-  onNewSession: () => void;
-  onSearch: () => void;
-  /** Opens the Connectors page: what the daemons keep for every agent. */
-  onConnectors?: () => void;
-  /** Switches to the Loop mode: the Projects of the Loop server and their boards. */
-  onLoop?: () => void;
-  /** Switches back to the Sessions mode. */
-  onSessions?: () => void;
-  /** Which of the two the lower half shows. */
-  mode?: "sessions" | "loop";
-  /** The lower half in the Loop mode (loop.tsx `LoopNav`). */
-  loopNav?: ReactNode;
-  /** How many Loop Notices currently need the person, for the badge on the Loop mode switch. */
-  loopNoticeCount?: number;
   onConnectLocation: (locationId: string) => void;
   onToggleArchived: () => void;
   onShowAll: () => void;
@@ -56,23 +58,17 @@ export type SidebarProps = {
    */
   trust?: boolean | null | undefined;
   onTrust?: (trusted: boolean) => void;
-  /** Below the rest: the update footer. */
-  children?: ReactNode;
-  /** What concerns the whole app (app-notices.tsx), over the footer. */
-  notices?: ReactNode;
 };
 
 /** How the shortcut modifier is written here: ⌘ on a Mac, Ctrl+ elsewhere. */
 export const MOD = /Mac/.test(globalThis.navigator?.userAgent ?? "") ? "⌘" : "Ctrl+";
 
-export function Sidebar(props: SidebarProps) {
+export function SidebarActions(props: SidebarActionsProps) {
   const { t } = useI18n();
   const connected = props.locations.filter((h) => props.status[h.id]?.state === "connected");
   const loopMode = props.mode === "loop";
-  const apart = props.locations.filter((h) => props.away.has(h.id));
   return (
-    <nav data-slot="sidebar" aria-label={t(loopMode ? "loop.title" : "sessions.label")}>
-      <div data-slot="titlebar">{props.toggle}</div>
+    <>
       <div data-slot="sidebar-actions">
         <Button
           data-variant="ghost"
@@ -144,102 +140,101 @@ export function Sidebar(props: SidebarProps) {
           </Button>
         </section>
       ) : null}
-      {loopMode ? (
-        <div data-slot="sidebar-scroll" data-mode="loop">
-          {props.loopNav}
-        </div>
-      ) : null}
-      {loopMode ? null : (
-        <>
-          {/* Below the actions, above the list it chooses: the switcher names what the list shows. */}
-          <div data-slot="location-bar">
-            <WorkspaceSwitcher
-              workspaces={props.workspaces}
-              current={props.current}
-              elsewhere={props.elsewhere}
-              locations={props.locations}
-              status={props.status}
-              onChoose={props.onChooseWorkspace}
-            />
-            {/* What can be done with the folder that is shown. The locations themselves are in Settings. */}
-            {props.trust !== undefined && props.onTrust !== undefined ? (
-              <Menu
-                onAction={(value) => {
-                  if (value === "trust") props.onTrust?.(true);
-                  else if (value === "untrust") props.onTrust?.(false);
-                }}
-              >
-                <Tip label={t("workspace.actions")}>
-                  <MenuTrigger data-variant="ghost">
-                    <MoreIcon />
-                  </MenuTrigger>
-                </Tip>
-                <MenuContent>
-                  <MenuItem value={props.trust === true ? "untrust" : "trust"}>
-                    {t(props.trust === true ? "trust.untrust" : "trust.trust")}
-                  </MenuItem>
-                </MenuContent>
-              </Menu>
-            ) : null}
-          </div>
-          {apart.map((h) => {
-            const state = props.status[h.id];
-            const how = LOCATION_STATE[state?.state ?? "closed"];
-            const line = t("location.status", { location: h.name, state: t(how.word) });
-            return (
-              <span
-                key={h.id}
-                data-slot="location-state"
-                data-state={state?.state ?? "closed"}
-                role="status"
-              >
-                <StatusDot tone={how.tone} shape={how.shape} />
-                <span data-slot="location-name" title={line}>
-                  {line}
-                </span>
-                {state?.error !== undefined && (state?.state ?? "closed") === "closed" ? (
-                  <span data-slot="hint" title={state.error}>
-                    {state.error}
-                  </span>
-                ) : null}
-                {(state?.state ?? "closed") === "closed" ? (
-                  <Button data-variant="ghost" onClick={() => props.onConnectLocation(h.id)}>
-                    {t("location.connectAgain")}
-                  </Button>
-                ) : null}
+    </>
+  );
+}
+
+export function SessionsNav(props: SessionsNavProps) {
+  const { t } = useI18n();
+  const connected = props.locations.filter((h) => props.status[h.id]?.state === "connected");
+  const apart = props.locations.filter((h) => props.away.has(h.id));
+  return (
+    <>
+      {/* Below the actions, above the list it chooses: the switcher names what the list shows. */}
+      <div data-slot="location-bar">
+        <WorkspaceSwitcher
+          workspaces={props.workspaces}
+          current={props.current}
+          elsewhere={props.elsewhere}
+          locations={props.locations}
+          status={props.status}
+          onChoose={props.onChooseWorkspace}
+        />
+        {/* What can be done with the folder that is shown. The locations themselves are in Settings. */}
+        {props.trust !== undefined && props.onTrust !== undefined ? (
+          <Menu
+            onAction={(value) => {
+              if (value === "trust") props.onTrust?.(true);
+              else if (value === "untrust") props.onTrust?.(false);
+            }}
+          >
+            <Tip label={t("workspace.actions")}>
+              <MenuTrigger data-variant="ghost">
+                <MoreIcon />
+              </MenuTrigger>
+            </Tip>
+            <MenuContent>
+              <MenuItem value={props.trust === true ? "untrust" : "trust"}>
+                {t(props.trust === true ? "trust.untrust" : "trust.trust")}
+              </MenuItem>
+            </MenuContent>
+          </Menu>
+        ) : null}
+      </div>
+      {apart.map((h) => {
+        const state = props.status[h.id];
+        const how = LOCATION_STATE[state?.state ?? "closed"];
+        const line = t("location.status", { location: h.name, state: t(how.word) });
+        return (
+          <span
+            key={h.id}
+            data-slot="location-state"
+            data-state={state?.state ?? "closed"}
+            role="status"
+          >
+            <StatusDot tone={how.tone} shape={how.shape} />
+            <span data-slot="location-name" title={line}>
+              {line}
+            </span>
+            {state?.error !== undefined && (state?.state ?? "closed") === "closed" ? (
+              <span data-slot="hint" title={state.error}>
+                {state.error}
               </span>
-            );
-          })}
-          {/* Only the list scrolls: what is above it and the footer stay where the hand expects them. */}
-          <div data-slot="sidebar-scroll">
-            {props.list.order.length > 0 ? (
-              <SessionListView
-                list={props.list}
-                selected={props.selected}
-                away={props.away}
-                pinned={props.pinned}
-                onSelect={props.onSelectSession}
-                onShowAll={props.onShowAll}
-                onAction={props.onSessionAction}
-              />
-            ) : (
-              <p data-slot="hint">
-                {t(
-                  connected.length === 0 && props.locations.length > 0
-                    ? "sessions.unavailable"
-                    : "sessions.empty",
-                )}
-              </p>
+            ) : null}
+            {(state?.state ?? "closed") === "closed" ? (
+              <Button data-variant="ghost" onClick={() => props.onConnectLocation(h.id)}>
+                {t("location.connectAgain")}
+              </Button>
+            ) : null}
+          </span>
+        );
+      })}
+      {/* Only the list scrolls: what is above it and the footer stay where the hand expects them. */}
+      <div data-slot="sidebar-scroll">
+        {props.list.order.length > 0 ? (
+          <SessionListView
+            list={props.list}
+            selected={props.selected}
+            away={props.away}
+            pinned={props.pinned}
+            onSelect={props.onSelectSession}
+            onShowAll={props.onShowAll}
+            onAction={props.onSessionAction}
+          />
+        ) : (
+          <p data-slot="hint">
+            {t(
+              connected.length === 0 && props.locations.length > 0
+                ? "sessions.unavailable"
+                : "sessions.empty",
             )}
-            <button type="button" data-slot="list-toggle" onClick={props.onToggleArchived}>
-              {t(props.showArchived ? "sessions.hideArchived" : "sessions.showArchived")}
-            </button>
-          </div>
-        </>
-      )}
-      {props.notices}
-      {props.children != null ? <div data-slot="sidebar-footer">{props.children}</div> : null}
-    </nav>
+          </p>
+        )}
+        <button type="button" data-slot="list-toggle" onClick={props.onToggleArchived}>
+          {t(props.showArchived ? "sessions.hideArchived" : "sessions.showArchived")}
+        </button>
+      </div>
+    </>
   );
 }
 

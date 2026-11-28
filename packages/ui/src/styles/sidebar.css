@@ -41,7 +41,8 @@
   border: 0;
 }
 
-[data-slot="sidebar"] > * {
+[data-slot="sidebar"] > *,
+[data-slot="sidebar"] :where([data-slot="place-part"] > *) {
   flex: none;
 }
 

@@ -17,7 +17,7 @@ import {
   SelectValue,
 } from "@ui-sdk/react/select";
 import { Switch, SwitchThumb } from "@ui-sdk/react/switch";
-import { type ReactNode, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import {
   type AgentInfo,
   type LanguageChoice,
@@ -58,8 +58,8 @@ export type SettingsPageProps = {
   harnessFrom?: "settings" | "blank" | "other" | undefined;
   onHarnessAgent?: ((agentId: string) => void) | undefined;
   onClose: () => void;
-  /** What went wrong, said at the top of the page as it is at the top of the sessions. */
-  banner?: ReactNode;
+  /** What the way back says: where it goes (the sessions, or the Loop). */
+  backLabel: string;
   locations: LocationConfig[];
   status: Record<string, LocationStatus>;
   agents: Record<string, AgentInfo[]>;
@@ -174,9 +174,8 @@ export function SettingsPage(props: SettingsPageProps) {
     <PageLayout
       title={t("settings.title")}
       sectionsLabel={t("settings.sections")}
-      backLabel={t("settings.back")}
+      backLabel={props.backLabel}
       onBack={props.onClose}
-      banner={props.banner}
       value={activeTabValue}
       onValueChange={(id) => {
         if (id.startsWith(HARNESS_TAB_PREFIX)) {

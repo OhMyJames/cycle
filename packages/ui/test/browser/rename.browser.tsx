@@ -24,7 +24,7 @@ const mount = async (fail?: string) => {
 };
 
 const field = () => screen.findByRole("textbox", { name: "Session name" });
-const header = () => document.querySelector('[data-slot="session-header"]') as HTMLElement;
+const header = () => document.querySelector('[data-slot="main-header"]') as HTMLElement;
 
 const openFirst = async (user: Awaited<ReturnType<typeof mount>>["user"]) => {
   await user.click(screen.getByRole("option", { name: /First/ }));

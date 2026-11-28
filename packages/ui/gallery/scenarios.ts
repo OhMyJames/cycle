@@ -1151,7 +1151,7 @@ export const scenarios: Record<string, Scenario> = {
       await until(() => Math.abs(el.scrollTop - 1500) < 2, "the scroll to 1500");
       await frames(3);
       const where = el.scrollTop;
-      const title = () => root.querySelector('[data-slot="session-header"] h1')?.textContent;
+      const title = () => root.querySelector('[data-slot="main-title"] h1')?.textContent;
       const open = (text: string) =>
         Array.from(root.querySelectorAll<HTMLElement>('[role="option"]'))
           .find((o) => o.textContent?.includes(text))
