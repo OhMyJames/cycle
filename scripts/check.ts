@@ -39,17 +39,25 @@ const rules: Rule[] = [
   },
 ];
 
-const sources = new Glob("{packages,harness,apps,cloud,scripts}/**/*.{ts,tsx,json}");
+const manifests = await workspaceManifests(root);
+const sourceRoots = new Set([
+  "scripts",
+  ...manifests.map((file) => file.slice(0, file.indexOf("/"))),
+]);
+const sources = new Glob("**/*.{ts,tsx,json}");
 const failures: string[] = [];
-for await (const file of sources.scan({ cwd: root })) {
-  if (file.includes("node_modules/")) continue;
-  const text = await Bun.file(root + file).text();
-  for (const rule of rules) {
-    if (!rule.allowed(file) && rule.pattern.test(text)) {
-      failures.push(`${file}: ${rule.name} (${rule.why})`);
+for (const directory of sourceRoots) {
+  for await (const name of sources.scan({ cwd: root + directory })) {
+    if (name.includes("node_modules/")) continue;
+    const file = `${directory}/${name}`;
+    const text = await Bun.file(root + file).text();
+    for (const rule of rules) {
+      if (!rule.allowed(file) && rule.pattern.test(text)) {
+        failures.push(`${file}: ${rule.name} (${rule.why})`);
+      }
     }
+    failures.push(...violations(file, text));
   }
-  failures.push(...violations(file, text));
 }
 // The ACP SDK is pinned to one exact version in the root workspace catalog, and every workspace
 // package refers to it via `catalog:` so upgrades happen in one place.
@@ -74,8 +82,8 @@ for await (const file of sources.scan({ cwd: root })) {
       `package.json: workspaces.catalog["@agentclientprotocol/sdk"] must be an exact semver version (got ${JSON.stringify(pinned)})`,
     );
   }
-  const manifests = ["package.json", ...(await workspaceManifests(root))];
-  for (const file of manifests) {
+
+  for (const file of ["package.json", ...manifests]) {
     const pkg = (await Bun.file(root + file).json()) as Manifest;
     for (const section of sections) {
       const spec = pkg[section]?.["@agentclientprotocol/sdk"];
