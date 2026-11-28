@@ -184,6 +184,7 @@ export async function newQaSession(
   const { config } = h.d;
   const created = await h.d.sessions.create({
     role: qa.role,
+    run: run.key,
     agent: config.qaAgent,
     ...(config.qaModel ? { model: config.qaModel } : {}),
     ...(config.qaEffort ? { effort: config.qaEffort } : {}),

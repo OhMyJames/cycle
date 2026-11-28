@@ -215,6 +215,7 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
     (sessionId) => {
       void answered(sessionId);
     },
+    file.projectKey,
   );
   // CYC-478: verify shared repo `.git/config` is clean at startup, initialize `<stateDir>/delivery.git`, and redact
   // any credential-shaped text leaving via GitHub or tracker comments.

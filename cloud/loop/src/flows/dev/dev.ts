@@ -81,6 +81,7 @@ export async function dev(
     const gitLog = await h.d.workspace.log(where(h, worktree), config.baseRef);
     const created = await h.d.sessions.create({
       role: "dev",
+      run: run.key,
       agent: config.devAgent,
       ...(config.devModel ? { model: config.devModel } : {}),
       ...(config.devEffort ? { effort: config.devEffort } : {}),

@@ -100,6 +100,7 @@ export class DaemonSessions implements Sessions {
   readonly #onWaiting: (sessionId: string, title: string) => void;
   readonly #record: RecordEvent;
   readonly #onPermissionResolved: ((sessionId: string) => void) | undefined;
+  readonly #projectKey: string | undefined;
   readonly #left = new LeftRequests();
   readonly #cancelledBySupervisor = new Set<string>();
 
@@ -108,10 +109,12 @@ export class DaemonSessions implements Sessions {
     onWaiting: (sessionId: string, title: string) => void,
     record: RecordEvent = () => {},
     onPermissionResolved?: (sessionId: string) => void,
+    projectKey?: string,
   ) {
     this.#onWaiting = onWaiting;
     this.#record = record;
     this.#onPermissionResolved = onPermissionResolved;
+    this.#projectKey = projectKey;
     this.#client = new CycleClient({
       name: "auto-loop",
       connect: () => connectUnix(socketPath),
@@ -239,11 +242,18 @@ export class DaemonSessions implements Sessions {
     effort?: string;
     title: string;
     cwd: string;
+    run?: string;
     worktree?: { base: string; name: string };
   }): Promise<{ sessionId: string; cwd: string; branch: string | null }> {
     const sessionId = await this.#client.newSession({
       cwd: input.cwd,
       agent: input.agent,
+      origin: {
+        kind: "loop",
+        role: input.role,
+        ...(this.#projectKey !== undefined ? { project: this.#projectKey } : {}),
+        ...(input.run !== undefined ? { run: input.run } : {}),
+      },
       ...(input.worktree !== undefined ? { worktree: input.worktree } : {}),
     });
     const mode = readOnlyMode(input.role, input.agent);

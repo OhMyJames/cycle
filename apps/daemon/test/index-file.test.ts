@@ -77,3 +77,22 @@ test("an index from before readSeq and attentionSeq loads, and keeps them once t
   await index.update("s1", { attentionSeq: 7, readSeq: 3 });
   expect((await SessionIndex.load(path)).get("s1")).toMatchObject({ attentionSeq: 7, readSeq: 3 });
 });
+
+test("an index persists session origin and stays backward-compatible with entries without origin (CYC-534)", async () => {
+  const path = join(dir, "index.json");
+  await writeFile(path, JSON.stringify({ version: 1, sessions: { legacy: entry } }));
+  const index = await SessionIndex.load(path);
+  expect(index.get("legacy")?.origin).toBeUndefined();
+  await index.put("loop-1", {
+    ...entry,
+    origin: { kind: "loop", project: "CYC", run: "CYC-534", role: "shape" },
+  });
+  const reloaded = await SessionIndex.load(path);
+  expect(reloaded.get("legacy")?.origin).toBeUndefined();
+  expect(reloaded.get("loop-1")?.origin).toEqual({
+    kind: "loop",
+    project: "CYC",
+    run: "CYC-534",
+    role: "shape",
+  });
+});

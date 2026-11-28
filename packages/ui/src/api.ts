@@ -129,6 +129,28 @@ export type SessionSummary = {
   environment?: SessionEnvironmentSummary;
   /** The worktree the session is in now (`cycle/worktree`); its `root` is the workspace it is listed under. */
   worktree?: WorktreeSummary;
+  /** Who started the session (`cycle/origin`, CYC-534). Absent for human sessions. */
+  origin?: SessionOrigin;
+};
+
+/** Fixed role names for automated Loop sessions (mirrors `@cycle/protocol`, CYC-534). */
+export type SessionOriginRole =
+  | "dev"
+  | "qa"
+  | "review"
+  | "research"
+  | "research_qa"
+  | "triage"
+  | "shape"
+  | "shape_qa"
+  | "graph_planner";
+
+/** Structured origin metadata on automated sessions; never contains paths or free text. */
+export type SessionOrigin = {
+  kind: "loop";
+  project?: string;
+  run?: string;
+  role?: SessionOriginRole;
 };
 
 /** Where a session's work is, apart from the main checkout (docs/protocol.md §6 "Worktree"). */
@@ -1320,6 +1342,11 @@ export type AppApi = {
   loopRuns(): Promise<LoopRunsAnswer>;
   /** One Project's board, as the Loop server answers it (main holds no itsaplan key). */
   loopBoard(projectKey: string): Promise<LoopBoardAnswer>;
+  /** Paginated chronological progress of a Loop Project (runs + graph nodes + planning rounds, CYC-534). */
+  loopTimeline(
+    projectKey: string,
+    options?: { limit?: number; before?: string },
+  ): Promise<LoopTimelineAnswer>;
   /** One ticket's body, acceptance criteria, PR/MR links and the buttons it gets, as the Loop server answers it. */
   loopTicket(projectKey: string, identifier: string): Promise<LoopTicketAnswer>;
   /** One ticket's run workflow detail (phase, round, heartbeat, sessions, recent events) from `loop/run/get`. */
@@ -1607,6 +1634,83 @@ export type LoopBoardAnswer =
   /** The server answered but had no board to give. */
   | { kind: "unreachable" };
 
+export type LoopTimelineStepStatus =
+  | "pending"
+  | "running"
+  | "passed"
+  | "failed"
+  | "blocked"
+  | "skipped";
+
+export type LoopTimelineStep = {
+  id: string;
+  label: string;
+  role: SessionOriginRole;
+  status: LoopTimelineStepStatus;
+  sessionId: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  summary: string | null;
+  error: string | null;
+};
+
+export type LoopTimelineRunEntry = {
+  entryKind: "run";
+  id: string;
+  key: string;
+  title: string;
+  kind: "dev" | "research";
+  phase: string;
+  state: "active" | "blocked" | "done";
+  round: number;
+  startedAt: string;
+  updatedAt: string;
+  prUrl: string | null;
+  blockedReason: string | null;
+  graph: LoopGraphSummary | null;
+  steps: LoopTimelineStep[];
+};
+
+export type LoopTimelinePlanItem = {
+  key: string;
+  state: "waiting" | "shape" | "shape_qa" | "writing" | "done" | "stopped" | "asked" | "abandoned";
+  round: number;
+  resultKind: "rewrite" | "split" | null;
+  splitCount: number;
+  stoppedReason: string | null;
+  shapeSessionId: string | null;
+  qaSessionId: string | null;
+};
+
+export type LoopTimelinePlanEntry = {
+  entryKind: "plan";
+  id: string;
+  planId: string;
+  phase: "triage" | "shaping" | "finished" | "abandoned";
+  state: "active" | "done";
+  startedAt: string;
+  updatedAt: string;
+  endedAt: string | null;
+  candidateCount: number;
+  stoppedReason: string | null;
+  triageSessionId: string | null;
+  items: LoopTimelinePlanItem[];
+};
+
+export type LoopTimelineEntry = LoopTimelineRunEntry | LoopTimelinePlanEntry;
+
+export type LoopTimelineAnswer =
+  | {
+      kind: "ok";
+      project: string;
+      entries: LoopTimelineEntry[];
+      hasMore: boolean;
+      nextBefore: string | null;
+      knownSessionIds: string[];
+    }
+  | { kind: "no_server" }
+  | { kind: "unreachable" };
+
 /** What came of saving a picture: written, the person closed the dialog, or it could not be (not a picture, a disk error). */
 export type ImageSaved = "saved" | "cancelled" | "failed";
 
@@ -1723,6 +1827,7 @@ const METHODS: { readonly [method in keyof AppApi]-?: true } = {
   workspaceRepo: true,
   loopRuns: true,
   loopBoard: true,
+  loopTimeline: true,
   loopTicket: true,
   loopRun: true,
   loopCancelRun: true,

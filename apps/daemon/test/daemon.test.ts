@@ -2138,3 +2138,32 @@ test("an older index's sessions are read once each to be listed, a few at a time
   );
   expect(reads).toBe(0);
 });
+
+test("session/new validates and persists _meta['cycle/origin'] and returns it in session/list (CYC-534)", async () => {
+  const { daemon } = await start();
+  const c = await connectClient(daemon);
+  const loopCreated = await c.agent.request(methods.agent.session.new, {
+    cwd: "/tmp",
+    _meta: {
+      [META.origin]: { kind: "loop", project: "CYC", run: "CYC-534", role: "shape" },
+    },
+  });
+  const humanCreated = await c.agent.request(methods.agent.session.new, { cwd: "/tmp" });
+  const listed = (await c.agent.request(methods.agent.session.list, {})).sessions;
+  const loopRow = listed.find((s) => s.sessionId === loopCreated.sessionId);
+  const humanRow = listed.find((s) => s.sessionId === humanCreated.sessionId);
+  expect((loopRow?._meta as Record<string, unknown> | undefined)?.[META.origin]).toEqual({
+    kind: "loop",
+    project: "CYC",
+    run: "CYC-534",
+    role: "shape",
+  });
+  expect((humanRow?._meta as Record<string, unknown> | undefined)?.[META.origin]).toBeUndefined();
+
+  await expect(
+    c.agent.request(methods.agent.session.new, {
+      cwd: "/tmp",
+      _meta: { [META.origin]: { kind: "unknown" } },
+    }),
+  ).rejects.toMatchObject({ code: -32602 });
+});

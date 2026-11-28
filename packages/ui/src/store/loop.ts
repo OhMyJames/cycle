@@ -17,8 +17,22 @@ import type {
   LoopRunAnswer,
   LoopRunsAnswer,
   LoopTicketAnswer,
+  LoopTimelineAnswer,
+  LoopTimelineEntry,
 } from "../api.ts";
 import type { StoreKit } from "./core.ts";
+
+export type LoopTimelineState =
+  | "loading"
+  | {
+      kind: "ok";
+      entries: LoopTimelineEntry[];
+      hasMore: boolean;
+      nextBefore: string | null;
+      loadingMore: boolean;
+    }
+  | { kind: "no_server" }
+  | { kind: "unreachable" };
 
 export type LoopState = {
   /** The Projects as last read: kept when the server goes away, so the page can show them greyed out. */
@@ -31,6 +45,10 @@ export type LoopState = {
   runs?: LoopRunsAnswer;
   /** Each Project's board as last read; `loading` while it is being read the first time. */
   boards: Record<string, LoopBoardAnswer | "loading">;
+  /** Each Project's chronological Loop timeline (CYC-534). */
+  timelines: Record<string, LoopTimelineState>;
+  /** Known Loop session IDs reported by the Loop server per Project (smoothly hides legacy Loop sessions). */
+  knownSessions: Record<string, string[]>;
   /** Each Project's Notices as last read. They are derived from state by main, so a read replaces the last whole. */
   notices: Record<string, LoopNoticesAnswer>;
   /** Per-Project counter incremented whenever Loop's event stream reports new activity, so open drawers can refresh. */
@@ -46,6 +64,8 @@ export const initialLoop = (): LoopState => ({
   projects: [],
   workspaceRepos: {},
   boards: {},
+  timelines: {},
+  knownSessions: {},
   notices: {},
   activity: {},
 });
@@ -142,6 +162,147 @@ export class LoopSlice {
         void this.loadBoard(key);
       if (state.notices[key] !== undefined) void this.loadNotices(key);
     }
+  };
+
+  readonly #timelineAsk = new Map<string, number>();
+  readonly #timelineInFlight = new Set<string>();
+
+  /**
+   * Loads the first page of a Loop Project's timeline (or refreshes it while keeping previous items visible).
+   * With `merge: true` (used on live `loop-activity` refreshes while Timeline is mounted), updated page-1 entries are
+   * merged ahead of any already-paginated older entries so "Show more" results are never truncated.
+   */
+  loadTimeline = async (projectKey: string, options?: { merge?: boolean }): Promise<void> => {
+    const merge = options?.merge === true;
+    if (merge && this.#timelineInFlight.has(projectKey)) return;
+    const ask = (this.#timelineAsk.get(projectKey) ?? 0) + 1;
+    this.#timelineAsk.set(projectKey, ask);
+    this.#timelineInFlight.add(projectKey);
+    const had = this.#kit.state().loop.timelines[projectKey];
+    if (had === undefined)
+      this.#kit.set((s) => ({
+        loop: { ...s.loop, timelines: { ...s.loop.timelines, [projectKey]: "loading" } },
+      }));
+    const answer: LoopTimelineAnswer = await this.#kit.bridge
+      .loopTimeline(projectKey)
+      .catch(() => ({ kind: "unreachable" }) as const);
+    if (this.#timelineAsk.get(projectKey) !== ask) return;
+    this.#timelineInFlight.delete(projectKey);
+    if (typeof had === "object" && had.kind === "ok" && answer.kind !== "ok") return;
+    this.#kit.set((s) => {
+      const cur = s.loop.timelines[projectKey];
+      let nextState: LoopTimelineState;
+      if (answer.kind !== "ok") {
+        nextState = answer;
+      } else if (merge && typeof cur === "object" && cur.kind === "ok" && cur.entries.length > 0) {
+        const freshIds = new Set(answer.entries.map((e) => e.id));
+        const tail = cur.entries.filter((e) => !freshIds.has(e.id));
+        const merged = [...answer.entries, ...tail].sort((a, b) =>
+          b.updatedAt > a.updatedAt
+            ? 1
+            : b.updatedAt < a.updatedAt
+              ? -1
+              : b.id > a.id
+                ? 1
+                : b.id < a.id
+                  ? -1
+                  : 0,
+        );
+        const keptTail = tail.length > 0;
+        nextState = {
+          kind: "ok",
+          entries: merged,
+          hasMore: keptTail ? cur.hasMore : answer.hasMore,
+          nextBefore: keptTail ? cur.nextBefore : answer.nextBefore,
+          loadingMore: false,
+        };
+      } else {
+        nextState = {
+          kind: "ok",
+          entries: answer.entries,
+          hasMore: answer.hasMore,
+          nextBefore: answer.nextBefore,
+          loadingMore: false,
+        };
+      }
+      return {
+        loop: {
+          ...s.loop,
+          timelines: { ...s.loop.timelines, [projectKey]: nextState },
+          ...(answer.kind === "ok"
+            ? {
+                knownSessions: {
+                  ...s.loop.knownSessions,
+                  [projectKey]: answer.knownSessionIds,
+                },
+              }
+            : {}),
+        },
+      };
+    });
+  };
+
+  /** Appends the next page of a Loop Project's timeline using its `nextBefore` cursor. */
+  loadMoreTimeline = async (projectKey: string): Promise<void> => {
+    const current = this.#kit.state().loop.timelines[projectKey];
+    if (
+      typeof current !== "object" ||
+      current.kind !== "ok" ||
+      !current.hasMore ||
+      current.nextBefore === null ||
+      current.loadingMore ||
+      this.#timelineInFlight.has(projectKey)
+    )
+      return;
+    const ask = this.#timelineAsk.get(projectKey) ?? 0;
+    this.#timelineInFlight.add(projectKey);
+    this.#kit.set((s) => {
+      const cur = s.loop.timelines[projectKey];
+      if (typeof cur !== "object" || cur.kind !== "ok") return {};
+      return {
+        loop: {
+          ...s.loop,
+          timelines: { ...s.loop.timelines, [projectKey]: { ...cur, loadingMore: true } },
+        },
+      };
+    });
+    const answer: LoopTimelineAnswer = await this.#kit.bridge
+      .loopTimeline(projectKey, { before: current.nextBefore })
+      .catch(() => ({ kind: "unreachable" }) as const);
+    this.#timelineInFlight.delete(projectKey);
+    if ((this.#timelineAsk.get(projectKey) ?? 0) !== ask) return;
+    this.#kit.set((s) => {
+      const cur = s.loop.timelines[projectKey];
+      if (typeof cur !== "object" || cur.kind !== "ok") return {};
+      if (answer.kind !== "ok")
+        return {
+          loop: {
+            ...s.loop,
+            timelines: { ...s.loop.timelines, [projectKey]: { ...cur, loadingMore: false } },
+          },
+        };
+      const seen = new Set(cur.entries.map((e) => e.id));
+      const appended = answer.entries.filter((e) => !seen.has(e.id));
+      return {
+        loop: {
+          ...s.loop,
+          timelines: {
+            ...s.loop.timelines,
+            [projectKey]: {
+              kind: "ok",
+              entries: [...cur.entries, ...appended],
+              hasMore: answer.hasMore,
+              nextBefore: answer.nextBefore,
+              loadingMore: false,
+            },
+          },
+          knownSessions: {
+            ...s.loop.knownSessions,
+            [projectKey]: answer.knownSessionIds,
+          },
+        },
+      };
+    });
   };
 
   readonly #boardAsk = new Map<string, number>();

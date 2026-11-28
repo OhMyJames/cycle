@@ -156,6 +156,7 @@ export class ResearchFlow implements Flow {
     const { config } = this.#host.d;
     return this.#host.d.sessions.create({
       role: "research",
+      run: run.key,
       agent: config.devAgent,
       ...(config.devModel ? { model: config.devModel } : {}),
       ...(config.devEffort ? { effort: config.devEffort } : {}),

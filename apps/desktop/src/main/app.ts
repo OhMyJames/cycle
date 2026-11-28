@@ -44,6 +44,7 @@ import {
   answerRun,
   answerRuns,
   answerTicket,
+  answerTimeline,
   callLoop,
   cancelLoopRun,
   loopFeed,
@@ -404,6 +405,10 @@ export const startApp = async (options: AppOptions) => {
     loopRuns: () => answerRuns(loopRuns, (event, props) => analytics.track(event, props)),
     loopBoard: (projectKey: unknown) =>
       answerBoard(loopOptions(), projectKey, (event, props) => analytics.track(event, props)),
+    loopTimeline: (projectKey: unknown, opts: unknown) =>
+      answerTimeline(loopOptions(), projectKey, opts, (event, props) =>
+        analytics.track(event, props),
+      ),
     loopTicket: (projectKey: unknown, identifier: unknown) =>
       answerTicket(loopOptions(), projectKey, identifier, (event, props) =>
         analytics.track(event, props),

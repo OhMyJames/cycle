@@ -805,7 +805,7 @@ export class PlanFlow {
     let sessionId = s.sessionId;
     let prompt = s.prompt;
     if (sessionId === null) {
-      sessionId = await this.#newSession(role, worktree, s.title);
+      sessionId = await this.#newSession(role, worktree, s.title, ctx.key);
       await s.saveSession(sessionId);
       prompt = s.fresh;
     }
@@ -814,7 +814,7 @@ export class PlanFlow {
       result = await this.#host.turn(ctx.key, sessionId, prompt, options);
     } catch (error) {
       if (!(error instanceof SessionLost)) throw error;
-      sessionId = await this.#newSession(role, worktree, s.title);
+      sessionId = await this.#newSession(role, worktree, s.title, ctx.key);
       await s.saveSession(sessionId);
       result = await this.#host.turn(ctx.key, sessionId, s.fresh, options);
     }
@@ -825,7 +825,12 @@ export class PlanFlow {
     return result;
   }
 
-  async #newSession(role: SessionRole, worktree: string, title: string): Promise<string> {
+  async #newSession(
+    role: SessionRole,
+    worktree: string,
+    title: string,
+    run: string,
+  ): Promise<string> {
     const { config } = this.#d;
     const qa = role === "shape_qa";
     const agent = qa ? config.qaAgent : config.devAgent;
@@ -833,6 +838,7 @@ export class PlanFlow {
     const effort = qa ? config.qaEffort : config.devEffort;
     const created = await this.#d.sessions.create({
       role,
+      run,
       agent,
       ...(model ? { model } : {}),
       ...(effort ? { effort } : {}),

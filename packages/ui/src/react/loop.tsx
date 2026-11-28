@@ -11,6 +11,7 @@ import { ChevronRightIcon, RefreshIcon } from "./icons.tsx";
 import { Board } from "./loop-board.tsx";
 import { type LoopProjectTab, type LoopView, up, viewProject } from "./loop-nav.ts";
 import { Notices, noticeUrgency, type RetryIntents } from "./loop-notices.tsx";
+import { LoopTimeline } from "./loop-timeline.tsx";
 import { PageGroup, PageRows } from "./page-layout.tsx";
 import { ShellNotices, ShellTitle } from "./shell.tsx";
 import { StateBlock } from "./state-block.tsx";
@@ -215,6 +216,7 @@ export function LoopMain({
   onOpenProject,
   onBack,
   onClose,
+  onTimelineSessionOpened,
   active = true,
 }: {
   view: LoopView;
@@ -229,6 +231,8 @@ export function LoopMain({
   onBack: () => void;
   /** Out of the Loop: a conversation about a ticket was started. */
   onClose: () => void;
+  /** Called when a session is opened from Timeline so the session view can offer a one-click return (CYC-534). */
+  onTimelineSessionOpened?: (projectKey: string, sessionId: string) => void;
   /** False while Settings or Connectors is over the window: Escape is theirs then. */
   active?: boolean;
 }) {
@@ -378,17 +382,15 @@ export function LoopMain({
         data-full={chosen !== undefined ? "" : undefined}
       >
         {chosen !== undefined && isTimeline ? (
-          <div data-slot="loop-board-state" data-kind="loop-timeline">
-            <StateBlock
-              tone="empty"
-              title={t("loop.timeline.placeholder.title")}
-              body={t("loop.timeline.placeholder.body")}
-              action={{
-                label: t("loop.openKanban"),
-                onAction: () => openProject(chosen.projectKey, "kanban", "timeline"),
-              }}
-            />
-          </div>
+          <LoopTimeline
+            key={chosen.projectKey}
+            projectKey={chosen.projectKey}
+            onOpenTicket={(identifier) =>
+              onView({ at: "ticket", projectKey: chosen.projectKey, identifier })
+            }
+            onOpenKanban={() => openProject(chosen.projectKey, "kanban", "timeline")}
+            onSessionOpened={(key, sessionId) => onTimelineSessionOpened?.(key, sessionId)}
+          />
         ) : chosen !== undefined ? (
           <Board
             projectKey={chosen.projectKey}

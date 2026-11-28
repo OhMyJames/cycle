@@ -28,6 +28,11 @@ export const META = {
    */
   environment: "cycle/environment",
   /**
+   * In `session/new` and in a `session/list` row: who started the session (`SessionOriginSchema`, docs/protocol.md §6).
+   * Absent on human-initiated sessions; automated sessions such as Loop stamp `{ kind: "loop", ... }`.
+   */
+  origin: "cycle/origin",
+  /**
    * In `session/new`: make a worktree and run in it, `WorktreeRequestSchema`. In a `session/list` row: the one the
    * session is in, `WorktreeSummarySchema`. In `session/delete`: `{ discard: true }` removes a worktree that holds
    * unsaved work (docs/protocol.md §6 "Worktree").
@@ -188,6 +193,31 @@ export type Capabilities = z.infer<typeof CapabilitiesSchema>;
 const sessionTime = z.iso
   .datetime()
   .refine((value) => !/\.\d{4}/.test(value), "Expected millisecond precision or coarser");
+
+/** Fixed role names for automated Loop sessions (docs/protocol.md §6, CYC-534). */
+export const SessionOriginRoleSchema = z.enum([
+  "dev",
+  "qa",
+  "review",
+  "research",
+  "research_qa",
+  "triage",
+  "shape",
+  "shape_qa",
+  "graph_planner",
+]);
+export type SessionOriginRole = z.infer<typeof SessionOriginRoleSchema>;
+
+/** Who created a session: absent for human sessions, structured metadata (never paths/text) for Loop sessions. */
+export const SessionOriginSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("loop"),
+    project: z.string().min(1).max(100).optional(),
+    run: z.string().min(1).max(100).optional(),
+    role: SessionOriginRoleSchema.optional(),
+  }),
+]);
+export type SessionOrigin = z.infer<typeof SessionOriginSchema>;
 
 /** Options for a bounded scan of the session index (protocol §6). */
 export const SessionPageSchema = z.object({

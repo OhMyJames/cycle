@@ -13,6 +13,7 @@ import {
   answerRun,
   answerRuns,
   answerTicket,
+  answerTimeline,
   type Called,
   callLoop,
   cancelLoopRun,
@@ -1440,5 +1441,59 @@ describe("workspace git remote normalisation for Loop matching (CYC-533)", () =>
     expect(await readWorkspaceRepo(plainDir)).toBeNull();
     expect(await readWorkspaceRepo("relative/path")).toBeNull();
     expect(await readWorkspaceRepo(null)).toBeNull();
+  });
+});
+
+describe("timeline (loop/timeline/list, CYC-534)", () => {
+  test("answerTimeline reads paginated entries, forwards limit/before, and tracks outcome only", async () => {
+    const seen: unknown[] = [];
+    const tracked: [string, Record<string, unknown>][] = [];
+    const path = sock();
+    const srv = await fakeLoop(path, (asked) => {
+      seen.push([asked.method, asked.params]);
+      return {
+        result: {
+          project: "CYC",
+          entries: [],
+          hasMore: false,
+          nextBefore: null,
+          knownSessionIds: ["s-loop-1"],
+        },
+      };
+    });
+    try {
+      const answer = await answerTimeline(
+        { socket: path },
+        "CYC",
+        { limit: 15, before: "2026-11-28T01:00:00.000Z|run:CYC-1" },
+        (e, p) => tracked.push([e, p]),
+      );
+      expect(answer).toEqual({
+        kind: "ok",
+        project: "CYC",
+        entries: [],
+        hasMore: false,
+        nextBefore: null,
+        knownSessionIds: ["s-loop-1"],
+      });
+      expect(seen).toEqual([
+        [
+          "loop/timeline/list",
+          { project: "CYC", limit: 15, before: "2026-11-28T01:00:00.000Z|run:CYC-1" },
+        ],
+      ]);
+      expect(tracked).toEqual([["loop_timeline_read", { result: "ok" }]]);
+    } finally {
+      srv.close();
+    }
+
+    const noServer = await answerTimeline(
+      { socket: join(dir, "missing-timeline.sock") },
+      "CYC",
+      undefined,
+      (e, p) => tracked.push([e, p]),
+    );
+    expect(noServer).toEqual({ kind: "no_server" });
+    expect(tracked[1]).toEqual(["loop_timeline_read", { result: "no_server" }]);
   });
 });

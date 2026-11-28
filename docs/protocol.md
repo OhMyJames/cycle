@@ -313,6 +313,13 @@ daemon 在索引里记 `prompted`;在这个规则之前写的索引条目没有�
 - session 的 `cwd`、`worktree` 立刻变(文件、diff、终端跟着变);**agent 自己的目录从下一个 turn 起变**:daemon 把 agent 标为过期,这个 turn 结束后结束它的进程,下一条 prompt 用 `session/resume` 带新的 `cwd` 把它拉起。这条路对 Codex 和 agy 一样;agy 恢复时换 `cwd` 能否保留上下文没有用真实账号验证过。队列里还有 prompt 时,过期的重启要等队列处理完。
 - Claude 自己建的 worktree 目前**不会**触发 Cycle 的 setup / cleanup,Cycle 也不观察 `EnterWorktree` 的结果(见"待定")。
 
+### 会话来源(2026-11-28,CYC-534)
+
+用于区分人自己发起的会话与系统自动创建的会话(目前只有 Loop),便于客户端把自动会话从侧栏普通会话列表和未读计数中抽离,交由专门的视图(如项目的 Timeline)承接。
+
+- **`session/new` 的 `_meta["cycle/origin"]`**:可选,目前取值 `{ "kind": "loop", "project"?: string, "run"?: string, "role"?: "dev" | "qa" | "review" | "research" | "research_qa" | "triage" | "shape" | "shape_qa" | "graph_planner" }`。由 `SessionOriginSchema` 校验;不合法时返回 `-32602`。只放固定结构词与编号,绝不放本地路径、仓库地址或自由正文。人发起的会话不带此字段。
+- **持久化与 `session/list` 行**:daemon 将其保存在会话索引中,在 `session/list` 行的 `_meta["cycle/origin"]` 原样透出。旧索引条目没有该字段时缺省(按人工会话处理),向后兼容;不支持的旧客户端按未识别 `_meta` 忽略。
+
 ## 7. 附着、历史补发与重连
 
 这是 ACP 没有定义、由 L1 补上的部分。
@@ -1291,19 +1298,20 @@ Loop 页顶部的 Notice 区由桌面主进程从两处派生,不依赖 Loop 服
 
 桌面端和运营 agent 之后只调这组方法,itsaplan 只在 Loop 内部对接一处,不再解析评论、不再写死标签名。决定见 [2026-11-26-loop-api-is-the-only-way-in](../.agents/notes/2026-11-26-loop-api-is-the-only-way-in.md)。**本节取代上文"服务不访问 itsaplan""工单状态按钮(桌面端写 itsaplan)""Notice(桌面端派生)"三处**:桌面端改用这组方法由下一张单做,在那之前它们仍是桌面端现在的行为。`projects/list`、`runs/list`、`events/list` 保持原名;新方法在 `loop/` 下,`loop/projects/list` 与 `projects/list` 同。schema 在 `loop.ts`,每个返回都按它校验。
 
-| 方法                 | 参数                                                                       | 返回                                                   |
-| -------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------ |
-| `loop/projects/list` | 无                                                                         | `{projects}`                                           |
-| `loop/board/get`     | `{project}`                                                                | `{project, columns, stale, readAt}`                    |
-| `loop/runs/list`     | `{project, filter?: {state?}}`                                             | `{project, runs}`                                      |
-| `loop/run/get`       | `{project, key}`                                                           | 阶段、轮次、会话 `{kind,id}`、PR、最近 50 条事件、心跳 |
-| `loop/notices/list`  | `{project?}`                                                               | `{notices}`                                            |
-| `loop/ticket/get`    | `{project, key}`                                                           | 单张工单的详情(见下)                                   |
-| `loop/tickets/act`   | `{project, verb, keys[], reason?, confirmed, actor, actorKind}`            | `{results}`                                            |
-| `loop/intents/retry` | `{project, id?, key?, actor, actorKind}`                                   | `{retried}`(重新排队的 intent 数)                      |
-| `loop/graph/act`     | `{project, key, nodeId, action, title?, goal?, verify?, actor, actorKind}` | `{key, nodeId, action, phase, graph}`                  |
-| `loop/run/cancel`    | `{project, key, actor, actorKind}`                                         | `{cancelled}`                                          |
-| `loop/status`        | 无                                                                         | `{version, restartedAt, projects}`                     |
+| 方法                 | 参数                                                                       | 返回                                                       |
+| -------------------- | -------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `loop/projects/list` | 无                                                                         | `{projects}`                                               |
+| `loop/board/get`     | `{project}`                                                                | `{project, columns, stale, readAt}`                        |
+| `loop/runs/list`     | `{project, filter?: {state?}}`                                             | `{project, runs}`                                          |
+| `loop/run/get`       | `{project, key}`                                                           | 阶段、轮次、会话 `{kind,id}`、PR、最近 50 条事件、心跳     |
+| `loop/notices/list`  | `{project?}`                                                               | `{notices}`                                                |
+| `loop/ticket/get`    | `{project, key}`                                                           | 单张工单的详情(见下)                                       |
+| `loop/tickets/act`   | `{project, verb, keys[], reason?, confirmed, actor, actorKind}`            | `{results}`                                                |
+| `loop/intents/retry` | `{project, id?, key?, actor, actorKind}`                                   | `{retried}`(重新排队的 intent 数)                          |
+| `loop/graph/act`     | `{project, key, nodeId, action, title?, goal?, verify?, actor, actorKind}` | `{key, nodeId, action, phase, graph}`                      |
+| `loop/run/cancel`    | `{project, key, actor, actorKind}`                                         | `{cancelled}`                                              |
+| `loop/timeline/list` | `{project, limit?, before?}`                                               | `{project, entries, hasMore, nextBefore, knownSessionIds}` |
+| `loop/status`        | 无                                                                         | `{version, restartedAt, projects}`                         |
 
 - **看板**:server 用 `planKey` 读 itsaplan,列按 stateType(backlog、unstarted、started、completed、canceled)再按看板顺序;完成和取消的列只取最近 30 张。卡片有编号、标题、类型名、优先级、标签名、`parent`(父工单 `{key, title}`,取自 `list_issues` 的 `parent`,无父工单为 `null`,旧 server 可不带该字段)、`pendingReason`(带 `待批准` 的卡,取最新评论首行,最多 20 张、140 字,读不到为 `null`)、`phase`(只对 started 列里有未完成 run 的卡,`{name, since}` 取自 run 的 `phase` 和 `updatedAt`,不读 tracker 自定义字段;心跳在 `run/get` 和 `stuck` Notice 里用)。缓存 15 秒;读失败时返回上一次的结果并标 `stale: true`(`readAt` 仍是上次成功的时间);第一次就失败返回 `-32603`,`data.reason` 为 `tracker_unreachable`。
 - **run**:`state` 为 `active`/`blocked`/`done`;`filter.state` 过滤。`run/get` 的会话是 `{kind, id}`(kind:`dev`、`qa`、`review`、`research`、`research_qa`、`triage`、`shape`、`shape_qa`),run 不存在返回 `-32602`,`data.reason` 为 `unknown_run`。桌面端工单抽屉读 `loop/run/get` 展示运行工作流、轮次、心跳、全部会话入口与最近事件,并在 `active` 时提供经确认的「取消本轮」(`loop/run/cancel`)。
@@ -1329,6 +1337,7 @@ Loop 页顶部的 Notice 区由桌面主进程从两处派生,不依赖 Loop 服
   - `loop/intents/retry`:把 `stuck` 的 intent 改回 `pending`、`attempts` 和退避清零、`next_at` 清空,下一次对账就执行。`id` 指一条,`key` 指这张工单(如 `CYC-390`)的全部卡住的 intent;两者必须给且只给一个,否则 `-32602`(`invalid_params`)。`id` 不存在返回 `-32602`(`not_found`);不是 `stuck` 的什么都不改。需要 `actor` 和 `actorKind`(缺则 `actor_required`,什么都不写)。每条重新排队的 intent 写一条 `actions`(`intent_retry`,带 `intentId`、`actor`、`actorKind`)。返回 `{retried}`。
 - **`actor` 和 `actorKind`**:写方法必须带,`actorKind` 只认 `desktop`、`operator`;缺或不合法返回 `-32602`,`data.reason` 为 `actor_required`,什么都不写。**这不是认证**:能连上 `loop.sock` 的就是本机同一用户,`actor` 是自报的;写入用 Loop 自己的 itsaplan key,所以 itsaplan 的审计里是 Loop,评论和 `actions` 才是谁做的记录。剩余风险见决定笔记。
 - **`loop/run/cancel`(CYC-484)**:守护者或运营方取消某张正在运行的工单当前运行中的会话回合,使其按中断逻辑重试。`actorKind` 可为 `desktop`、`operator`、`supervisor`,写一条 `actions`(`run_cancel`)。返回 `{cancelled: boolean}`。
+- **`loop/timeline/list`(CYC-534)**:只读方法,从 `loop.db` 聚合该项目的 `runs`(含 `graph_nodes` 与各阶段会话)和 `plans`(Triage / Shape / Shape QA 轮次与条目结果),按 `(updatedAt, id)` 倒序分页返回。`limit` 默认 30(1–100);`before` 为上一页返回的 `nextBefore` 游标(支持 `<updatedAt>|<id>` 或纯 ISO 时间)。每条 `entry` 区分 `entryKind: "run" | "plan"`,携带状态、起止/更新时间、轮次、各步关联的 `sessionId`、结果摘要或停止/阻塞原因;同时返回 `knownSessionIds`(该项目已记录的 Loop 会话 id 去重集合),便于桌面端对升级前创建的无 `_meta["cycle/origin"]` 历史 Loop 会话做平滑抽离。绝不返回本地 worktree 路径、仓库地址或凭据。
 - **`loop/status`**:`version`(Loop 所在发行版本)、`restartedAt`(本进程启动时间)、每个 Project 的 `workers` 数和未结束且不在 Blocked 的 run(`key`、`kind`、`phase`)。
 - **socket**:仍是 `<dataDir>/loop.sock`,`0600`;一行最多 1 MB(1,048,576 字节),超过不等换行就断开连接。
 - **埋点**:只记行为,不含工单内容:每次调用写一行日志 `loop api <方法名> <结果计数>`(如 `ok=2 skipped=1 failed=0`),没有工单号、标题、原因或 actor。不向 PostHog 发(Loop 服务不在 Electron 主进程里,桌面端改用这组方法时再在主进程埋点)。

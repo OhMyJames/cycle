@@ -70,6 +70,7 @@ export async function review(
     try {
       const created = await h.d.sessions.create({
         role: "review",
+        run: run.key,
         agent: config.reviewAgent,
         ...(config.reviewModel ? { model: config.reviewModel } : {}),
         ...(config.reviewEffort ? { effort: config.reviewEffort } : {}),

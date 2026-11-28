@@ -79,6 +79,7 @@ const ensureNodeSession = async (
   const { config } = h.d;
   const created = await h.d.sessions.create({
     role: "dev",
+    run: run.key,
     agent: config.devAgent,
     ...(config.devModel ? { model: config.devModel } : {}),
     ...(config.devEffort ? { effort: config.devEffort } : {}),
@@ -133,6 +134,7 @@ async function sizeSmallItem(
   try {
     const created = await h.d.sessions.create({
       role: "graph_planner",
+      run: run.key,
       agent: config.devAgent,
       ...(config.devModel ? { model: config.devModel } : {}),
       ...(config.devEffort ? { effort: config.devEffort } : {}),
@@ -297,6 +299,7 @@ export async function nodeDev(
     if (!(error instanceof SessionLost)) throw error;
     const created = await h.d.sessions.create({
       role: "dev",
+      run: run.key,
       agent: config.devAgent,
       ...(config.devModel ? { model: config.devModel } : {}),
       ...(config.devEffort ? { effort: config.devEffort } : {}),

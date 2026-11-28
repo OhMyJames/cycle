@@ -178,6 +178,7 @@ test.skipIf(!ready)(
           "removeProvider",
           "listVault",
           "loopBoard",
+          "loopTimeline",
           "loopTicket",
           "loopRun",
           "loopCancelRun",

@@ -360,6 +360,8 @@ export class AppStore extends StoreBase {
   loadLoopProjects = this.#loop.loadProjects;
   loadWorkspaceRepo = this.#loop.loadWorkspaceRepo;
   loadLoopBoard = this.#loop.loadBoard;
+  loadLoopTimeline = this.#loop.loadTimeline;
+  loadMoreLoopTimeline = this.#loop.loadMoreTimeline;
   loadLoopRuns = this.#loop.loadRuns;
   loadLoopTicket = this.#loop.loadTicket;
   loadLoopRun = this.#loop.loadRun;
