@@ -1826,7 +1826,8 @@ button[data-slot="loop-ticket-title"] {
 }
 
 /* ---- Overview page (centered inside PageLayout's page-column, zero double padding) ---- */
-[data-kind="loop-overview"] {
+[data-kind="loop-overview"],
+[data-kind="loop-console"] {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
@@ -3387,4 +3388,44 @@ div[data-slot="loop-notice-open"]:hover {
   display: grid;
   place-items: center;
   padding: 1.5rem;
+}
+
+/* Console (CYC-556): rows reuse the notice row; the queue head, the pick box and the row's one action. */
+[data-slot="loop-notice-go"] {
+  flex: none;
+  color: var(--cycle-ink-muted);
+  font-size: var(--cycle-text-meta);
+}
+
+[data-slot="loop-pending-head"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--cycle-border-subtle);
+  font-size: var(--cycle-text-meta);
+}
+
+[data-slot="loop-pending-title"] {
+  color: var(--cycle-ink-muted);
+}
+
+[data-slot="loop-notice"] > [data-slot="loop-pending-pick"] {
+  flex: none;
+  margin-inline-start: 0.75rem;
+}
+
+[data-slot="loop-console-idle"] {
+  margin: 0;
+  color: var(--cycle-ink-muted);
+  font-size: var(--cycle-text-body);
+}
+
+[data-notice="running"] [data-slot="loop-ticket-text"],
+[data-notice="pending"] [data-slot="loop-ticket-text"] {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }

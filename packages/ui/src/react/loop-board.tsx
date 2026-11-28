@@ -388,7 +388,7 @@ export function Board({
   answer,
   openIdentifier,
   onOpen,
-  onOpenOverview,
+  onOpenConsole,
   onBack,
   onChatStarted,
 }: {
@@ -397,7 +397,7 @@ export function Board({
   /** The ticket whose drawer is open, if any: it is the Loop's navigation state, not the board's. */
   openIdentifier: string | undefined;
   onOpen: (identifier: string) => void;
-  onOpenOverview?: (() => void) | undefined;
+  onOpenConsole?: (() => void) | undefined;
   onBack: () => void;
   onChatStarted: () => void;
 }) {
@@ -659,7 +659,7 @@ export function Board({
         projectKey={projectKey}
         notices={projectNotices}
         onRetryIntents={retryIntents}
-        onOpenOverview={onOpenOverview}
+        onOpenConsole={onOpenConsole}
         onOpen={(notice) => {
           store.track("loop_notice_opened", { kind: notice.kind, from: "board" });
           if (notice.session === null || !store.joinLoopSession(notice.session.id)) {

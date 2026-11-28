@@ -187,14 +187,14 @@ export function usePlaces(appRef: RefObject<HTMLElement | null>) {
     if (loopRequest !== undefined)
       go({
         id: "loop",
-        view: { at: "project", projectKey: loopRequest.projectKey, tab: "kanban" },
+        view: { at: "project", projectKey: loopRequest.projectKey, tab: "console" },
       });
   }
   const trackedLoopRequest = useRef<number | undefined>(undefined);
   useEffect(() => {
     if (loopRequest === undefined || trackedLoopRequest.current === loopRequest.n) return;
     trackedLoopRequest.current = loopRequest.n;
-    store.track("loop_project_view_opened", { view: "kanban", from: "notification" });
+    store.track("loop_project_view_opened", { view: "console", from: "notification" });
   }, [loopRequest, store]);
   const pageOpen = isPage(place);
   useEffect(() => {

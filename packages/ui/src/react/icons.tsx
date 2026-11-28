@@ -447,6 +447,18 @@ export const KanbanIcon = ({ size = 16, ...rest }: IconProps) => (
   </Svg>
 );
 
+/** A page with a short list: what needs you and what Loop is doing. */
+export const ConsoleIcon = ({ size = 16, ...rest }: IconProps) => (
+  <Svg size={size} {...rest}>
+    <g>
+      <rect x="2.25" y="2.75" width="11.5" height="10.5" rx="1.5" />
+      <line x1="5" y1="6" x2="7" y2="7.5" />
+      <line x1="7" y1="7.5" x2="5" y2="9" />
+      <line x1="8.5" y1="10" x2="11" y2="10" />
+    </g>
+  </Svg>
+);
+
 /** iconmcp: list-timeline */
 export const TimelineIcon = ({ size = 16, ...rest }: IconProps) => (
   <Svg size={size} {...rest}>

@@ -148,10 +148,16 @@ test("a stale board says its data may be out of date, and a fresh one does not",
     loopBoards: { CYC: { ...board, stale: true } as LoopBoardAnswer, DOC: board },
   });
   await openOverviewProject(user, "Cycle");
+  await user.click(await screen.findByRole("button", { name: "Kanban" }));
   expect(await screen.findByText("Data may be out of date")).toBeTruthy();
   await user.click(await screen.findByRole("button", { name: "Loop" }));
   await openOverviewProject(user, "Docs");
-  await screen.findByRole("region", { name: "In Progress" });
+  await waitFor(() =>
+    expect(screen.getByRole("navigation", { name: "Where you are" }).textContent).toBe(
+      "Docs/Console",
+    ),
+  );
+  await screen.findByRole("region", { name: "Running now" });
   expect(screen.queryByText("Data may be out of date")).toBeNull();
 });
 
@@ -383,9 +389,9 @@ test("with two Projects the Loop lands on the overview, with each Project's coun
   const docsRow = projects.querySelector<HTMLElement>('[data-project="DOC"]') as HTMLElement;
   await within(docsRow).findByText("Could not read the board");
   await user.click(within(docsRow).getByRole("button", { name: "Read again Docs" }));
-  // A row opens its board.
+  // A row opens the Project's Console.
   await user.click(within(cycleRow).getByRole("button", { name: /Cycle/ }));
-  await screen.findByRole("region", { name: "In Progress" });
+  await screen.findByRole("region", { name: "Running now" });
 });
 
 test("even with one Project, clicking top Loop opens Overview instead of redirecting", async () => {
@@ -398,10 +404,10 @@ test("even with one Project, clicking top Loop opens Overview instead of redirec
   await user.keyboard("{Escape}");
   expect(document.querySelector('[data-kind="loop-overview"]')).not.toBeNull();
   await openOverviewProject(user, "CYC");
-  await screen.findByRole("region", { name: "In Progress" });
+  await screen.findByRole("region", { name: "Running now" });
 });
 
-test("Needs you is on the overview, not on the board", async () => {
+test("Needs you is on the project's Console, not on the overview or the board", async () => {
   const blocked = {
     id: "CYC:blocked:CYC-9",
     kind: "blocked" as const,
@@ -414,9 +420,12 @@ test("Needs you is on the overview, not on the board", async () => {
       loopNotices: { CYC: { kind: "ok", notices: [blocked] } },
     }),
   );
+  await screen.findByRole("region", { name: "Projects" });
+  expect(screen.queryByRole("region", { name: "Needs you" })).toBeNull();
+  await openOverviewProject(user, "CYC");
   const notices = await screen.findByRole("region", { name: "Needs you" });
   expect(within(notices).getByText("CYC-9")).toBeTruthy();
-  await openOverviewProject(user, "CYC");
+  await user.click(await screen.findByRole("button", { name: "Kanban" }));
   await screen.findByRole("region", { name: "In Progress" });
   expect(screen.queryByRole("region", { name: "Needs you" })).toBeNull();
 });
@@ -839,6 +848,7 @@ test("Notices show research and QA sessions too, and pressing one joins its sess
   const store = await renderApp(fake.bridge);
   void store;
   await user.click(await screen.findByRole("button", { name: "Loop" }));
+  await openOverviewProject(user, "Cycle");
   const notices = await screen.findByRole("region", { name: "Needs you" });
   expect(within(notices).getByText("CYC-21")).toBeTruthy();
   expect(within(notices).getByText("CYC-22")).toBeTruthy();
@@ -997,7 +1007,7 @@ test("a pushed run state that changes who Loop is running reads the board again"
     overviewScript({ loopRuns: { kind: "ok", running: { CYC: [], DOC: [] } } }),
   );
   await openOverviewProject(user, "CYC");
-  await screen.findByRole("region", { name: "In Progress" });
+  await screen.findByRole("region", { name: "Running now" });
   const reads = named("loopBoard").length;
   act(() => emit({ type: "loop-runs", runs: { kind: "ok", running: { CYC: ["CYC-386"] } } }));
   await waitFor(() => expect(named("loopBoard").length).toBeGreaterThan(reads));
@@ -1173,11 +1183,11 @@ test("switching between two matched workspaces updates Kanban and Timeline, and 
   // Open Overview and click Cycle -> syncs sidebar workspace back to cycle-v1 and highlights Kanban.
   await user.click(screen.getByRole("button", { name: "Loop" }));
   await openOverviewProject(user, "Cycle");
-  await screen.findByText("Ticket 386");
+  await screen.findByRole("region", { name: "Running now" });
   expect(screen.getByRole("button", { name: /Switch workspace/ }).textContent).toContain(
     "cycle-v1",
   );
-  expect(screen.getByRole("button", { name: "Kanban" }).getAttribute("aria-current")).toBe("page");
+  expect(screen.getByRole("button", { name: "Console" }).getAttribute("aria-current")).toBe("page");
 });
 
 test("a loop-open notification syncs the matched workspace and tracks from notification", async () => {
@@ -1220,7 +1230,7 @@ test("a loop-open notification syncs the matched workspace and tracks from notif
   );
   expect(tracked(fake.calls)).toContainEqual([
     "loop_project_view_opened",
-    { view: "kanban", from: "notification" },
+    { view: "console", from: "notification" },
   ]);
 });
 
