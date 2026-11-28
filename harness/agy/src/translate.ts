@@ -247,9 +247,10 @@ const translateToolContent = (
   };
 };
 
-/** Extract structured `_meta["cycle/toolResult"]` where agy gives exact numbers (command exit code, edit diff counts). */
+/** A non-negative integer count from agy raw output. */
 const isCount = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0;
 
+/** Extract structured `_meta["cycle/toolResult"]` where agy gives exact numbers (command exit code, edit diff counts, read range, search counts). */
 const toolResultMeta = (
   payload: V1ToolCallPayload,
   editStats?: { additions: number; deletions: number; created: boolean },
