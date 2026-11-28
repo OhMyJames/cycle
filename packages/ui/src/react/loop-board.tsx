@@ -11,13 +11,7 @@ import { isComposing } from "@ui-sdk/core";
 import { Button } from "@ui-sdk/react/button";
 import { Menu, MenuContent, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "@ui-sdk/react/menu";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type {
-  LoopActFailure,
-  LoopBoardAnswer,
-  LoopBoardColumn,
-  LoopManyResult,
-  LoopTicket,
-} from "../api.ts";
+import type { LoopBoardAnswer, LoopBoardColumn, LoopManyResult, LoopTicket } from "../api.ts";
 import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import {
@@ -37,8 +31,8 @@ import {
   PriorityBadge,
   priorityRank,
   TicketActions,
-  TicketDrawer,
   TicketStage,
+  useTicketDrawer,
 } from "./loop-ticket.tsx";
 import { SearchField } from "./search-field.tsx";
 import { usePlaceActive } from "./shell.tsx";
@@ -419,27 +413,14 @@ export function Board({
   const [batchBusy, setBatchBusy] = useState(false);
   const [batchProblem, setBatchProblem] = useState<string | undefined>();
   const [batchOutcome, setBatchOutcome] = useState<LoopManyResult | undefined>();
-  const [problem, setProblem] = useState<LoopActFailure | undefined>();
-  const [busyAction, setBusyAction] = useState<string | undefined>();
-  const [version, setVersion] = useState(0);
   const boardRef = useRef<HTMLDivElement>(null);
-  const lastOpened = useRef<string | undefined>(undefined);
-
-  // Restore focus to the ticket card that opened the drawer when the drawer closes.
-  useEffect(() => {
-    if (openIdentifier !== undefined) {
-      lastOpened.current = openIdentifier;
-      return;
-    }
-    const id = lastOpened.current;
-    if (id === undefined) return;
-    lastOpened.current = undefined;
-    boardRef.current
-      ?.querySelector<HTMLElement>(
-        `[data-slot="loop-ticket"][data-id="${CSS.escape(id)}"] > [data-slot="loop-ticket-title"]`,
-      )
-      ?.focus();
-  }, [openIdentifier]);
+  const { drawer, act, busyAction, alert, clearProblem } = useTicketDrawer(
+    projectKey,
+    openIdentifier,
+    onOpen,
+    onBack,
+    onChatStarted,
+  );
 
   const refresh = async () => {
     setRefreshing(true);
@@ -464,14 +445,6 @@ export function Board({
     };
   };
 
-  const request = useAppState((s) => s.loop.request);
-  // A pressed notification asks for its ticket once: it is taken (cleared) here, so reopening the page does not repeat it.
-  useEffect(() => {
-    if (request === undefined || request.projectKey !== projectKey) return;
-    onOpen(request.identifier);
-    store.takeLoopRequest(request.n);
-  }, [request, projectKey, store, onOpen]);
-
   // Escape clears batch selection before reaching LoopMain (when no ticket drawer is open). Not while a page opened from
   // the Loop is over it: Escape is the page's then.
   const active = usePlaceActive();
@@ -487,31 +460,8 @@ export function Board({
     return () => window.removeEventListener("keydown", onKey, true);
   }, [active, picked.size, openIdentifier]);
 
-  const act: Act = async (ticket, action, confirmed, reason) => {
-    const key = `${ticket.identifier}:${action}`;
-    setProblem(undefined);
-    setBusyAction(key);
-    try {
-      const result = await store.actOnLoopTicket(
-        projectKey,
-        ticket.identifier,
-        action,
-        confirmed,
-        reason,
-      );
-      if (result.kind === "ok") {
-        setVersion((v) => v + 1);
-        return undefined;
-      }
-      if (action !== "approve" && action !== "return") setProblem(result.reason);
-      return t(`loop.fail.${result.reason}`);
-    } finally {
-      setBusyAction(undefined);
-    }
-  };
-
   const openTicket = (identifier: string) => {
-    setProblem(undefined);
+    clearProblem();
     onOpen(identifier);
   };
 
@@ -548,35 +498,6 @@ export function Board({
     [allPending, picked],
   );
 
-  const openSummary = useMemo(() => {
-    if (openIdentifier === undefined) return undefined;
-    for (const c of columns) {
-      const hit = c.tickets.find((tk) => tk.identifier === openIdentifier);
-      if (hit !== undefined) return hit;
-    }
-    return undefined;
-  }, [columns, openIdentifier]);
-
-  // The drawer stays mounted after it is closed until its slide-out has played (CYC-506); a new ticket picked
-  // meanwhile replaces it at once, and switching Projects clears any held drawer from the previous Project.
-  const [held, setHeld] = useState<{
-    projectKey: string;
-    identifier: string;
-    summary: LoopTicket | undefined;
-  }>();
-  const sameProjectHeld = held?.projectKey === projectKey ? held : undefined;
-  if (
-    openIdentifier !== undefined &&
-    (sameProjectHeld?.identifier !== openIdentifier || sameProjectHeld.summary !== openSummary)
-  ) {
-    setHeld({ projectKey, identifier: openIdentifier, summary: openSummary });
-  } else if (openIdentifier === undefined && held !== undefined && held.projectKey !== projectKey) {
-    setHeld(undefined);
-  }
-  const drawerId = openIdentifier ?? sameProjectHeld?.identifier;
-  const drawerSummary = openIdentifier !== undefined ? openSummary : sameProjectHeld?.summary;
-  const drawerClosing = openIdentifier === undefined;
-
   const togglePick = (identifier: string) =>
     setPicked((prev) => {
       const next = new Set(prev);
@@ -611,23 +532,6 @@ export function Board({
     if (action === "return_many") setWhy("");
     return undefined;
   };
-
-  const alert =
-    problem !== undefined ? (
-      <div data-slot="loop-board-notice" data-tone="error" role="alert">
-        <ErrorCircleIcon size={14} />
-        <span>{t(`loop.fail.${problem}`)}</span>
-        <Tip label={t("notice.dismiss")}>
-          <Button
-            data-variant="ghost"
-            data-kind="loop-notice-dismiss"
-            onClick={() => setProblem(undefined)}
-          >
-            <CloseIcon size={12} />
-          </Button>
-        </Tip>
-      </div>
-    ) : null;
 
   if (answer === undefined || answer === "loading") return <BoardSkeleton />;
   if (answer.kind === "no_server")
@@ -877,25 +781,7 @@ export function Board({
         />
       ) : null}
 
-      {drawerId !== undefined ? (
-        <TicketDrawer
-          key={drawerId}
-          projectKey={projectKey}
-          identifier={drawerId}
-          summary={drawerSummary}
-          closing={drawerClosing}
-          onExited={() => setHeld(undefined)}
-          act={act}
-          busyAction={busyAction}
-          onChatStarted={onChatStarted}
-          onClose={() => {
-            setProblem(undefined);
-            onBack();
-          }}
-          problem={alert}
-          version={version}
-        />
-      ) : null}
+      {drawer}
     </div>
   );
 }

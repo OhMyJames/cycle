@@ -2116,7 +2116,10 @@ test("board alert strip, sidebar notice badge, intent retry, and loop-activity l
   // Clicking a notice chip opens the ticket drawer and tracks `loop_notice_opened`.
   await user.click(screen.getByRole("button", { name: /CYC-387/ }));
   await screen.findByRole("complementary", { name: "CYC-387" });
-  expect(tracked(fake.calls)).toContainEqual(["loop_notice_opened", { kind: "stuck" }]);
+  expect(tracked(fake.calls)).toContainEqual([
+    "loop_notice_opened",
+    { kind: "stuck", from: "board" },
+  ]);
 
   // A `loop-activity` event refreshes board and run without re-fetching loopTicket (no `loop_ticket_opened` inflation).
   const boardsBefore = fake.named("loopBoard").length;
