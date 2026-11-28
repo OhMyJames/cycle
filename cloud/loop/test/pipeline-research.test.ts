@@ -236,7 +236,7 @@ test("a reply that fails the checks goes back to the same session as a fix round
   expect(await kinds(s.store)).toContain("round_failed");
 });
 
-test("QA that does not pass sends its findings back to research, which goes to QA again", async () => {
+test("QA that does not pass adds a research fix node in a new session, then a new QA node", async () => {
   const s = setup({
     research: [done(reply("初稿。")), done(reply("改过的。"))],
     research_qa: [done(FAIL), done(PASS)],
@@ -244,15 +244,27 @@ test("QA that does not pass sends its findings back to research, which goes to Q
   expect((await s.pipeline.step()).status).toBe("researched");
   const research = s.sessions.prompts.filter((p) => p.role === "research");
   expect(research).toHaveLength(2);
-  expect(research[1]?.sessionId).toBe("research-1");
+  expect(research[0]?.sessionId).toBe("research-1");
+  expect(research[1]?.sessionId).not.toBe("research-1");
   expect(research[1]?.prompt).toContain("Independent review found");
   expect(research[1]?.prompt).toContain("the evidence does not hold");
+  // The fix node's brief carries the report it replaces.
+  expect(research[1]?.prompt).toContain("12 个。");
+  const graph = await s.store.loadGraph("CYC-1");
+  expect(graph?.nodes.map((n) => `${n.id}:${n.role}:${n.status}:${n.verdict ?? "-"}`)).toEqual([
+    "research:research:passed:-",
+    "qa-1:qa:passed:fail",
+    "fix-1:research:passed:-",
+    "qa-2:qa:passed:pass",
+  ]);
+  expect(graph?.nodes.find((n) => n.id === "fix-1")?.summary).toBe("改过的。");
+  expect(new Set(graph?.nodes.map((n) => n.sessionId)).size).toBe(4);
   // What is published is the reply QA passed.
   expect((s.tracker.issues[0] as Issue).description).toContain("改过的。");
   expect(s.sessions.prompts.at(-1)?.prompt).toContain("改过的。");
 });
 
-test("QA that keeps failing past the fix rounds blocks; put back, research goes on in the same session", async () => {
+test("QA that keeps failing past the fix rounds blocks; put back, a fix node goes on in a new session", async () => {
   const s = setup(
     { research: [done(reply()), done(reply())], research_qa: [done(FAIL), done(FAIL)] },
     { maxFixRounds: 1 },
@@ -276,9 +288,9 @@ test("QA that keeps failing past the fix rounds blocks; put back, research goes 
   s.sessions.script.research_qa.push(done(PASS));
   expect((await s.pipeline.step()).status).toBe("researched");
   const resumed = s.sessions.prompts.filter((p) => p.role === "research").at(-1);
-  expect(resumed?.sessionId).toBe("research-1");
+  expect(resumed?.sessionId).not.toBe("research-1");
   expect(resumed?.prompt).toContain("the evidence does not hold");
-  expect(s.sessions.created.filter((id) => id.startsWith("research-"))).toEqual(["research-1"]);
+  expect(s.sessions.created.filter((id) => id.startsWith("research-"))).toHaveLength(3);
   run = await s.store.load("CYC-1");
   expect(run?.phase).toBe("done");
   expect(await kinds(s.store)).toContain("resumed");
@@ -442,7 +454,7 @@ test("a credential in the reply blocks before anything is published; put back, r
   s.sessions.script.research_qa.push(done(PASS));
   expect((await s.pipeline.step()).status).toBe("researched");
   const resumed = s.sessions.prompts.filter((p) => p.role === "research").at(-1);
-  expect(resumed?.sessionId).toBe("research-1");
+  expect(resumed?.sessionId).not.toBe("research-1");
   expect(resumed?.prompt).toContain("shaped like a credential (github-token)");
   expect(s.tracker.written[0]?.content).not.toContain(token);
 });
@@ -476,6 +488,13 @@ test("a recovered research run with no saved findings is told to carry on", asyn
   const run = await s.store.load("CYC-1");
   if (run === undefined) throw new Error("no run");
   await s.store.save({ ...run, phase: "research" });
+  // As if it had been killed in the research turn: the node is still running.
+  const graph = await s.store.loadGraph("CYC-1");
+  if (graph === undefined) throw new Error("no graph");
+  await s.store.saveGraph({
+    ...graph,
+    nodes: graph.nodes.map((n) => (n.id === "research" ? { ...n, status: "running" } : n)),
+  });
   s.sessions.turn = FakeSessions.prototype.turn.bind(s.sessions);
   s.sessions.script.research.push(done(reply()));
   s.sessions.script.research_qa.push(done(PASS));
@@ -665,4 +684,89 @@ test("a same-titled report with other text is not taken for this run's", async (
   const result = await s.pipeline.step();
   expect(result.status).toBe("researched");
   expect(s.tracker.written.length).toBe(1);
+});
+
+test("a new research run gets a one-node graph that ends with the research node and a passed QA node", async () => {
+  const s = setup({ research: [done(reply())], research_qa: [done(PASS)] });
+  expect((await s.pipeline.step()).status).toBe("researched");
+  const graph = await s.store.loadGraph("CYC-1");
+  expect(graph?.source).toBe("single");
+  expect(graph?.nodes.map((n) => `${n.id}:${n.role}:${n.status}`)).toEqual([
+    "research:research:passed",
+    "qa-1:qa:passed",
+  ]);
+  const node = graph?.nodes[0];
+  expect(node?.verify).toEqual([]);
+  expect(node?.report).toContain("## 问题 1");
+  expect(graph?.nodes[1]?.dependsOn).toEqual(["research"]);
+});
+
+test("a rule failure is fixed in the same node and session; its rounds are counted on the node", async () => {
+  const s = setup({ research: [done("no blocks"), done(reply())], research_qa: [done(PASS)] });
+  expect((await s.pipeline.step()).status).toBe("researched");
+  const graph = await s.store.loadGraph("CYC-1");
+  expect(graph?.nodes.filter((n) => n.role === "research")).toHaveLength(1);
+  expect(graph?.nodes[0]?.rounds).toBe(1);
+  const research = s.sessions.prompts.filter((p) => p.role === "research");
+  expect(research.map((p) => p.sessionId)).toEqual(["research-1", "research-1"]);
+});
+
+/** A run as the loop left it before research was a graph: no graph, in the given phase. */
+const legacy = async (
+  s: ReturnType<typeof setup>,
+  phase: "research" | "research_qa" | "publishing",
+) => {
+  // Run it to QA, then take the graph away and put the phase back as an older loop would have it.
+  s.sessions.turn = async (id, prompt, ctx) => {
+    if (ctx.role === "research_qa") throw new Error("killed");
+    return FakeSessions.prototype.turn.call(s.sessions, id, prompt, ctx);
+  };
+  await expect(s.pipeline.step()).rejects.toThrow("killed");
+  const run = await s.store.load("CYC-1");
+  if (run === undefined) throw new Error("no run");
+  await s.store.save({ ...run, phase });
+  s.sessions.turn = FakeSessions.prototype.turn.bind(s.sessions);
+  s.store.transaction((tx) => {
+    tx.db.query("DELETE FROM graph_nodes WHERE run_key = ?").run("CYC-1");
+    tx.db.query("DELETE FROM run_graphs WHERE run_key = ?").run("CYC-1");
+  });
+};
+
+test("upgrade: a run in research_qa with no graph gets a finished research node, runs QA and publishes", async () => {
+  const s = setup({ research: [done(reply())], research_qa: [] });
+  await legacy(s, "research_qa");
+  s.sessions.script.research_qa.push(done(PASS));
+  expect((await s.restart().step()).status).toBe("researched");
+  const graph = await s.store.loadGraph("CYC-1");
+  expect(graph?.nodes.map((n) => `${n.id}:${n.status}:${n.verdict ?? "-"}`)).toEqual([
+    "research:passed:-",
+    "qa-1:passed:pass",
+  ]);
+  expect(graph?.nodes[0]?.report).toContain("## 问题 1");
+  expect(s.tracker.written).toHaveLength(1);
+  expect(s.sessions.prompts.filter((p) => p.role === "research")).toHaveLength(1);
+});
+
+test("upgrade: a run in publishing with no graph gets two finished nodes and publishes once", async () => {
+  const s = setup({ research: [done(reply())], research_qa: [] });
+  await legacy(s, "publishing");
+  expect((await s.restart().step()).status).toBe("researched");
+  const graph = await s.store.loadGraph("CYC-1");
+  expect(graph?.nodes.map((n) => `${n.id}:${n.status}:${n.verdict ?? "-"}`)).toEqual([
+    "research:passed:-",
+    "qa-1:passed:pass",
+  ]);
+  expect(s.tracker.written).toHaveLength(1);
+  expect(s.sessions.prompts.filter((p) => p.role === "research_qa")).toHaveLength(0);
+});
+
+test("upgrade: a run in research with no graph gets a running research node and goes on", async () => {
+  const s = setup({ research: [done(reply())], research_qa: [] });
+  await legacy(s, "research");
+  s.sessions.script.research.push(done(reply()));
+  s.sessions.script.research_qa.push(done(PASS));
+  expect((await s.restart().step()).status).toBe("researched");
+  const graph = await s.store.loadGraph("CYC-1");
+  expect(graph?.nodes[0]?.sessionId).toBe("research-1");
+  expect(graph?.nodes.map((n) => n.id)).toEqual(["research", "qa-1"]);
 });

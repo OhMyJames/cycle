@@ -199,3 +199,17 @@ ${findings}
 Give the complete blocks again, not only what changed: the loop reads only your last reply.
 
 ${NODE_OUTPUT}`;
+
+/** What a replacing research session is told on top of the first brief: the report that was sent back, and why. */
+export const researchReworkNote = (
+  report: string,
+  findings: string,
+): string => `An earlier report on this work item was sent back by independent review. You are a new session: you did not write it. Here it is:
+---
+${report === "" ? "(none)" : report}
+---
+
+What was found:
+${findings}
+
+Answer the questions again and fix what was found; do not repeat the same faults. Give the complete blocks.`;
