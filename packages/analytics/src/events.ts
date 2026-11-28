@@ -207,7 +207,7 @@ export const EVENTS = {
   }),
   /** The person opened a Loop Project's Kanban or Timeline view (CYC-533): which view and from where; never which project. */
   loop_project_view_opened: o({
-    view: z.enum(["kanban", "timeline"]),
+    view: z.enum(["console", "kanban", "timeline"]),
     from: z.enum(["sidebar", "overview", "timeline", "notification"]),
   }),
   /** The Timeline page read a Loop Project's chronological progress (CYC-534): only whether it worked. */
