@@ -14,7 +14,7 @@ import {
   type DeliveryConfig,
   gitWorkspace,
   initDeliveryRepo,
-  inspectGitConfig,
+  inspectRepoGitConfig,
   originUrlFromGitConfig,
   repoGitConfigPath,
 } from "./ports/git.ts";
@@ -230,7 +230,7 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
       const cfgPath = repoGitConfigPath(config.repoRoot);
       if (cfgPath !== undefined) {
         const cfgText = readFileSync(cfgPath, "utf8");
-        const inspected = inspectGitConfig(cfgText);
+        const inspected = inspectRepoGitConfig(cfgText);
         if (!inspected.ok) {
           throw new Error(`refusing to start: ${config.repoRoot} ${inspected.reason}`);
         }
