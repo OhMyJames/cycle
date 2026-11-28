@@ -213,6 +213,30 @@ test("intent_stuck has a Retry write that calls the retry and says how many", as
   expect(await screen.findByText("Queued 2 writes to retry.")).toBeTruthy();
 });
 
+test("the retry result stays when the retry clears the Notice", async () => {
+  let retried = false;
+  const loopNotices = {
+    get CYC(): { kind: "ok"; notices: LoopNotice[] } {
+      return { kind: "ok", notices: retried ? [] : [notice("intent_stuck", 4)] };
+    },
+  };
+  const { user, calls } = await mountConsole({
+    loopNotices,
+    loopRetryIntents: { kind: "ok", retried: 2 },
+  });
+  const original = calls.push.bind(calls);
+  calls.push = (...items) => {
+    if (items.some(([name]) => name === "loopRetryIntents")) retried = true;
+    return original(...items);
+  };
+  await user.click(await screen.findByRole("button", { name: "Retry write for CYC-4" }));
+  expect(await screen.findByText("Queued 2 writes to retry.")).toBeTruthy();
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Retry write for CYC-4" })).toBeNull(),
+  );
+  expect(screen.getByText("Queued 2 writes to retry.")).toBeTruthy();
+});
+
 test("the approval queue sorts by priority, confirms before approving and counts the outcome", async () => {
   const { user, calls } = await mountConsole({
     loopBoards: {

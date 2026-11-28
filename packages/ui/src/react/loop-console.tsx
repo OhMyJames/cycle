@@ -11,7 +11,13 @@ import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import { CheckIcon, ChevronRightIcon, CloseIcon, ErrorCircleIcon } from "./icons.tsx";
 import { GraphProgress } from "./loop-graph.tsx";
-import { joinsSession, Notices, noticeUrgency, type RetryIntents } from "./loop-notices.tsx";
+import {
+  joinsSession,
+  Notices,
+  noticeUrgency,
+  RetryFeedback,
+  type RetryIntents,
+} from "./loop-notices.tsx";
 import { priorityRank, TicketStage, useTicketDrawer } from "./loop-ticket.tsx";
 import { PageGroup, PageRows } from "./page-layout.tsx";
 import { usePlaceActive } from "./shell.tsx";
@@ -52,6 +58,9 @@ export function LoopConsole({
   const [why, setWhy] = useState("");
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [retryFeedback, setRetryFeedback] = useState<
+    { ok: boolean; message: string } | undefined
+  >();
   const [problem, setProblem] = useState<string | undefined>();
   const [outcome, setOutcome] = useState<LoopManyResult | undefined>();
 
@@ -141,6 +150,7 @@ export function LoopConsole({
     setPicked(new Set());
     setOutcome(undefined);
     setProblem(undefined);
+    setRetryFeedback(undefined);
   }, [projectKey]);
 
   const openTicket = (identifier: string) => {
@@ -149,6 +159,11 @@ export function LoopConsole({
   };
 
   const retryIntents: RetryIntents = async (key, identifier) => {
+    const answer = await retryOnce(key, identifier);
+    setRetryFeedback(answer);
+    return answer;
+  };
+  const retryOnce: RetryIntents = async (key, identifier) => {
     const result = await store.retryLoopIntents(key, identifier);
     if (result.kind === "failed") return { ok: false, message: t(`loop.fail.${result.reason}`) };
     return {
@@ -162,11 +177,7 @@ export function LoopConsole({
 
   const openNotice = (notice: LoopNotice) => {
     store.track("loop_notice_opened", { kind: notice.kind, from: "console" });
-    if (
-      notice.session !== null &&
-      (joinsSession(notice) || notice.identifier === null) &&
-      store.joinLoopSession(notice.session.id)
-    )
+    if (notice.session !== null && joinsSession(notice) && store.joinLoopSession(notice.session.id))
       return;
     if (notice.identifier !== null) openTicket(notice.identifier);
   };
@@ -228,7 +239,11 @@ export function LoopConsole({
       </div>
     );
 
-  const hasNeeds = needsYou.length > 0 || pending.length > 0 || outcome !== undefined;
+  const hasNeeds =
+    needsYou.length > 0 ||
+    pending.length > 0 ||
+    outcome !== undefined ||
+    retryFeedback !== undefined;
   return (
     <div data-slot="loop-console" data-kind="loop-console">
       {/* The place for the metrics strip of CYC-391: nothing is drawn, and it takes no height. */}
@@ -245,6 +260,12 @@ export function LoopConsole({
                   onRetryIntents={retryIntents}
                 />
               </PageRows>
+            ) : null}
+            {retryFeedback !== undefined ? (
+              <RetryFeedback
+                feedback={retryFeedback}
+                onDismiss={() => setRetryFeedback(undefined)}
+              />
             ) : null}
             {problem !== undefined ? (
               <div data-slot="loop-board-notice" data-tone="error" role="alert">

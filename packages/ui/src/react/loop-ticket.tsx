@@ -693,7 +693,7 @@ export function useTicketDrawer(
     lastOpened.current = undefined;
     document
       .querySelector<HTMLElement>(
-        `[data-slot="loop-ticket"][data-id="${CSS.escape(id)}"] > [data-slot="loop-ticket-title"]`,
+        `[data-slot="loop-ticket"][data-id="${CSS.escape(id)}"] > [data-slot="loop-ticket-title"], [data-slot="loop-notice"][data-id="${CSS.escape(id)}"] > [data-slot="loop-notice-open"]`,
       )
       ?.focus();
   }, [openIdentifier]);

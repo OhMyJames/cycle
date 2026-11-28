@@ -425,7 +425,7 @@ test("Needs you is on the project's Console, not on the overview or the board", 
   const row = document.querySelector(
     '[data-slot="loop-project-row"][data-project="CYC"]',
   ) as HTMLElement;
-  await waitFor(() => expect(within(row).getByText("1 need you")).toBeTruthy());
+  await waitFor(() => expect(within(row).getByText("1 needs you")).toBeTruthy());
   const other = document.querySelector(
     '[data-slot="loop-project-row"][data-project="DOC"]',
   ) as HTMLElement;

@@ -96,7 +96,10 @@ function Overview({
                     ? pendingCountOf(board.columns)
                     : 0;
                 const answer = allNotices[p.projectKey];
-                const needs = (answer?.kind === "ok" ? answer.notices.length : 0) + pending;
+                const needs =
+                  (answer?.kind === "ok"
+                    ? answer.notices.filter((n) => n.kind !== "operator").length
+                    : 0) + pending;
                 return (
                   <li key={p.projectKey} data-slot="loop-project-row" data-project={p.projectKey}>
                     <button
