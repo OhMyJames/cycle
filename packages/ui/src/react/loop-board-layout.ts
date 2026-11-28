@@ -105,9 +105,13 @@ export const backlogRows = (
   const rest = backlog.filter((t) => t.pending === undefined);
   const heads = byPriority(rest.filter((t) => parents.has(t.identifier)));
   const headIds = new Set(heads.map((t) => t.identifier));
+  const waitingIds = new Set(waiting.map((t) => t.identifier));
 
   const epicChildren = new Map<string, LoopTicket[]>(heads.map((h) => [h.identifier, []]));
-  const elsewhere = new Map<string, { head: GroupHead; children: LoopTicket[] }>();
+  const elsewhere = new Map<
+    string,
+    { head: GroupHead; elsewhere: boolean; children: LoopTicket[] }
+  >();
   const loose: LoopTicket[] = [];
   for (const tk of byPriority(rest)) {
     if (headIds.has(tk.identifier)) continue; // a head stays a head, even when it has a parent itself
@@ -117,6 +121,8 @@ export const backlogRows = (
     } else if (parent) {
       const g = elsewhere.get(parent.identifier) ?? {
         head: { identifier: parent.identifier, title: parent.title },
+        // A parent pinned above as awaiting approval is in this column, so it is not "in another column".
+        elsewhere: !waitingIds.has(parent.identifier),
         children: [],
       };
       g.children.push(tk);
@@ -143,7 +149,7 @@ export const backlogRows = (
         kind: "group",
         key: g.head.identifier,
         head: g.head,
-        elsewhere: true,
+        elsewhere: g.elsewhere,
         children: g.children,
         progress: progress.get(g.head.identifier),
       }),
@@ -173,11 +179,18 @@ export const filterRows = (
   return out;
 };
 
-/** The first `limit` rows and how many are left; a group is one row however many children it holds. */
+/** The tickets a row stands for: a card is one, a group is its head (when in this column) and its children. */
+export const rowTickets = (row: BacklogRow): number =>
+  row.kind === "card" ? 1 : row.children.length + (row.head.ticket !== undefined ? 1 : 0);
+
+/**
+ * The first `limit` rows and how many tickets are left in the rest (the same unit as the column count); a group
+ * is one row however many children it holds.
+ */
 export const pageRows = (
   rows: readonly BacklogRow[],
   limit: number,
 ): { shown: BacklogRow[]; hidden: number } => ({
   shown: rows.slice(0, limit),
-  hidden: Math.max(0, rows.length - limit),
+  hidden: rows.slice(limit).reduce((n, r) => n + rowTickets(r), 0),
 });

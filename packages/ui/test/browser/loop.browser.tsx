@@ -1414,6 +1414,29 @@ test("a filter opens the groups it leaves and clearing it brings the folds back"
   expect(tracked(calls).some(([e]) => e === "loop_board_expanded")).toBe(false);
 });
 
+test("under a filter the group arrow still folds, and the column count only counts matches", async () => {
+  const { user, calls } = await mountBoard({
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: {
+      CYC: withTickets({
+        Backlog: [ticket(381, "Backlog"), childOf(390, "Backlog"), childOf(392, "Backlog")],
+      }),
+    },
+  });
+  const backlog = await screen.findByRole("region", { name: "Backlog" });
+  await user.type(screen.getByRole("searchbox"), "390");
+  // Only the child matches: the head is not counted.
+  expect(backlog.textContent).toContain("1/3");
+  const toggle = within(backlog).getByRole("button", { name: "Show tickets under CYC-381" });
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  await user.click(toggle);
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  expect(within(backlog).queryByText("Ticket 390")).toBeNull();
+  expect(expandedEvents(calls)).toEqual([
+    ["loop_board_expanded", { target: "group", expanded: false }],
+  ]);
+});
+
 test("cards show the ticket type when there is one", async () => {
   await mountBoard({
     loopProjects: { kind: "ok", projects: [cycle] },

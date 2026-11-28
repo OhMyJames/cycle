@@ -137,6 +137,14 @@ describe("paging and filtering", () => {
     expect(pageRows(rows, 1)).toEqual({ shown: rows.slice(0, 1), hidden: 1 });
     expect(pageRows(rows, 20).hidden).toBe(0);
   });
+  test("hidden counts the tickets left, not the rows", () => {
+    expect(pageRows(rows, 0).hidden).toBe(4);
+  });
+  test("children of a pending Epic in this column are not 'elsewhere'", () => {
+    const b = [tk("P", { pending: { stage: "plan" } as never }), child("k", "P")];
+    const g = backlogRows(b, [col(1, "backlog", b)]).find((r) => r.kind === "group");
+    expect(g?.kind === "group" && g.elsewhere).toBe(false);
+  });
   test("a matching head keeps every child", () => {
     expect(ids(filterRows(rows, (t) => t.title === "alpha"))).toEqual(["[E:c1,c2]"]);
   });

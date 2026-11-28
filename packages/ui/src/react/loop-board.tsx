@@ -14,6 +14,7 @@ import {
   pageRows,
   parentProgress,
   priorityRank,
+  rowTickets,
 } from "./loop-board-layout.ts";
 import { GraphProgress } from "./loop-graph.tsx";
 import { BoardAlerts, type RetryIntents } from "./loop-notices.tsx";
@@ -38,6 +39,8 @@ type BoardView = {
   projectKey: string;
   columns: ReadonlyMap<number, boolean>;
   groups: ReadonlySet<string>;
+  /** Groups a person opened or shut by hand while a filter was on; forgotten when the filter clears. */
+  filterGroups: ReadonlyMap<string, boolean>;
 };
 
 /** Started columns follow Loop's board-order convention: 1st In Progress, 2nd In Review, 3rd Blocked. */
@@ -480,6 +483,7 @@ export function Board({
     projectKey: key,
     columns: new Map(),
     groups: new Set(),
+    filterGroups: new Map(),
   });
   const [view, setView] = useState<BoardView>(() => fresh(projectKey));
   const mine = view.projectKey === projectKey ? view : fresh(projectKey);
@@ -489,8 +493,15 @@ export function Board({
     store.track("loop_board_expanded", { target: "column", expanded: !collapsed });
     setView({ ...mine, columns: new Map(mine.columns).set(id, collapsed) });
   };
+  const groupIsOpen = (key: string) =>
+    filtered ? (mine.filterGroups.get(key) ?? true) : mine.groups.has(key);
   const setGroupOpen = (key: string, open: boolean) => {
+    if (open === groupIsOpen(key)) return;
     store.track("loop_board_expanded", { target: "group", expanded: open });
+    if (filtered) {
+      setView({ ...mine, filterGroups: new Map(mine.filterGroups).set(key, open) });
+      return;
+    }
     const groups = new Set(mine.groups);
     if (open) groups.add(key);
     else groups.delete(key);
@@ -523,6 +534,7 @@ export function Board({
 
   const q = query.trim().toLowerCase();
   const filtered = q !== "" || priority !== "all";
+  if (!filtered && mine.filterGroups.size > 0) setView({ ...mine, filterGroups: new Map() });
   const matches = (tk: LoopTicket) => {
     if (priority !== "all" && tk.priority !== priority) return false;
     if (q === "") return true;
@@ -628,10 +640,13 @@ export function Board({
                 : byPriority(c.tickets);
             rows = cards(filtered ? ordered.filter(matches) : ordered);
           }
+          // A group head counts only when it matches itself: a child alone can keep its group on screen.
           const ticketCount = rows.reduce(
             (n, r) =>
               n +
-              (r.kind === "card" ? 1 : r.children.length + (r.head.ticket !== undefined ? 1 : 0)),
+              (r.kind === "group" && filtered && r.head.ticket && !matches(r.head.ticket)
+                ? r.children.length
+                : rowTickets(r)),
             0,
           );
           const colPending = rows.filter((r) => r.kind === "card" && r.ticket.pending).length;
@@ -654,7 +669,7 @@ export function Board({
               canHide={folded.has(c.id)}
               onFold={(fold) => setCollapsed(c.id, fold)}
               // A filter opens the groups it leaves; clearing it brings back what the person had set.
-              groupOpen={(key) => filtered || mine.groups.has(key)}
+              groupOpen={groupIsOpen}
               onToggleGroup={setGroupOpen}
               act={act}
               busyAction={busyAction}
