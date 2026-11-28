@@ -328,6 +328,36 @@ export class DaemonSessions implements Sessions {
     await this.#connected();
   }
 
+  /**
+   * Sends the prompt. If the connection dropped under it (Cycle is switching to a new version: docs/protocol.md §3),
+   * waits for it to come back and sends again, once; that is not a lost session. A prompt the old daemon had taken is
+   * ended by its stop, not replayed, so the resend does not double it. Any other failure is a lost session.
+   */
+  async #send(sessionId: string, prompt: string): Promise<void> {
+    const content = [{ type: "text" as const, text: prompt }];
+    try {
+      await this.#client.prompt(sessionId, content);
+      return;
+    } catch (error) {
+      if (!(await this.#connectionDropped())) throw new SessionLost(String(error));
+    }
+    try {
+      await this.#connected();
+      await this.#client.prompt(sessionId, content);
+    } catch (error) {
+      throw new SessionLost(String(error));
+    }
+  }
+
+  /** Whether the connection is down, or goes down within a moment: the failure may be seen before the close is. */
+  async #connectionDropped(): Promise<boolean> {
+    for (let waited = 0; waited <= 1_000; waited += 50) {
+      if (this.#client.state !== "connected") return true;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    return false;
+  }
+
   async turn(
     sessionId: string,
     prompt: string,
@@ -377,11 +407,7 @@ export class DaemonSessions implements Sessions {
       }
     }, 1000);
     try {
-      try {
-        await this.#client.prompt(sessionId, [{ type: "text", text: prompt }]);
-      } catch (error) {
-        throw new SessionLost(String(error));
-      }
+      await this.#send(sessionId, prompt);
       await ended;
       // The daemon's stop is on record before the client sees the socket close. Let the connection go and come back
       // first, or the resend goes over a dying connection and fails as a lost session.
