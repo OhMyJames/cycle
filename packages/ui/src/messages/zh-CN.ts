@@ -794,6 +794,8 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "loop.graph.goal": "目标",
   "loop.graph.fix": "修复",
   "loop.graph.qaSession": "QA 会话",
+  "loop.graph.researchSession": "调研会话",
+  "loop.graph.designSession": "设计会话",
   "loop.graph.verdict.pass": "通过",
   "loop.graph.verdict.fail": "未通过",
   "loop.graph.report": "QA 报告",

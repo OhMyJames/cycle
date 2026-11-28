@@ -509,7 +509,11 @@ const readTicket = async (
   projectKey: string,
   key: string,
 ): Promise<LoopTicketAnswer> => {
-  const called = await callLoop(loop.socket, LOOP_TICKET_GET, { project: projectKey, key });
+  const called = await callLoop(loop.socket, LOOP_TICKET_GET, {
+    project: projectKey,
+    key,
+    roles: GRAPH_ROLES,
+  });
   if (called.kind === "no_server") return { kind: "no_server" };
   const parsed = called.kind === "ok" ? LoopTicketDetailSchema.safeParse(called.result) : undefined;
   if (!parsed?.success) return { kind: "unreachable" };
@@ -547,6 +551,9 @@ export const answerTicket = async (
   return answer;
 };
 
+/** Node roles this client can show; a server leaves out the ones not listed. */
+const GRAPH_ROLES = ["dev", "qa", "research", "design"];
+
 /** One ticket's run detail (`loop/run/get`): phase, round, heartbeat, sessions and recent events. */
 export const answerRun = async (
   loop: LoopOptions | undefined,
@@ -556,7 +563,11 @@ export const answerRun = async (
   if (!loop) return { kind: "no_server" };
   const key = identifierOf(projectKey, identifier);
   if (key === undefined) return { kind: "unreachable" };
-  const called = await callLoop(loop.socket, LOOP_RUN_GET, { project: projectKey, key });
+  const called = await callLoop(loop.socket, LOOP_RUN_GET, {
+    project: projectKey,
+    key,
+    roles: GRAPH_ROLES,
+  });
   if (called.kind === "no_server") return { kind: "no_server" };
   if (called.kind === "error")
     return called.reason === "unknown_run" ? { kind: "none" } : { kind: "unreachable" };
