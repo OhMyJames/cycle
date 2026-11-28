@@ -27,7 +27,6 @@ import {
   CloseIcon,
   ErrorCircleIcon,
   RefreshIcon,
-  SearchIcon,
 } from "./icons.tsx";
 import { BatchBar } from "./loop-batch-bar.tsx";
 import { GraphProgress } from "./loop-graph.tsx";
@@ -41,6 +40,7 @@ import {
   TicketDrawer,
   TicketStage,
 } from "./loop-ticket.tsx";
+import { SearchField } from "./search-field.tsx";
 import { usePlaceActive } from "./shell.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
@@ -671,34 +671,7 @@ export function Board({
     <div ref={boardRef} data-slot="loop-board" data-kind="loop-board">
       <div data-slot="loop-toolbar">
         <div data-slot="loop-toolbar-left">
-          <div data-slot="loop-search">
-            <SearchIcon size={14} />
-            <input
-              type="search"
-              value={query}
-              aria-label={t("loop.search")}
-              placeholder={t("loop.search")}
-              onChange={(event) => setQuery(event.currentTarget.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape" && !isComposing(event) && query !== "") {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  setQuery("");
-                }
-              }}
-            />
-            {query !== "" ? (
-              <Tip label={t("loop.search.clear")}>
-                <Button
-                  data-variant="ghost"
-                  data-kind="loop-search-clear"
-                  onClick={() => setQuery("")}
-                >
-                  <CloseIcon size={12} />
-                </Button>
-              </Tip>
-            ) : null}
-          </div>
+          <SearchField value={query} onChange={setQuery} label={t("loop.search")} />
 
           {allPending.length > 0 ? (
             <button
@@ -785,8 +758,9 @@ export function Board({
         onOpenOverview={onOpenOverview}
         onOpen={(notice) => {
           store.track("loop_notice_opened", { kind: notice.kind });
-          if (notice.session === null || !store.joinLoopSession(notice.session.id))
-            openTicket(notice.identifier);
+          if (notice.session === null || !store.joinLoopSession(notice.session.id)) {
+            if (notice.identifier !== null) openTicket(notice.identifier);
+          }
         }}
       />
       {batchProblem !== undefined ? (

@@ -82,6 +82,9 @@ test("inspectGitConfig rejects include, includeIf, insteadOf, pushurl, sshComman
     '[includeIf "gitdir:/tmp#x"]\n\tpath = /tmp/evil\n',
     '[filter "a#b"]\n\tsmudge = id\n',
     '[filter "a\\"b"]\n\tsmudge = id\n',
+    "[diff]\n\texternal = /tmp/evil-diff\n",
+    '[diff "driver"]\n\ttextconv = id\n',
+    '[diff "driver"]\n\tcommand = /tmp/evil-diff\n',
     '[branch "autosetupmerge\0x"]\n\trebase = false\n',
     "[unclosed\n\tfoo = bar\n",
   ]) {
@@ -584,4 +587,46 @@ test("creating and deleting tracking branches in shared repoRoot does not block 
   const blocked = await ws.configClean({ cwd: repoRoot, timeoutMs: 10_000 });
   expect(blocked.ok).toBe(false);
   expect(notices).toHaveLength(1);
+});
+
+test("workspace.diff produces a real unified diff under GIT_SAFE and ignores repo diff.external", async () => {
+  const base = await tempDir("loop-diff-");
+  const repoRoot = join(base, "repo");
+  const stateDir = join(base, "state");
+  await makeRealGitRepo(repoRoot, "https://github.com/o/r.git");
+
+  const env = baseGitEnv();
+  const git = (args: string[]) =>
+    runCommand(["git", ...args], { cwd: repoRoot, env, timeoutMs: 15_000 });
+  expect((await git(["checkout", "-b", "feat"])).code).toBe(0);
+  await writeFile(join(repoRoot, "a.txt"), "hello\nworld\n");
+  expect((await git(["add", "a.txt"])).code).toBe(0);
+  expect((await git(["commit", "-m", "change a"])).code).toBe(0);
+
+  const ws = gitWorkspace({
+    exec: runCommand,
+    env: { PATH: process.env.PATH, HOME: "/real/home" },
+    repoRoot,
+    remote: "origin",
+    stateDir,
+  });
+
+  const cleanDiff = await ws.diff({ cwd: repoRoot, timeoutMs: 15_000 }, "main");
+  expect(cleanDiff).toContain("diff --git a/a.txt b/a.txt");
+  expect(cleanDiff).toContain("+world");
+  expect(cleanDiff).not.toContain("external diff died");
+  expect(await ws.changedFiles({ cwd: repoRoot, timeoutMs: 15_000 }, "main")).toEqual(["a.txt"]);
+
+  // Even if `.git/config` defines an external diff or textconv helper, `--no-ext-diff --no-textconv` ignores them.
+  const cfgPath = repoGitConfigPath(repoRoot) as string;
+  await writeFile(join(repoRoot, ".gitattributes"), "*.txt diff=evil\n");
+  await appendFile(
+    cfgPath,
+    '\n[diff]\n\texternal = /nonexistent/evil-diff\n[diff "evil"]\n\ttextconv = /nonexistent/evil-textconv\n',
+  );
+  const guardedDiff = await ws.diff({ cwd: repoRoot, timeoutMs: 15_000 }, "main");
+  expect(guardedDiff).toContain("diff --git a/a.txt b/a.txt");
+  expect(guardedDiff).toContain("+world");
+  expect(guardedDiff).not.toContain("external diff died");
+  expect(guardedDiff).not.toContain("evil-textconv");
 });

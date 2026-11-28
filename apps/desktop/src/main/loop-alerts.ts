@@ -5,7 +5,10 @@
 import type { LoopNotice, LoopNoticesAnswer, LoopProjectInfo } from "@cycle/ui/api";
 import { BackgroundNotifications, type NotificationHost } from "./background-notifications.ts";
 
-export type Alertable = LoopNotice & { kind: "blocked" | "review" | "stuck" | "intent_stuck" };
+export type Alertable = LoopNotice & {
+  kind: "blocked" | "review" | "stuck" | "intent_stuck";
+  identifier: string;
+};
 
 const keyOf = (n: LoopNotice): string => `${n.kind}:${n.identifier}`;
 
@@ -29,6 +32,8 @@ export const newAlerts = (
       n.kind !== "intent_stuck"
     )
       continue;
+    // These four always name a ticket; one that does not has nothing to tell.
+    if (n.identifier === null) continue;
     const key = keyOf(n);
     if (before.has(key) || seen.has(key)) continue;
     seen.add(key);

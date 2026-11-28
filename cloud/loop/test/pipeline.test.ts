@@ -811,6 +811,8 @@ test("review reject sends feedback back to Dev, re-runs CI and review, then auto
   const run = await s.store.load("CYC-1");
   expect(run?.phase).toBe("done");
   expect(run?.round).toBe(1);
+  // Auto-merged runs do not emit a `review` Notice.
+  expect(s.store.notices().filter((n) => n.runKey === "CYC-1" && n.kind === "review")).toEqual([]);
 });
 
 test("review reject past fix-round limit escalates to human (In Review) without auto-merge", async () => {
@@ -836,6 +838,9 @@ test("review reject past fix-round limit escalates to human (In Review) without 
   expect(tracker.comments.at(-1)).toContain("修复轮数上限");
   expect(sessions.prompts.filter((p) => p.role === "dev")).toHaveLength(2);
   expect((await store.load("CYC-1"))?.phase).toBe("done");
+  const limitNotices = store.notices().filter((n) => n.runKey === "CYC-1" && n.kind === "review");
+  expect(limitNotices).toHaveLength(1);
+  expect(limitNotices[0]?.text).toContain("修复轮数上限");
 });
 
 test("review escalate skips auto-merge, posts PR comment, and moves ticket to In Review", async () => {
@@ -860,6 +865,42 @@ test("review escalate skips auto-merge, posts PR comment, and moves ticket to In
   expect(tracker.comments.at(-1)).toContain("升级给人");
   expect(tracker.comments.at(-1)).toContain("changes permission boundary");
   expect((await store.load("CYC-1"))?.phase).toBe("done");
+  const reviewNotices = store.notices().filter((n) => n.runKey === "CYC-1" && n.kind === "review");
+  expect(reviewNotices).toHaveLength(1);
+  expect(reviewNotices[0]?.text).toContain("needs human sign-off");
+  expect(reviewNotices[0]?.text).toContain("changes permission boundary");
+  expect(reviewNotices[0]?.sessionId).toBeNull();
+});
+
+test("re-running review on the same HEAD after escalate still records a fresh review Notice", async () => {
+  const secondEscalate = `${CHECKED}<review>{"decision":"escalate","summary":"second pass still needs sign-off","reasons":["new reason on retry"]}</review>`;
+  const s = setup([ready()], {
+    dev: [done(), done()],
+    qa: [done(PASS), done(PASS)],
+    review: [done(REVIEW_ESCALATE), done(secondEscalate)],
+  });
+  await s.pipeline.step();
+  const firstRun = await s.store.load("CYC-1");
+  expect(firstRun?.phase).toBe("done");
+  const firstNotices = s.store.notices().filter((n) => n.runKey === "CYC-1" && n.kind === "review");
+  expect(firstNotices).toHaveLength(1);
+
+  // Put the ticket back to In Progress and simulate a fresh run reaching review on the same HEAD.
+  s.tracker.issues[0] = ready({ columnId: 23 });
+  if (firstRun !== undefined) {
+    await s.store.save({ ...firstRun, phase: "review" });
+  }
+  await s.pipeline.step();
+  const secondRun = await s.store.load("CYC-1");
+  expect(secondRun?.phase).toBe("done");
+  const allNotices = s.store.notices().filter((n) => n.runKey === "CYC-1" && n.kind === "review");
+  expect(allNotices).toHaveLength(2);
+  const latest = allNotices[1];
+  expect(latest?.text).toContain("second pass still needs sign-off");
+  expect(latest?.text).toContain("new reason on retry");
+  expect(
+    latest !== undefined && secondRun !== undefined && latest.createdAt >= secondRun.updatedAt,
+  ).toBe(true);
 });
 
 test("review retries on session error, timeout, abnormal end, unparseable output, or missing checklist, and acts on verdict when retry succeeds", async () => {

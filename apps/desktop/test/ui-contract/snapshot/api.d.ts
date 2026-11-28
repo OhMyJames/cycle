@@ -1100,7 +1100,7 @@ export type LoopNoticeKind = "permission" | "blocked" | "review" | "stuck" | "in
 export type LoopNotice = {
     id: string;
     kind: LoopNoticeKind;
-    identifier: string;
+    identifier: string | null;
     text: string;
     session: {
         kind: string;
@@ -1219,6 +1219,7 @@ export type LoopTimelineStep = {
     finishedAt: string | null;
     summary: string | null;
     error: string | null;
+    dependsOn?: string[];
 };
 export type LoopTimelineRunEntry = {
     entryKind: "run";

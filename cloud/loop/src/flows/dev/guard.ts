@@ -47,7 +47,7 @@ export async function guardPr(
   const { prUrl, state } = await prState(h, run);
   if (state === "OPEN") return undefined;
   if (state === "CLOSED") return closedBlock(h, run, prUrl);
-  await save({ phase: "done" }, (tx) => {
+  await save({ phase: "done", dev: { reviewCommented: undefined } }, (tx) => {
     tellTicket(tx, run, issue, `merged-outside:${run.key}:${prUrl}`, {
       body: `PR 已在自动化之外合并：${prUrl}。按已交付处理，不再重复开 PR。`,
       to: "inReview",

@@ -100,8 +100,9 @@ function Overview({
         onOpen={(projectKey, notice) => {
           store.track("loop_notice_opened", { kind: notice.kind });
           // The session it names, when it is here; else the ticket's page, where it is joined or its story is read.
-          if (notice.session === null || !store.joinLoopSession(notice.session.id))
-            onOpenTicket(projectKey, notice.identifier);
+          if (notice.session === null || !store.joinLoopSession(notice.session.id)) {
+            if (notice.identifier !== null) onOpenTicket(projectKey, notice.identifier);
+          }
         }}
       />
       <section data-slot="loop-projects" aria-label={t("loop.projects")}>
@@ -379,7 +380,8 @@ export function LoopMain({
       <div
         data-slot="page-body"
         data-kind="loop-body"
-        data-full={chosen !== undefined ? "" : undefined}
+        // The board is a fixed frame whose columns scroll; the Timeline is a long page that scrolls as a whole.
+        data-full={chosen !== undefined && !isTimeline ? "" : undefined}
       >
         {chosen !== undefined && isTimeline ? (
           <LoopTimeline

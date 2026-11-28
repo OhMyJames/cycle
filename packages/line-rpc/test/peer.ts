@@ -1,4 +1,5 @@
 // The other side, as a process: answers a few methods and records what it was sent, one JSON line each way.
+import { closeSync, writeSync } from "node:fs";
 import { createInterface } from "node:readline";
 
 const send = (message: unknown) => process.stdout.write(`${JSON.stringify(message)}\n`);
@@ -34,6 +35,12 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   else if (msg.method === "partial") {
     process.stdout.write('{"method":"cut","params":{"x":"');
     process.exit(0);
+  } else if (msg.method === "partial, then linger") {
+    // Half a line and the end of its output, then a while before it exits: what a busy machine looks like from the other
+    // side, where the end of the output arrives well before the process's exit.
+    writeSync(1, '{"method":"cut","params":{"x":"');
+    closeSync(1);
+    setTimeout(() => process.exit(0), 300);
   } else if (msg.id !== undefined && msg.method === undefined) {
     const original = asked.get(msg.id);
     if (original !== undefined) send({ id: Number(original), result: msg });

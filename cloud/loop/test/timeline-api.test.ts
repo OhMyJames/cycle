@@ -180,7 +180,12 @@ describe("loop/timeline/list (CYC-534)", () => {
       tx.saveGraph(
         graphOf("CYC-510", [
           node("n1", 0, { title: "Protocol schema", sessionId: "sess-dev-510", status: "passed" }),
-          node("n2", 1, { title: "Wire UI", sessionId: "sess-dev-510-n2", status: "running" }),
+          node("n2", 1, {
+            title: "Wire UI",
+            sessionId: "sess-dev-510-n2",
+            status: "running",
+            dependsOn: ["n1"],
+          }),
         ]),
       );
       tx.put(
@@ -230,6 +235,8 @@ describe("loop/timeline/list (CYC-534)", () => {
         ["dev", "sess-dev-510-n2", "running"],
         ["qa", "sess-qa-510", "running"],
       ]);
+      // A node says which nodes it waits for, by step id; a phase session waits for none.
+      expect(devRun.steps.map((s) => s.dependsOn)).toEqual([[], ["node:n1"], []]);
       expect(devRun.prUrl).toBe("https://github.com/clawdot/cycle/pull/10");
     }
 

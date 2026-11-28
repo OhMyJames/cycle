@@ -72,6 +72,23 @@ describe("v1 tool calls to v2", () => {
     expect(later).not.toHaveProperty("title");
   });
 
+  test("an MCP tool call keeps agy's own title and passes its text content block through (no server name to split)", () => {
+    const update = toV2ToolCallUpdate({
+      toolCallId: "m1",
+      name: "mcp_plan_get_issue",
+      title: "get_issue",
+      status: "completed",
+      content: [{ type: "content", content: { type: "text", text: "Issue CYC-1" } }],
+    });
+    expect(update).toMatchObject({
+      name: "mcp_plan_get_issue",
+      title: "get_issue",
+      content: [{ type: "content", content: { type: "text", text: "Issue CYC-1" } }],
+    });
+    const bare = toV2ToolCallUpdate({ toolCallId: "m2", name: "mcp_plan_get_issue" });
+    expect(bare).toMatchObject({ title: "mcp_plan_get_issue" });
+  });
+
   test("PascalCase tool inputs are normalized to standard ACP rawInput keys without duplication", () => {
     const cmd = toV2ToolCallUpdate({
       toolCallId: "r1",

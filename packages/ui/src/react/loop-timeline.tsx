@@ -1,7 +1,6 @@
 // Chronological Loop progress timeline for one Project (CYC-534, docs/protocol.md §17):
 // aggregates runs (with Task Graph nodes and phase sessions) and planning rounds (Triage / Shape / Shape QA),
 // with status/kind filters, ticket search, pagination, and one-click jump into any step's session or ticket drawer.
-import { isComposing } from "@ui-sdk/core";
 import { Button } from "@ui-sdk/react/button";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
@@ -13,15 +12,11 @@ import type {
 } from "../api.ts";
 import { AgentLink } from "./agent-link.tsx";
 import { useI18n } from "./i18n.tsx";
-import {
-  ChevronDownIcon,
-  ChevronRightIcon,
-  MessageIcon,
-  RefreshIcon,
-  SearchIcon,
-} from "./icons.tsx";
+import { ChevronDownIcon, ChevronRightIcon, MessageIcon, RefreshIcon } from "./icons.tsx";
 import { useDay } from "./in-front.ts";
 import { PHASE_WORD } from "./loop-run.tsx";
+import { hasDependencies, TimelineDag } from "./loop-timeline-dag.tsx";
+import { SearchField } from "./search-field.tsx";
 import { SessionTime } from "./session-time.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
@@ -291,22 +286,11 @@ export function LoopTimeline({
           </fieldset>
         </div>
         <div data-slot="loop-timeline-search-row">
-          <label data-slot="loop-board-search">
-            <SearchIcon />
-            <input
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Escape" && !isComposing(e) && query !== "") {
-                  e.preventDefault();
-                  setQuery("");
-                }
-              }}
-              placeholder={t("loop.timeline.searchPlaceholder")}
-              aria-label={t("loop.timeline.searchPlaceholder")}
-            />
-          </label>
+          <SearchField
+            value={query}
+            onChange={setQuery}
+            label={t("loop.timeline.searchPlaceholder")}
+          />
           <Tip label={t("loop.reload")}>
             <Button
               data-variant="ghost"
@@ -423,6 +407,10 @@ function RunTimelineCard({
   const phaseSuffix = PHASE_WORD[entry.phase];
   const phaseLabel = phaseSuffix !== undefined ? t(`loop.stage.${phaseSuffix}`) : entry.phase;
   const totalDur = entry.state === "done" ? durationText(entry.startedAt, entry.updatedAt) : null;
+  // Task Graph nodes that wait for one another are drawn as the graph; the sessions of the run's other phases follow it.
+  const graphSteps = entry.steps.filter((s) => s.id.startsWith("node:"));
+  const asGraph = hasDependencies(graphSteps);
+  const listSteps = asGraph ? entry.steps.filter((s) => !s.id.startsWith("node:")) : entry.steps;
 
   return (
     <li data-slot="loop-timeline-item" data-entry-kind="run" data-state={tone}>
@@ -478,9 +466,17 @@ function RunTimelineCard({
                 <AgentLink href={entry.prUrl}>{entry.prUrl.replace(/^https:\/\//, "")}</AgentLink>
               </div>
             ) : null}
-            {entry.steps.length > 0 ? (
+            {asGraph ? (
+              <TimelineDag
+                steps={graphSteps}
+                tone={(status) => STEP_TONE[status]}
+                duration={(step) => durationText(step.startedAt, step.finishedAt)}
+                onOpenSession={(step) => onOpenSession(step.sessionId as string, step.role)}
+              />
+            ) : null}
+            {listSteps.length > 0 ? (
               <ol data-slot="loop-timeline-steps">
-                {entry.steps.map((step) => {
+                {listSteps.map((step) => {
                   const stepTone = STEP_TONE[step.status];
                   const dur = durationText(step.startedAt, step.finishedAt);
                   const roleLabel = t(ROLE_KEY[step.role]);

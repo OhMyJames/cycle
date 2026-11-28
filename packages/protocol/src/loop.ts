@@ -333,8 +333,8 @@ export const LoopNoticeSchema = z.object({
   id: z.string().min(1),
   project: z.string().min(1),
   kind: LoopNoticeKindSchema,
-  /** The work item key, such as `CYC-390`. */
-  key: z.string().min(1),
+  /** The work item key, such as `CYC-390`; null for a Notice about the Project itself (a `supervisor` one). */
+  key: z.string().min(1).nullable(),
   session: LoopSessionRefSchema.nullable(),
   text: z.string(),
   at: z.string().min(1),
@@ -500,6 +500,8 @@ export const LoopTimelineStepSchema = z.object({
   finishedAt: z.string().min(1).nullable(),
   summary: z.string().nullable(),
   error: z.string().nullable(),
+  /** Ids of the steps this one waits for; only Task Graph nodes have any. */
+  dependsOn: z.array(z.string().min(1)).default([]),
 });
 export type LoopTimelineStep = z.infer<typeof LoopTimelineStepSchema>;
 
