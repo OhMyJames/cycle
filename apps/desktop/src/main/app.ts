@@ -416,27 +416,53 @@ export const startApp = async (options: AppOptions) => {
       retryLoopIntents(loopOptions(), projectKey, identifier, (event, props) =>
         analytics.track(event, props),
       ),
-    loopAct: (projectKey: unknown, identifier: unknown, action: unknown, confirmed: unknown) =>
-      actOnTicket(loopOptions(), projectKey, identifier, action, confirmed, (event, props) =>
-        analytics.track(event, props),
+    loopAct: (
+      projectKey: unknown,
+      identifier: unknown,
+      action: unknown,
+      confirmed: unknown,
+      reason: unknown,
+    ) =>
+      actOnTicket(
+        loopOptions(),
+        projectKey,
+        identifier,
+        action,
+        confirmed,
+        (event, props) => analytics.track(event, props),
+        reason,
       ),
-    loopGraphAct: (projectKey: unknown, identifier: unknown, nodeId: unknown, action: unknown) =>
-      actOnGraph(loopOptions(), projectKey, identifier, nodeId, action, (event, props) =>
-        analytics.track(event, props),
+    loopGraphAct: (
+      projectKey: unknown,
+      identifier: unknown,
+      nodeId: unknown,
+      action: unknown,
+      edits: unknown,
+    ) =>
+      actOnGraph(
+        loopOptions(),
+        projectKey,
+        identifier,
+        nodeId,
+        action,
+        (event, props) => analytics.track(event, props),
+        edits,
       ),
-    loopChat: (projectKey: unknown, identifier: unknown) =>
+    loopChat: (projectKey: unknown, identifier: unknown, agent: unknown) =>
       startTicketChat(
         loopOptions(),
         {
           locationId: "local",
           cwd: options.loop?.chatCwd ?? "",
-          agentDefaults: (agent) => manager.agentDefaults("local", agent),
+          agents: () => manager.agents("local"),
+          agentDefaults: (id) => manager.agentDefaults("local", id),
           createSession: (params) => manager.createSession("local", params),
           prompt: (sessionId, text) => manager.prompt("local", sessionId, text),
         },
         projectKey,
         identifier,
         (event, props) => analytics.track(event, props),
+        agent,
       ),
     loopActMany: (
       projectKey: unknown,

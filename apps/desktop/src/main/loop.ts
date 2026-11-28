@@ -5,7 +5,7 @@
 
 import { mkdir, rm } from "node:fs/promises";
 import { connect } from "node:net";
-import type { EventProps } from "@cycle/analytics/events";
+import { agentOf, type EventProps } from "@cycle/analytics/events";
 import {
   LOOP_API_PROJECTS_LIST,
   LOOP_BOARD_GET,
@@ -39,6 +39,7 @@ import type {
   LoopChatFailure,
   LoopChatResult,
   LoopGraphNodeAction,
+  LoopGraphNodeEdits,
   LoopManyItem,
   LoopManyResult,
   LoopNoticesAnswer,
@@ -574,7 +575,9 @@ export const cancelLoopRun = async (
           ? result.cancelled
             ? "ok"
             : "not_running"
-          : (result.reason as Exclude<LoopActFailure, "unconfirmed">),
+          : result.reason === "unconfirmed" || result.reason === "invalid_verify"
+            ? "refused"
+            : result.reason,
     });
     return result;
   };
@@ -605,7 +608,11 @@ export const retryLoopIntents = async (
   const done = (result: LoopRetryIntentsResult): LoopRetryIntentsResult => {
     track("loop_intents_retried", {
       result:
-        result.kind === "ok" ? "ok" : (result.reason as Exclude<LoopActFailure, "unconfirmed">),
+        result.kind === "ok"
+          ? "ok"
+          : result.reason === "unconfirmed" || result.reason === "invalid_verify"
+            ? "refused"
+            : result.reason,
       retried: result.kind === "ok" ? result.retried : 0,
     });
     return result;
@@ -638,13 +645,24 @@ export const actOnTicket = async (
   action: unknown,
   confirmed: unknown,
   track: Track,
+  reason?: unknown,
 ): Promise<LoopActResult> => {
-  if (action !== "approve" && action !== "to_backlog" && action !== "to_todo")
+  if (
+    action !== "approve" &&
+    action !== "return" &&
+    action !== "to_backlog" &&
+    action !== "to_todo"
+  )
     return { kind: "failed", reason: "refused" };
   const done = (result: LoopActResult): LoopActResult => {
     track("loop_ticket_acted", {
       action: action as LoopAction,
-      result: result.kind === "ok" ? "ok" : result.reason,
+      result:
+        result.kind === "ok"
+          ? "ok"
+          : result.reason === "invalid_verify"
+            ? "refused"
+            : result.reason,
     });
     return result;
   };
@@ -653,10 +671,12 @@ export const actOnTicket = async (
   if (action === "approve" && confirmed !== true)
     return done({ kind: "failed", reason: "unconfirmed" });
   if (!loop) return done({ kind: "failed", reason: "no_server" });
+  const why = typeof reason === "string" ? reason.trim().slice(0, REASON_MAX) : "";
   const called = await callLoop(loop.socket, LOOP_TICKETS_ACT, {
     project: projectKey,
     verb: action,
     keys: [key],
+    ...(action === "return" && why !== "" ? { reason: why } : {}),
     confirmed: confirmed === true,
     actor: actorOf(loop),
     actorKind: "desktop",
@@ -675,9 +695,42 @@ export const actOnTicket = async (
 
 const NODE_ID_MAX = 200;
 
+const parseGraphEdits = (raw: unknown): LoopGraphNodeEdits | undefined => {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const obj = raw as Record<string, unknown>;
+  const out: LoopGraphNodeEdits = {};
+  if (obj.title !== undefined) {
+    if (typeof obj.title !== "string") return undefined;
+    const trimmed = obj.title.trim();
+    if (trimmed === "" || trimmed.length > 200) return undefined;
+    out.title = trimmed;
+  }
+  if (obj.goal !== undefined) {
+    if (typeof obj.goal !== "string") return undefined;
+    const trimmed = obj.goal.trim();
+    if (trimmed === "" || trimmed.length > 4000) return undefined;
+    out.goal = trimmed;
+  }
+  if (obj.verify !== undefined) {
+    if (!Array.isArray(obj.verify) || obj.verify.length === 0 || obj.verify.length > 20)
+      return undefined;
+    const cmds: string[] = [];
+    for (const item of obj.verify) {
+      if (typeof item !== "string") return undefined;
+      const trimmed = item.trim();
+      if (trimmed === "" || trimmed.length > 500) return undefined;
+      cmds.push(trimmed);
+    }
+    out.verify = cmds;
+  }
+  return out.title !== undefined || out.goal !== undefined || out.verify !== undefined
+    ? out
+    : undefined;
+};
+
 /**
- * Retries or skips one graph node of a work item's run (`loop/graph/act`, CYC-512). The Loop server checks the node's
- * status again (`node_not_allowed` otherwise). Only the action and how it came out are reported, never the node.
+ * Retries, skips or edits one graph node of a work item's run (`loop/graph/act`, CYC-512). The Loop server checks the
+ * node's status (`node_not_allowed`) and verify allowlist (`invalid_verify`). Reports action and outcome only.
  */
 export const actOnGraph = async (
   loop: LoopOptions | undefined,
@@ -686,8 +739,12 @@ export const actOnGraph = async (
   nodeId: unknown,
   action: unknown,
   track: Track,
+  edits?: unknown,
 ): Promise<LoopActResult> => {
-  if (action !== "retry_node" && action !== "skip_node")
+  if (action !== "retry_node" && action !== "skip_node" && action !== "edit_node")
+    return { kind: "failed", reason: "refused" };
+  const parsedEdits = action === "edit_node" ? parseGraphEdits(edits) : undefined;
+  if (action === "edit_node" && parsedEdits === undefined)
     return { kind: "failed", reason: "refused" };
   const done = (result: LoopActResult): LoopActResult => {
     track("loop_graph_acted", {
@@ -711,6 +768,7 @@ export const actOnGraph = async (
     key,
     nodeId,
     action,
+    ...(parsedEdits ?? {}),
     actor: actorOf(loop),
     actorKind: "desktop",
   });
@@ -718,7 +776,12 @@ export const actOnGraph = async (
   if (called.kind === "error")
     return done({
       kind: "failed",
-      reason: called.reason === "node_not_allowed" ? "not_allowed" : failureOf(called.reason),
+      reason:
+        called.reason === "node_not_allowed"
+          ? "not_allowed"
+          : called.reason === "invalid_verify"
+            ? "invalid_verify"
+            : failureOf(called.reason),
     });
   return LoopGraphActResultSchema.safeParse(called.result).success
     ? done({ kind: "ok" })
@@ -731,6 +794,8 @@ export type ChatDeps = {
   locationId: string;
   /** Where the session runs. */
   cwd: string;
+  /** Local daemon's agents; when provided, chooses an available configured agent instead of hardcoding Codex. */
+  agents?: () => Promise<{ id: string; available: boolean }[]>;
   agentDefaults: (agent: string) => Promise<Record<string, string>>;
   createSession: (params: {
     cwd: string;
@@ -744,10 +809,21 @@ export type ChatDeps = {
 const firstMessage = (identifier: string): string =>
   `Let's work on ticket ${identifier} together. Read it in itsaplan first. Help me refine the requirement: fix the text, add acceptance criteria, and ask what is unclear. Do not move it to another column; I will approve it myself.`;
 
+const cleanDefaults = (raw: Record<string, string>): Record<string, string> => {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    const val = k === "model" ? v.trim() : v;
+    if (val !== "") out[k] = val;
+  }
+  return out;
+};
+
 /**
  * The person asked to talk about a ticket with an agent. The Loop server says whether it may (`chat: "new"`: Backlog
- * and Todo); otherwise `not_allowed` and nothing is made. The agent's default model is needed: without it nothing is
- * made, and the page says to set it in Settings (`needs_model`) instead of a session failing.
+ * and Todo); otherwise `not_allowed` and nothing is made. When `deps.agents` is provided, uses the explicitly chosen
+ * agent or automatically picks the first available local agent with a configured default model (falling back to the
+ * first available agent with its default config). Without `deps.agents`, falls back to `CHAT_AGENT` and requires its
+ * default model (`needs_model`).
  */
 export const startTicketChat = async (
   loop: LoopOptions | undefined,
@@ -755,9 +831,13 @@ export const startTicketChat = async (
   projectKey: unknown,
   identifier: unknown,
   track: Track,
+  preferredAgent?: unknown,
 ): Promise<LoopChatResult> => {
+  const chosen = typeof preferredAgent === "string" ? preferredAgent.trim() : "";
+  const picked = chosen !== "";
+  let agent = chosen;
   const done = (reason: LoopChatFailure | "started", result?: LoopChatResult): LoopChatResult => {
-    track("loop_ticket_chat", { result: reason });
+    track("loop_ticket_chat", { result: reason, agent: agentOf(agent), picked });
     return result ?? { kind: "failed", reason: reason as LoopChatFailure };
   };
   const key = identifierOf(projectKey, identifier);
@@ -767,13 +847,50 @@ export const startTicketChat = async (
   if (read.kind === "no_server") return done("no_server");
   if (read.kind !== "ok") return done("refused");
   if (read.ticket.chat !== "new") return done("not_allowed");
-  let model: string | undefined;
-  try {
-    model = (await deps.agentDefaults(CHAT_AGENT)).model?.trim();
-  } catch {
-    return done("failed");
+  let config: Record<string, string> = {};
+  if (deps.agents !== undefined) {
+    let available: { id: string; available: boolean }[];
+    try {
+      available = (await deps.agents()).filter((a) => a.available);
+    } catch {
+      return done("failed");
+    }
+    if (available.length === 0) return done("failed");
+    if (chosen !== "") {
+      if (!available.some((a) => a.id === chosen)) return done("failed");
+      agent = chosen;
+      config = cleanDefaults(
+        await deps.agentDefaults(agent).catch((): Record<string, string> => ({})),
+      );
+    } else {
+      let pickedAuto: { id: string; config: Record<string, string> } | undefined;
+      let firstConfig: Record<string, string> | undefined;
+      for (let i = 0; i < available.length; i++) {
+        const item = available[i];
+        if (!item) continue;
+        const defaults = cleanDefaults(
+          await deps.agentDefaults(item.id).catch((): Record<string, string> => ({})),
+        );
+        if (i === 0) firstConfig = defaults;
+        if (defaults.model) {
+          pickedAuto = { id: item.id, config: defaults };
+          break;
+        }
+      }
+      agent = pickedAuto?.id ?? available[0]?.id ?? CHAT_AGENT;
+      config = pickedAuto?.config ?? firstConfig ?? {};
+    }
+  } else {
+    agent = chosen || CHAT_AGENT;
+    let defaults: Record<string, string>;
+    try {
+      defaults = cleanDefaults(await deps.agentDefaults(agent));
+    } catch {
+      return done("failed");
+    }
+    if (!defaults.model) return done("needs_model");
+    config = defaults;
   }
-  if (model === undefined || model === "") return done("needs_model");
   // Never the home folder: without a folder of its own, nothing is made.
   if (deps.cwd === "") return done("no_folder");
   try {
@@ -783,7 +900,7 @@ export const startTicketChat = async (
   }
   let made: string | { problem: unknown };
   try {
-    made = await deps.createSession({ cwd: deps.cwd, agent: CHAT_AGENT, config: { model } });
+    made = await deps.createSession({ cwd: deps.cwd, agent, config });
   } catch (error) {
     return done((error as { code?: unknown })?.code === -32000 ? "auth_required" : "failed");
   }
@@ -792,8 +909,12 @@ export const startTicketChat = async (
     await deps.prompt(made, firstMessage(key));
   } catch {
     // The session exists: its id goes with the failure, so the person can open it and say the first thing themselves.
-    track("loop_ticket_chat", { result: "failed" });
-    return { kind: "failed", reason: "failed", sessionId: made, locationId: deps.locationId };
+    return done("failed", {
+      kind: "failed",
+      reason: "failed",
+      sessionId: made,
+      locationId: deps.locationId,
+    });
   }
   return done("started", { kind: "started", locationId: deps.locationId, sessionId: made });
 };

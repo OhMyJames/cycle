@@ -17,6 +17,7 @@ import type {
   LoopCancelRunResult,
   LoopChatResult,
   LoopGraphNodeAction,
+  LoopGraphNodeEdits,
   LoopManyAction,
   LoopManyResult,
   LoopNoticesAnswer,
@@ -735,7 +736,7 @@ export const fakeBridge = (
     ),
     loopChat: record(
       "loopChat",
-      async (_projectKey: string, _identifier: string): Promise<LoopChatResult> =>
+      async (_projectKey: string, _identifier: string, _agent?: string): Promise<LoopChatResult> =>
         options.loopChat ?? { kind: "started", locationId: "local", sessionId: "chat-1" },
     ),
     loopAct: record(
@@ -745,6 +746,7 @@ export const fakeBridge = (
         _identifier: string,
         _action: LoopAction,
         _confirmed?: boolean,
+        _reason?: string,
       ): Promise<LoopActResult> => options.loopAct ?? { kind: "ok" },
     ),
     loopGraphAct: record(
@@ -754,6 +756,7 @@ export const fakeBridge = (
         _identifier: string,
         _nodeId: string,
         _action: LoopGraphNodeAction,
+        _edits?: LoopGraphNodeEdits,
       ): Promise<LoopActResult> => options.loopGraphAct ?? { kind: "ok" },
     ),
     loopNotices: record(

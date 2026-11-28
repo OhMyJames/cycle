@@ -87,7 +87,7 @@ export const EVENTS = {
   loop_runs_read: o({ result: z.enum(["ok", "disconnected"]) }),
   /** The person opened a ticket's page on the Loop page. */
   loop_ticket_opened: o({}),
-  /** The person asked to talk about a ticket with an agent: how it came out; never which ticket or what was said. */
+  /** The person asked to talk about a ticket with an agent: how it came out, which agent word, and whether they picked it explicitly; never which ticket or what was said. */
   loop_ticket_chat: o({
     result: z.enum([
       "started",
@@ -100,10 +100,12 @@ export const EVENTS = {
       "no_folder",
       "auth_required",
     ]),
+    agent,
+    picked: z.boolean(),
   }),
   /** The person pressed a state button on the Loop page: which, and how it came out; never which ticket. */
   loop_ticket_acted: o({
-    action: z.enum(["approve", "to_backlog", "to_todo"]),
+    action: z.enum(["approve", "return", "to_backlog", "to_todo"]),
     result: z.enum([
       "ok",
       "unconfirmed",
@@ -198,6 +200,7 @@ export const EVENTS = {
       "forbidden",
       "conflict",
       "not_allowed",
+      "invalid_verify",
       "offline",
       "refused",
     ]),

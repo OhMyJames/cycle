@@ -1327,28 +1327,30 @@ export type AppApi = {
   loopNotices(projectKey: string): Promise<LoopNoticesAnswer>;
   /**
    * Opens a conversation with an agent about a Backlog or Todo ticket (CYC-389): main asks the Loop server whether it may
-   * (`chat: "new"`), takes the default model of the agent, makes the session with the ticket's number in its first message.
+   * (`chat: "new"`), chooses an available agent (or the one picked), makes the session with the ticket's number in its first message.
    */
-  loopChat(projectKey: string, identifier: string): Promise<LoopChatResult>;
+  loopChat(projectKey: string, identifier: string, agent?: string): Promise<LoopChatResult>;
   /**
    * Changes one ticket's state through the Loop server. `approve` writes nothing unless `confirmed` is true: main
-   * refuses it, whatever the page did. Never throws for a failed write: the reason comes back.
+   * refuses it, whatever the page did. `return` may carry an optional reason comment. Never throws for a failed write: the reason comes back.
    */
   loopAct(
     projectKey: string,
     identifier: string,
     action: LoopAction,
     confirmed?: boolean,
+    reason?: string,
   ): Promise<LoopActResult>;
   /**
-   * Retries or skips one node of a work item's Task Graph through the Loop server (`loop/graph/act`, CYC-513). Never
-   * throws for a refused write: the reason comes back.
+   * Retries, skips or edits one node of a work item's Task Graph through the Loop server (`loop/graph/act`, CYC-513).
+   * Never throws for a refused write: the reason comes back.
    */
   loopGraphAct(
     projectKey: string,
     identifier: string,
     nodeId: string,
     action: LoopGraphNodeAction,
+    edits?: LoopGraphNodeEdits,
   ): Promise<LoopActResult>;
   /**
    * Approves or returns a batch of the tickets waiting for approval (CYC-451). The Loop server reads each ticket again and writes
@@ -1414,8 +1416,13 @@ export type LoopGraphNodeStatus =
   | "failed"
   | "blocked"
   | "skipped";
-/** What the person may do to a stuck node. */
-export type LoopGraphNodeAction = "retry_node" | "skip_node";
+/** What the person may do to a graph node (`edit_node` for pending/blocked/failed; `retry_node`/`skip_node` for stuck). */
+export type LoopGraphNodeAction = "retry_node" | "skip_node" | "edit_node";
+export type LoopGraphNodeEdits = {
+  title?: string;
+  goal?: string;
+  verify?: string[];
+};
 export type LoopGraphSummary = {
   source: LoopGraphSource;
   total: number;
@@ -1474,8 +1481,8 @@ export type LoopChatResult =
   /** `sessionId`: the session was made but its first message did not go; it can be opened. */
   | { kind: "failed"; reason: LoopChatFailure; sessionId?: string; locationId?: string };
 
-/** `approve`: Backlog to Todo with `auto`. `to_backlog`: back to Backlog, `auto` off. `to_todo`: back to Todo. */
-export type LoopAction = "approve" | "to_backlog" | "to_todo";
+/** `approve`: Backlog to Todo with `auto`. `return`: drop `待批准` and mark `Loop 跳过`. `to_backlog`: back to Backlog, `auto` off. `to_todo`: back to Todo. */
+export type LoopAction = "approve" | "return" | "to_backlog" | "to_todo";
 
 /** Why a write did not happen: fixed words, never the tracker's text. `no_server`: no Loop server answered. */
 export type LoopActFailure =
@@ -1484,6 +1491,7 @@ export type LoopActFailure =
   | "forbidden"
   | "conflict"
   | "not_allowed"
+  | "invalid_verify"
   | "offline"
   | "refused";
 export type LoopActResult = { kind: "ok" } | { kind: "failed"; reason: LoopActFailure };

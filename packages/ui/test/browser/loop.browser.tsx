@@ -1369,9 +1369,21 @@ const graphTicket = () => {
   const nodes = [
     node(1, { status: "passed", sessionId: "sess-1", summary: "Did the first part" }),
     node(0, { status: "passed" }),
-    node(2, { status: "blocked", sessionId: "sess-2", lastError: "tests red", origin: "fix" }),
-    node(3, { status: "failed" }),
+    node(2, {
+      status: "blocked",
+      sessionId: "sess-2",
+      lastError: "tests red",
+      origin: "fix",
+      rounds: 2,
+      commitSha: "abcdef1234567890",
+      dependsOn: ["n1"],
+      filesHint: ["src/a.ts"],
+      startedAt: "2026-11-26T00:00:00Z",
+      finishedAt: "2026-11-26T00:05:00Z",
+    }),
+    node(3, { status: "failed", startedAt: "2026-11-26T00:00:00Z", finishedAt: null }),
     node(4, { status: "running" }),
+    node(5, { status: "pending" }),
   ];
   return {
     connected: true,
@@ -1383,9 +1395,12 @@ const graphTicket = () => {
 const tracked = (calls: [string, ...unknown[]][]) =>
   calls.filter(([name]) => name === "track").map(([, event, props]) => [event, props]);
 
-const openGraphDrawer = async () => {
+const openGraphDrawer = async (
+  extra: Partial<NonNullable<Parameters<typeof fakeBridge>[0]>> = {},
+) => {
   const user = userEvent.setup();
-  const fake = fakeBridge(graphTicket());
+  const fake = fakeBridge({ ...graphTicket(), ...extra });
+  fake.bridge.sessions = async () => [{ ...summary("sess-2"), title: "[CYC-610] Node 2" }];
   const store = await renderApp(fake.bridge);
   await user.click(await screen.findByRole("button", { name: "Loop" }));
   await user.click(await screen.findByRole("button", { name: "Ticket 610" }));
@@ -1394,22 +1409,31 @@ const openGraphDrawer = async () => {
   return { user, fake, store, drawer };
 };
 
-test("the drawer lists the graph in order, shows details, and opens a node's session", async () => {
-  const { user, fake, store, drawer } = await openGraphDrawer();
-  const selected: unknown[][] = [];
-  store.selectSession = async (...args: [string, string]) => {
-    selected.push(args);
-  };
+test("the drawer lists the graph in order, auto-expands active/stuck nodes, shows metadata, and verifies session jumps", async () => {
+  const { user, fake, drawer } = await openGraphDrawer();
   const titles = Array.from(drawer.querySelectorAll('[data-slot="loop-graph-node-title"]')).map(
     (e) => e.textContent,
   );
-  expect(titles).toEqual(["Node 0", "Node 1", "Node 2", "Node 3", "Node 4"]);
-  // Details come with expanding.
-  expect(within(drawer).queryByText("tests red")).toBeNull();
-  await user.click(within(drawer).getByRole("button", { name: "Expand node Node 2" }));
+  expect(titles).toEqual(["Node 0", "Node 1", "Node 2", "Node 3", "Node 4", "Node 5"]);
+  // Running, blocked and failed nodes are expanded by default; passed and pending nodes start collapsed.
   expect(within(drawer).getByText("tests red")).toBeTruthy();
   expect(within(drawer).getByText("Goal 2")).toBeTruthy();
   expect(within(drawer).getByText("bun test 2")).toBeTruthy();
+  expect(within(drawer).getByText("Fix")).toBeTruthy();
+  expect(within(drawer).getByText("Round 2")).toBeTruthy();
+  expect(within(drawer).getByText("5 min")).toBeTruthy();
+  expect(within(drawer).getByText("abcdef1")).toBeTruthy();
+  expect(within(drawer).getByText("src/a.ts")).toBeTruthy();
+  const dependsField = drawer.querySelector<HTMLElement>('[data-field="dependsOn"]');
+  expect(dependsField?.textContent).toContain("Node 1");
+  // Non-running node with null finishedAt must not display a live-ticking duration.
+  const failedNode = drawer.querySelector<HTMLElement>(
+    '[data-slot="loop-graph-node"][data-id="n3"]',
+  );
+  expect(failedNode?.querySelector('[data-slot="loop-graph-meta"]')).toBeNull();
+  expect(within(drawer).queryByText("Did the first part")).toBeNull();
+  expect(within(drawer).queryByText("Goal 5")).toBeNull();
+
   await user.click(within(drawer).getByRole("button", { name: "Expand node Node 1" }));
   expect(within(drawer).getByText("Did the first part")).toBeTruthy();
   // Only nodes with a session have the entry.
@@ -1417,15 +1441,24 @@ test("the drawer lists the graph in order, shows details, and opens a node's ses
     2,
   );
 
+  // Missing session shows an inline alert instead of navigating to a dead session.
+  await user.click(within(drawer).getByRole("button", { name: "Open the session of node Node 1" }));
+  expect(
+    await within(drawer).findByText(
+      "The node's session is not in the list of any connected location.",
+    ),
+  ).toBeTruthy();
+
+  // Existing session opens through joinLoopSession.
   await user.click(within(drawer).getByRole("button", { name: "Open the session of node Node 2" }));
-  expect(selected).toEqual([["local", "sess-2"]]);
+  await waitFor(() => expect(fake.named("openSession")[0]?.slice(1)).toEqual(["local", "sess-2"]));
   expect(tracked(fake.calls)).toContainEqual([
     "loop_graph_node_opened",
     { status: "blocked", origin: "fix" },
   ]);
   expect(tracked(fake.calls)).toContainEqual([
     "loop_graph_viewed",
-    { node_count: 5, source: "plan_doc" },
+    { node_count: 6, source: "plan_doc" },
   ]);
   // No event carries what a node says.
   const sent = JSON.stringify(tracked(fake.calls));
@@ -1433,20 +1466,177 @@ test("the drawer lists the graph in order, shows details, and opens a node's ses
     expect(sent.includes(text)).toBe(false);
 });
 
-test("only blocked and failed nodes have retry and skip, and they act on that node", async () => {
+test("only blocked and failed nodes have retry and skip (with confirm), and editable nodes can be edited in place", async () => {
   const { user, fake, drawer } = await openGraphDrawer();
   expect(within(drawer).getAllByRole("button", { name: /^Retry node/ })).toHaveLength(2);
   expect(within(drawer).getAllByRole("button", { name: /^Skip node/ })).toHaveLength(2);
+  expect(within(drawer).getAllByRole("button", { name: /^Edit node/ })).toHaveLength(3);
   expect(within(drawer).queryByRole("button", { name: "Retry node Node 1" })).toBeNull();
   expect(within(drawer).queryByRole("button", { name: "Skip node Node 4" })).toBeNull();
+  expect(within(drawer).queryByRole("button", { name: "Edit node Node 4" })).toBeNull();
+  expect(within(drawer).getByRole("button", { name: "Edit node Node 5" })).toBeTruthy();
+
   await user.click(within(drawer).getByRole("button", { name: "Retry node Node 2" }));
+
+  // Skip requires destructive confirmation; cancelling sends nothing.
   await user.click(within(drawer).getByRole("button", { name: "Skip node Node 3" }));
+  const cancelDialog = await screen.findByRole("alertdialog");
+  await user.click(within(cancelDialog).getByRole("button", { name: "Cancel" }));
+  expect(fake.calls.filter(([name]) => name === "loopGraphAct")).toHaveLength(1);
+
+  await user.click(within(drawer).getByRole("button", { name: "Skip node Node 3" }));
+  const confirmDialog = await screen.findByRole("alertdialog");
+  await user.click(within(confirmDialog).getByRole("button", { name: "Skip node" }));
+
+  // Edit opens a FormDialog disabled until a change is made, and submits only changed fields.
+  await user.click(within(drawer).getByRole("button", { name: "Edit node Node 2" }));
+  const editDialog = await screen.findByRole("dialog", { name: "Edit node" });
+  const saveButton = within(editDialog).getByRole("button", { name: "Save node" });
+  expect(saveButton.hasAttribute("disabled")).toBe(true);
+  const titleInput = within(editDialog).getByLabelText("Title");
+  const goalInput = within(editDialog).getByLabelText("Goal");
+  const verifyInput = within(editDialog).getByLabelText("Verify");
+  await user.clear(titleInput);
+  expect(saveButton.hasAttribute("disabled")).toBe(true);
+  await user.type(titleInput, "Node 2 revised");
+  await user.clear(goalInput);
+  await user.type(goalInput, "Fix flaky spec");
+  await user.clear(verifyInput);
+  await user.type(verifyInput, "bun run check\nbun test");
+  await user.click(saveButton);
+
   await waitFor(() =>
     expect(fake.calls.filter(([name]) => name === "loopGraphAct")).toEqual([
       ["loopGraphAct", "CYC", "CYC-610", "n2", "retry_node"],
       ["loopGraphAct", "CYC", "CYC-610", "n3", "skip_node"],
+      [
+        "loopGraphAct",
+        "CYC",
+        "CYC-610",
+        "n2",
+        "edit_node",
+        { title: "Node 2 revised", goal: "Fix flaky spec", verify: ["bun run check", "bun test"] },
+      ],
     ]),
   );
+});
+
+test("an edit_node refused with invalid_verify stays open and shows the allowlist hint", async () => {
+  const { user, drawer } = await openGraphDrawer({
+    loopGraphAct: { kind: "failed", reason: "invalid_verify" },
+  });
+  await user.click(within(drawer).getByRole("button", { name: "Edit node Node 2" }));
+  const editDialog = await screen.findByRole("dialog", { name: "Edit node" });
+  const verifyInput = within(editDialog).getByLabelText("Verify");
+  await user.clear(verifyInput);
+  await user.type(verifyInput, "rm -rf /");
+  await user.click(within(editDialog).getByRole("button", { name: "Save node" }));
+  expect(
+    await within(editDialog).findByText(
+      "Nothing was changed: one of the verify commands is not on Loop's allowlist.",
+    ),
+  ).toBeTruthy();
+});
+
+test("a pending Backlog ticket can be returned from the drawer with an optional reason, and errors stay inline", async () => {
+  const mine: LoopTicket = {
+    ...ticket(705, "Backlog"),
+    pending: { reason: "Needs approval" },
+  };
+  const user = userEvent.setup();
+  const options = {
+    connected: true,
+    loopProjects: { kind: "ok" as const, projects: [cycle] },
+    loopBoards: { CYC: withTickets({ Backlog: [mine] }) },
+    loopTickets: {
+      "CYC-705": detailOf(mine, { actions: ["approve", "return"] }),
+    },
+    loopAct: { kind: "failed" as const, reason: "offline" as const } as
+      | { kind: "ok" }
+      | { kind: "failed"; reason: "offline" },
+  };
+  const fake = fakeBridge(options);
+  await renderApp(fake.bridge);
+  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  await user.click(await screen.findByRole("button", { name: "Ticket 705" }));
+  const drawer = await screen.findByRole("complementary", { name: "CYC-705" });
+  await user.click(await within(drawer).findByRole("button", { name: "Return CYC-705" }));
+  const dialog = await screen.findByRole("dialog", { name: "Return CYC-705?" });
+  await user.type(within(dialog).getByLabelText("Reason (optional)"), "Split into two tickets");
+  await user.click(within(dialog).getByRole("button", { name: "Return" }));
+  expect(await within(dialog).findByRole("alert")).toBeTruthy();
+  // Retrying after recovery closes the dialog and submits the same reason.
+  options.loopAct = { kind: "ok" };
+  await user.click(within(dialog).getByRole("button", { name: "Return" }));
+  await waitFor(() =>
+    expect(fake.calls.filter(([name]) => name === "loopAct")).toEqual([
+      ["loopAct", "CYC", "CYC-705", "return", false, "Split into two tickets"],
+      ["loopAct", "CYC", "CYC-705", "return", false, "Split into two tickets"],
+    ]),
+  );
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Return CYC-705?" })).toBeNull());
+});
+
+test("ticket chat shows an agent picker when multiple local agents are available, hides it with one, and forwards the choice", async () => {
+  const mine = ticket(388, "Todo");
+  const user = userEvent.setup();
+  const fake = fakeBridge({
+    connected: true,
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: { CYC: withTickets({ Todo: [mine] }) },
+    loopTickets: { "CYC-388": detailOf(mine, { chat: "new" }) },
+    loopChat: { kind: "failed", reason: "offline" },
+  });
+  fake.bridge.agents = async () => [
+    { id: "claude", name: "Claude", available: true, configSchema: {} },
+    { id: "codex", name: "Codex", available: true, configSchema: {} },
+    { id: "pi", name: "Pi", available: false, configSchema: {} },
+  ];
+  await renderApp(fake.bridge);
+  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  await user.click(await screen.findByRole("button", { name: "Ticket 388" }));
+  const drawer = await screen.findByRole("complementary", { name: "CYC-388" });
+
+  // Default uses automatic agent selection (omitted agent arg) and accessible name includes the selection.
+  const picker = await within(drawer).findByRole("button", { name: "Agent: Auto (default)" });
+  expect(picker.textContent).toContain("Auto (default)");
+  await user.click(within(drawer).getByRole("button", { name: "Talk with an agent CYC-388" }));
+  await waitFor(() =>
+    expect(fake.calls.filter(([name]) => name === "loopChat")).toEqual([
+      ["loopChat", "CYC", "CYC-388"],
+    ]),
+  );
+
+  // Choosing a specific agent forwards its id, updates the accessible name, and omits unavailable agents.
+  await user.click(picker);
+  expect(screen.queryByRole("menuitemradio", { name: "Pi" })).toBeNull();
+  await user.click(await screen.findByRole("menuitemradio", { name: "Claude" }));
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  expect(within(drawer).getByRole("button", { name: "Agent: Claude" })).toBeTruthy();
+  await user.click(within(drawer).getByRole("button", { name: "Talk with an agent CYC-388" }));
+  await waitFor(() =>
+    expect(fake.calls.filter(([name]) => name === "loopChat")[1]).toEqual([
+      "loopChat",
+      "CYC",
+      "CYC-388",
+      "claude",
+    ]),
+  );
+
+  // When fewer than 2 local agents are available, the agent picker is hidden.
+  cleanup();
+  const single = fakeBridge({
+    connected: true,
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: { CYC: withTickets({ Todo: [mine] }) },
+    loopTickets: { "CYC-388": detailOf(mine, { chat: "new" }) },
+  });
+  await renderApp(single.bridge);
+  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  await user.click(await screen.findByRole("button", { name: "Ticket 388" }));
+  const singleDrawer = await screen.findByRole("complementary", { name: "CYC-388" });
+  await within(singleDrawer).findByRole("button", { name: "Talk with an agent CYC-388" });
+  expect(within(singleDrawer).queryByRole("button", { name: /^Agent:/ })).toBeNull();
 });
 
 test("a refused retry says why", async () => {

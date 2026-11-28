@@ -214,6 +214,42 @@ describe("the dictionary", () => {
       EVENTS.loop_graph_acted.safeParse({ action: "retry_node", result: "ok", lastError: "x" })
         .success,
     ).toBe(false);
+    expect(
+      EVENTS.loop_graph_acted.safeParse({ action: "edit_node", result: "invalid_verify" }).success,
+    ).toBe(true);
+    expect(
+      EVENTS.loop_graph_acted.safeParse({
+        action: "edit_node",
+        result: "invalid_verify",
+        verify: "rm -rf /",
+      }).success,
+    ).toBe(false);
+    expect(EVENTS.loop_ticket_acted.safeParse({ action: "return", result: "ok" }).success).toBe(
+      true,
+    );
+    expect(
+      EVENTS.loop_ticket_acted.safeParse({ action: "return", result: "ok", reason: "too big" })
+        .success,
+    ).toBe(false);
+    expect(
+      EVENTS.loop_ticket_chat.safeParse({ result: "started", agent: "claude", picked: true })
+        .success,
+    ).toBe(true);
+    expect(
+      EVENTS.loop_ticket_chat.safeParse({
+        result: "started",
+        agent: "my-secret-agent",
+        picked: false,
+      }).success,
+    ).toBe(false);
+    expect(
+      EVENTS.loop_ticket_chat.safeParse({
+        result: "started",
+        agent: "claude",
+        picked: true,
+        ticket: "CYC-1",
+      }).success,
+    ).toBe(false);
   });
 
   test("the run workflow, cancel, intent retry and extended notice events take words and numbers only", () => {

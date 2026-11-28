@@ -1268,12 +1268,12 @@ Loop 服务(`cloud/loop`)是独立于 daemon 的进程:一个进程服务多个 
 
 工单页的"与 agent 对话"按钮:桌面主进程再读一次工单,按列的状态类型决定,然后用本机 daemon 新开会话。
 
-- Backlog / Todo(`chat: "new"`;Todo 里带 `auto` 的是排给 Loop 的,Loop 会自己接手,所以为 `none`,要细化先退回 Backlog):新开 codex 会话,模型取该 agent 在设置里的默认模型;第一条消息带工单号,agent 通过 itsaplan connector 读写工单,凭据由网关注入。不限制 agent 的工具(CYC-375 的强制部分推迟)。
+- Backlog / Todo(`chat: "new"`;Todo 里带 `auto` 的是排给 Loop 的,Loop 会自己接手,所以为 `none`,要细化先退回 Backlog):默认从本机 daemon 可用 agent 中优先选用已配置默认模型的 agent(或用户显式选定的 agent,未配默认模型时用 agent 默认配置);第一条消息带工单号,agent 通过 itsaplan connector 读写工单,凭据由网关注入。不限制 agent 的工具(CYC-375 的强制部分推迟)。
 - In Progress(按启动列的角色,第一个启动列;`chat: "watch"`):只读旁观,不提供对话,由 Loop 服务按运行数据决定。其余列(In Review、Blocked,接入原会话见 CYC-388)为 `none`。
 - **工作目录**:ticket 对话的会话跑在专用目录 `<Cycle 数据目录>/ticket-chat/`(安装版是 `~/.cycle/ticket-chat/`),首次使用时创建;不用用户的主目录,也没有默认回退(没配置目录就不创建会话)。
 - 会话已创建但第一条消息没发出去:失败结果带上 `sessionId`,页面给出"打开这个会话"。
-- 默认模型没设:不创建会话,返回 `needs_model`,页面提示去设置里配置,而不是创建失败。
-- 失败给固定词:`needs_model`、`not_allowed`(工单已不在可对话的列)、`no_key`、`offline`(连不上 itsaplan)、`refused`、`failed`(agent 没能启动或没收下消息)、`no_folder`(工作目录建不了)、`auth_required`。埋点 `loop_ticket_chat` 只记结果。
+- 无可用 agent 或（仅单 agent 兼容路径下）未配置默认模型时:不创建会话,返回 `failed` / `needs_model`,页面提示去设置里检查,而不是创建空会话。
+- 失败给固定词:`needs_model`、`not_allowed`(工单已不在可对话的列)、`no_key`、`offline`(连不上 itsaplan)、`refused`、`failed`(agent 没能启动或没收下消息)、`no_folder`(工作目录建不了)、`auth_required`。埋点 `loop_ticket_chat` 只记结果、`agent` 固定词和是否手动选择(`picked`)。
 
 ### Notice:需要人处理的事(桌面端派生,CYC-388)
 
@@ -1310,8 +1310,8 @@ Loop 页顶部的 Notice 区由桌面主进程从两处派生,不依赖 Loop 服
 - **Notice**:`kind` 为 `permission`、`blocked`、`review`、`stuck`、`intent_stuck`、`supervisor`、`operator`;每条有 `project`、工单 `key`、`session`(种类和 id,可为 `null`)、`text`、`at`。来源:`runs`(Blocked 的 run 直接带 `resumeFrom` 对应的会话,不解析评论)、`notices` 表(`permission` 在会话等权限时由 Loop 写,会话种类不限:Dev、QA、评审、调研、规划;其余种类由写入方写)、`intents` 里卡住的(`intent_stuck`)、心跳超过 15 分钟没动的未完成 run(`stuck`)。**寿命**:`blocked`、`intent_stuck` 在原因存在时就在;表里的 Notice 在它的 run 结束、或 run 记录在 Notice 之后又更新(已往前走)时消失;`permission` 每个 run 只显示最新一条,且超过 24 小时不再显示。桌面端对 `blocked`、`review`、`stuck`、`intent_stuck` 弹系统通知,并在 Notice 条目中对 `intent_stuck` 提供就地的「重试写入」(`loop/intents/retry`)。
 - **`loop/tickets/act`**:`verb` 为 `approve`(移到 Todo,打 `auto`,摘 `待批准`)或 `return`(摘 `待批准`,打 `Loop 跳过`)。每张**重读**,只在它还在 Backlog 且带 `待批准` 时才写;标签和列按名字/stateType 每次从 `get_project` 解析(名字来自配置,默认 `auto`、`待批准`、`Loop 跳过`),改名后不用重启。先写标签、再移列,移列失败会尽量还原标签。`approve` 必须 `confirmed: true`,否则整次请求 `-32602`(`unconfirmed`),什么都不写;`return` 不要求确认。`approve` 总是发一条评论,`return` 有 `reason` 才发,末尾是「由 <actor> 在桌面端批准/退回」(`actorKind` 为 `operator` 时写「经运营 agent」)。每张结果:`{key, status: "ok"}`、`{status: "skipped", reason}`(`not_found`、`not_in_backlog`、`not_pending`)、`{status: "failed", reason}`(`offline`、`forbidden`、`conflict`、`label_missing`、`refused`),不透传 itsaplan 的文字;重复的 key 只做一次。每张(含 skipped、failed)写一条 `actions`(`ticket_approve`/`ticket_return`,带 `actor`、`actorKind`、结果)。这些写入直接写,不走对账。同一 Project 的写请求一个接一个做。
 - **`loop/ticket/get`(CYC-493)**:单张工单,给工单页用。规则从桌面端搬来,在 Loop server 里一处实现。返回 `{identifier, title, priority, column, actions, chat, body, attention?, acceptance, links}`:
-  - `column` 是列名;`actions` 是 `approve`、`to_backlog`、`to_todo` 的子集;`chat` 为 `new`、`watch`、`none`。列的角色沿用 Loop 的约定:`started` 列按看板顺序,第 1 个是 In Progress,第 2 个是 In Review,第 3 个是 Blocked。
-  - `actions`:Backlog 有 `approve`;Todo(`unstarted`)只有 `to_backlog`;进行中的列(`started`)里带 `auto` 且不是 Blocked 的归 Loop,没有按钮,否则 `to_backlog`、`to_todo`;Done、Canceled 没有。
+  - `column` 是列名;`actions` 是 `approve`、`return`、`to_backlog`、`to_todo` 的子集;`chat` 为 `new`、`watch`、`none`。列的角色沿用 Loop 的约定:`started` 列按看板顺序,第 1 个是 In Progress,第 2 个是 In Review,第 3 个是 Blocked。
+  - `actions`:Backlog 有 `approve`(若带 `待批准` 标签则同时给 `return`,支持单张退回并附带可选原因);Todo(`unstarted`)只有 `to_backlog`;进行中的列(`started`)里带 `auto` 且不是 Blocked 的归 Loop,没有按钮,否则 `to_backlog`、`to_todo`;Done、Canceled 没有。
   - `chat`:Backlog 为 `new`;Todo 不带 `auto` 为 `new`,带 `auto` 为 `none`(Loop 会自己接手);In Progress 为 `watch`;其余 `none`。开对话的会话仍由桌面端经 daemon 创建,这里只告诉能不能开。
   - `acceptance`:正文里 `## 验收标准`(或 `## Acceptance criteria`)一节的各条;`links`:正文和 development 链接里的 PR/MR 地址,只要 https。
   - `attention` 只取 Loop 自己的记录,不解析评论:Blocked 列且 Loop 有该工单 `blocked` 的 run 时为 `{kind: "blocked", text: <原因>, session: {kind,id}|null}`;In Review 列且 `notices` 表里有 `review` 类 Notice(同上文的寿命规则)时为 `{kind: "review", text, prUrl: string|null}`。Loop 没有记录的(例如人手动移到 Blocked 的)不给 `attention`。

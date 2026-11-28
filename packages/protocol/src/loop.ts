@@ -398,7 +398,7 @@ export const LoopTicketGetParamsSchema = z.object({
 });
 export type LoopTicketGetParams = z.infer<typeof LoopTicketGetParamsSchema>;
 
-export const LoopTicketActionSchema = z.enum(["approve", "to_backlog", "to_todo"]);
+export const LoopTicketActionSchema = z.enum(["approve", "return", "to_backlog", "to_todo"]);
 export type LoopTicketAction = z.infer<typeof LoopTicketActionSchema>;
 /** Whether a conversation may be opened: `new` a fresh one, `watch` look only, `none` nothing. */
 export const LoopTicketChatSchema = z.enum(["new", "watch", "none"]);
