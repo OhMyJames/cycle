@@ -21,6 +21,22 @@ afterEach(() => {
 
 const u = (update: object) => update as SessionUpdate;
 
+// A pending "Allow Bash?" request on s1; the options and the command differ by test.
+const askPermission = (
+  options: PermissionRequest["options"] = [
+    { optionId: "allow", name: "Allow", kind: "allow_once" },
+    { optionId: "deny", name: "Deny", kind: "reject_once" },
+  ],
+  command = "ls",
+): PermissionRequest => ({
+  key: "local:s1:p1",
+  locationId: "local",
+  sessionId: "s1",
+  title: "Allow Bash?",
+  subject: { type: "tool_call", toolCall: { name: "Bash", rawInput: { command } } },
+  options,
+});
+
 const mount = async (
   options: {
     snapshot?: () => SessionSnapshot;
@@ -211,17 +227,7 @@ test("while a permission waits, ⌘Enter is the card's Allow once, not the queue
     update: u({ sessionUpdate: "state_update", state: "requires_action" }),
     version: 1,
   });
-  const request: PermissionRequest = {
-    key: "local:s1:p1",
-    locationId: "local",
-    sessionId: "s1",
-    title: "Allow Bash?",
-    subject: { type: "tool_call", toolCall: { name: "Bash", rawInput: { command: "ls" } } },
-    options: [
-      { optionId: "allow", name: "Allow", kind: "allow_once" },
-      { optionId: "deny", name: "Deny", kind: "reject_once" },
-    ],
-  };
+  const request = askPermission();
   emit({ type: "permission", request, version: 2 });
   await screen.findByLabelText("Allow Bash?");
   await write(box, "wait");
@@ -245,14 +251,7 @@ test("in the Loop mode ⌘Enter does not answer the permission of the hidden ses
     update: u({ sessionUpdate: "state_update", state: "requires_action" }),
     version: 1,
   });
-  const request: PermissionRequest = {
-    key: "local:s1:p1",
-    locationId: "local",
-    sessionId: "s1",
-    title: "Allow Bash?",
-    subject: { type: "tool_call", toolCall: { name: "Bash", rawInput: { command: "ls" } } },
-    options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
-  };
+  const request = askPermission([{ optionId: "allow", name: "Allow", kind: "allow_once" }]);
   emit({ type: "permission", request, version: 2 });
   await screen.findByLabelText("Allow Bash?");
   await user.click(screen.getByRole("button", { name: "Loop" }));
@@ -920,21 +919,15 @@ test("Ctrl or Cmd+Enter allows a pending request even while typing in the messag
   emit({
     type: "permission",
     version: 1,
-    request: {
-      key: "local:s1:p1",
-      locationId: "local",
-      sessionId: "s1",
-      title: "Allow Bash?",
-      subject: {
-        type: "tool_call",
-        toolCall: { name: "Bash", rawInput: { command: "rm -rf build" } },
-      },
-      options: [
+    request: askPermission(
+      [
         { optionId: "allow", name: "Allow once", kind: "allow_once" },
         { optionId: "deny", name: "Deny", kind: "reject_once" },
       ],
-    },
+      "rm -rf build",
+    ),
   });
+
   await screen.findByLabelText("Allow Bash?");
   // The key this platform's shortcut uses: Cmd on a Mac, Control elsewhere (the page reads the user agent).
   const mod = /Mac/.test(navigator.userAgent) ? "Meta" : "Control";
