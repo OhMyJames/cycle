@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { diffOf, itemUpdate, MAX_OUTPUT, outputHead, outputTail } from "../src/items.ts";
+import { itemUpdate, MAX_OUTPUT, outputHead, outputTail } from "../src/items.ts";
 import type { ThreadItem } from "../src/wire.generated.ts";
 
 const textOf = (item: ThreadItem): string | undefined => {
@@ -147,28 +147,44 @@ const change = (path: string, diff: string, type: "add" | "delete" | "update" = 
   diff,
 });
 
-test("a diff up to the limit is told whole", () => {
-  const changes = [change("/a.ts", "+a", "add"), change("/b.ts", "-b", "delete")];
-  expect(diffOf(changes)).toBe("+a\n-b");
+const edited = (changes: object[]) =>
+  itemUpdate(
+    { type: "fileChange", id: "f", status: "completed", changes } as unknown as ThreadItem,
+    true,
+    false,
+  ) as unknown as {
+    content: { type: string; changes: { operation: string; path: string }[]; patch: unknown }[];
+    _meta: { "cycle/toolResult": { edit: { additions: number; deletions: number } } };
+  };
+
+test("a file change is a diff block a file, with the counts summed", () => {
+  const out = edited([change("/a.ts", "@@ -1 +1 @@\n-a\n+b"), change("/b.ts", "x\ny", "add")]);
+  expect(out.content.map((c) => c.type)).toEqual(["diff", "diff"]);
+  expect(out.content[0]?.changes).toEqual([{ operation: "modify", path: "/a.ts" }]);
+  expect(out.content[1]?.changes).toEqual([{ operation: "add", path: "/b.ts" }]);
+  expect(out.content[0]?.patch).toEqual({
+    format: "git_patch",
+    text: "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-a\n+b\n",
+  });
+  expect(out._meta["cycle/toolResult"]).toEqual({ edit: { additions: 3, deletions: 1 } });
 });
 
-test("a file whose diff is too long is named, and the small edits beside it are still shown", () => {
-  const changes = [
+test("a header Codex gave is not doubled, and an empty diff is 0/0", () => {
+  const text = "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-a\n+b\n";
+  const out = edited([change("/a.ts", text), change("/e.ts", "")]);
+  expect(out.content[0]?.patch).toEqual({ format: "git_patch", text });
+  expect(out.content[1]?.patch).toBeNull();
+  expect(out._meta["cycle/toolResult"].edit).toEqual({ additions: 1, deletions: 1 });
+});
+
+test("a file whose diff is too long has no patch, and the small one beside it keeps its", () => {
+  const out = edited([
     change("/big.json", "+".repeat(MAX_OUTPUT + 1), "add"),
-    change("/foo.ts", "-old\n+new"),
-  ];
-  expect(diffOf(changes)).toBe("added /big.json (its diff is too long to show)\n-old\n+new");
-});
-
-test("past the limit, the rest of the files are counted", () => {
-  const changes = [
-    change("/a.ts", "+".repeat(MAX_OUTPUT - 10)),
-    change("/b.ts", "+".repeat(50)),
-    change("/c.ts", "+c"),
-    change("/d.ts", "+d"),
-  ];
-  // b's diff does not fit and neither does its name: b, c and d are counted. c would fit, but is not told after b.
-  expect(diffOf(changes)).toBe(`${"+".repeat(MAX_OUTPUT - 10)}\n… and 3 more files`);
+    change("/foo.ts", "@@ -1 +1 @@\n-old\n+new"),
+  ]);
+  expect(out.content[0]?.patch).toBeNull();
+  expect(out.content[1]?.patch).not.toBeNull();
+  expect(out._meta["cycle/toolResult"].edit.deletions).toBe(1);
 });
 
 test("command, MCP, fileChange and webSearch items carry structured rawInput, locations and exitCode", () => {
