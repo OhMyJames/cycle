@@ -1,6 +1,7 @@
 // What EnterWorktree and ExitWorktree do to a session (docs/protocol.md §6 "Worktree"), for the agents that use Cycle's
 // own tools. The session's folder changes at once for Cycle (files, diff, terminals); the agent's own folder changes
 // from its next turn, when it is started again where the session now is.
+import { resolve } from "node:path";
 import type { SessionEnvironment } from "@cycle/protocol";
 import {
   type EnterInput,
@@ -15,6 +16,7 @@ import type { Session } from "./session.ts";
 import {
   createWorktree,
   findWorktree,
+  listWorktrees,
   removeWorktree,
   unsavedIn,
   WorktreeError,
@@ -34,7 +36,107 @@ const refuse = (error: unknown): never => {
   throw error;
 };
 
-export const worktreeHost = (deps: WorktreeHostDeps): WorktreeHost => {
+/** What Claude's hooks tell of its own EnterWorktree or ExitWorktree (harness/claude/src/worktree-hooks.ts). */
+export type NativeWorktreeCall = {
+  phase: "before" | "after";
+  tool: string;
+  toolUseId: string;
+  input?: unknown;
+  /** The tool's answer, in `after`. */
+  response?: unknown;
+};
+
+const field = (value: unknown, key: string): unknown => {
+  let v = value;
+  if (typeof v === "string") {
+    try {
+      v = JSON.parse(v);
+    } catch {
+      return undefined;
+    }
+  }
+  return typeof v === "object" && v !== null ? (v as Record<string, unknown>)[key] : undefined;
+};
+
+/**
+ * Claude's own worktree tools (docs/protocol.md §6 "中途进出"): setup after the tool made a worktree, cleanup before it
+ * removes one. Only a worktree this session's EnterWorktree made is touched: one it entered, or any other, is not.
+ * What is known is kept in memory: a daemon that restarts forgets which worktrees Claude made, and then leaves them.
+ */
+const nativeWorktrees = (deps: WorktreeHostDeps) => {
+  /** The worktrees each session had before an EnterWorktree began, by tool call. */
+  const before = new Map<string, Set<string>>();
+  /** The worktrees a session's Claude made. */
+  const made = new Map<string, Set<string>>();
+  /** The worktree a session's Claude is in through EnterWorktree. */
+  const inside = new Map<string, string>();
+  const known = async (cwd: string) =>
+    new Set((await listWorktrees(cwd).catch(() => [])).map((tree) => resolve(tree.path)));
+
+  return async (sessionId: string, call: NativeWorktreeCall): Promise<{ note?: string }> => {
+    const session = deps.session(sessionId);
+    if (session === undefined) return {};
+    if (call.tool === "EnterWorktree") {
+      if (call.phase === "before") {
+        before.set(call.toolUseId, await known(session.entry.cwd));
+        return {};
+      }
+      const seen = before.get(call.toolUseId);
+      before.delete(call.toolUseId);
+      const path = field(call.response, "worktreePath");
+      if (typeof path !== "string" || seen === undefined) return {};
+      inside.set(sessionId, resolve(path));
+      if (seen.has(resolve(path))) return {};
+      if (!(await known(path)).has(resolve(path))) return {};
+      const own = made.get(sessionId) ?? new Set<string>();
+      own.add(resolve(path));
+      made.set(sessionId, own);
+      const setup = scriptFor(environmentOf(session.entry)?.setup);
+      if (setup === undefined) return {};
+      // The agent chose this moment and the code in the worktree: the script gets the literal variables only.
+      const ran = await runScript(setup, {
+        cwd: path,
+        variables: commandVariables(session.entry),
+        timeoutMs: SETUP_TIMEOUT_MS,
+      });
+      if (ran.ok) return {};
+      deps.warn("worktree_setup_failed");
+      return { note: `The environment's setup script failed: ${ran.output || "no output"}` };
+    }
+    if (call.tool !== "ExitWorktree") return {};
+    const path = inside.get(sessionId);
+    if (call.phase === "after") {
+      // A kept worktree is still one Claude made here: it is cleaned up when it is entered and removed later.
+      if (path !== undefined && field(call.input, "action") === "remove")
+        made.get(sessionId)?.delete(path);
+      inside.delete(sessionId);
+      return {};
+    }
+    if (path === undefined || !made.get(sessionId)?.has(path)) return {};
+    if (field(call.input, "action") !== "remove") return {};
+    const [tree] = (await listWorktrees(path).catch(() => [])).filter(
+      (found) => resolve(found.path) === path,
+    );
+    // Claude refuses to remove unsaved work unless told to discard it: the worktree then stays, and so does its cleanup.
+    if (tree !== undefined && field(call.input, "discard_changes") !== true) {
+      const unsaved = await unsavedIn(tree).catch(() => undefined);
+      if (unsaved === undefined || unsaved.files.length + unsaved.commits.length > 0) return {};
+    }
+    const cleanup = scriptFor(environmentOf(session.entry)?.cleanup);
+    if (cleanup === undefined) return {};
+    const ran = await runScript(cleanup, {
+      cwd: path,
+      variables: commandVariables(session.entry),
+      timeoutMs: CLEANUP_TIMEOUT_MS,
+    });
+    if (!ran.ok) deps.warn("worktree_cleanup_failed");
+    return {};
+  };
+};
+
+export const worktreeHost = (
+  deps: WorktreeHostDeps,
+): WorktreeHost & { native: ReturnType<typeof nativeWorktrees> } => {
   // One call at a time for a session: a retry of a call that is still running must not race it.
   const tails = new Map<string, Promise<unknown>>();
   const serial = <T>(sessionId: string, run: () => Promise<T>): Promise<T> => {
@@ -49,6 +151,7 @@ export const worktreeHost = (deps: WorktreeHostDeps): WorktreeHost => {
   return {
     enter: (sessionId, input) => serial(sessionId, () => enter(deps, sessionId, input)),
     exit: (sessionId, input) => serial(sessionId, () => exit(deps, sessionId, input)),
+    native: nativeWorktrees(deps),
   };
 };
 

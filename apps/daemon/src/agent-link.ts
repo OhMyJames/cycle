@@ -11,7 +11,19 @@ import {
   type SessionUpdate,
   type Stream,
 } from "@agentclientprotocol/sdk/experimental/v2";
+import { z } from "zod";
 import type { AgentDefinition, LaunchContext } from "./agents.ts";
+import type { NativeWorktreeCall } from "./worktree-host.ts";
+
+/** The request Claude's worktree hooks send (harness/claude/src/worktree-hooks.ts). */
+export const WORKTREE_HOOK = "_cycle/worktree/hook";
+const WorktreeHookParams = z.object({
+  phase: z.enum(["before", "after"]),
+  tool: z.string(),
+  toolUseId: z.string(),
+  input: z.unknown().optional(),
+  response: z.unknown().optional(),
+});
 
 export type LinkHandlers = {
   /**
@@ -32,6 +44,11 @@ export type LinkHandlers = {
     params: CreateElicitationRequest,
     signal?: AbortSignal,
   ) => Promise<CreateElicitationResponse>;
+  /**
+   * Claude's own EnterWorktree or ExitWorktree is about to run or has run (docs/protocol.md §6 "中途进出"). Answers when
+   * the environment's setup or cleanup has; the agent waits for it.
+   */
+  worktree: (call: NativeWorktreeCall) => Promise<{ note?: string }>;
   /** The connection to the agent ended, however it ended. */
   closed: () => void;
 };
@@ -83,6 +100,11 @@ export class AgentLink {
       )
       .onRequest(methods.client.elicitation.create, ({ params, signal }) =>
         current.elicitation(params, signal),
+      )
+      .onRequest<z.output<typeof WorktreeHookParams>, { note?: string }>(
+        WORKTREE_HOOK,
+        WorktreeHookParams,
+        ({ params }) => current.worktree(params as NativeWorktreeCall),
       );
     const connection =
       launched.target instanceof AgentApp
