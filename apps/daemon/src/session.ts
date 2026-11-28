@@ -14,6 +14,8 @@ export type ClientConn = {
   /** Whether the client said, in `initialize`, that it can answer a form (`elicitation/create`). */
   elicitation: boolean;
   ackReturns: boolean;
+  /** Whether the client said, in `initialize`, that it takes `_cycle/daemon/update` (`META.updateNotify`). */
+  updateNotify: boolean;
 };
 
 /** A client watching one session: what it is sent comes through the session's log. */

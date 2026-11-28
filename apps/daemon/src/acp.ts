@@ -28,6 +28,7 @@ export const clientConn = (id: string, client: AgentContext): ClientConn => ({
   request: (method, params) => client.request<unknown, unknown, string>(method, params),
   elicitation: false,
   ackReturns: false,
+  updateNotify: false,
 });
 
 /**

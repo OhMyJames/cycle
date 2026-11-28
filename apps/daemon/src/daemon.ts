@@ -185,6 +185,8 @@ export type DaemonOptions = {
   builtinPlugins?: BuiltinBundle;
   /** The daemon's own update state (`_cycle/daemon/update/read`). Default: it does not update itself. */
   updateState?: () => DaemonUpdateState;
+  /** A turn or a background task has ended: a version waiting to be switched to may be able to go now (self-update.ts). */
+  onSettled?: () => void;
 };
 
 /** The terminals' settings when the daemon is given none: what `config.json` defaults to. */
@@ -267,6 +269,8 @@ export class Daemon {
   #counter = 0;
   #closing = false;
   readonly #updateState: (() => DaemonUpdateState) | undefined;
+  readonly #onSettled: (() => void) | undefined;
+  #draining = false;
 
   private constructor(
     options: DaemonOptions,
@@ -280,6 +284,7 @@ export class Daemon {
   ) {
     this.#version = options.version ?? "dev";
     this.#updateState = options.updateState;
+    this.#onSettled = options.onSettled;
     this.#dataDir = options.dataDir;
     this.#agentHomes = options.agentHomes ?? (() => []);
     const defaultConfigPath = join(options.dataDir, "config.json");
@@ -522,6 +527,56 @@ export class Daemon {
       if (now - session.lastActive < quietMs) return false;
     }
     return !(await this.#terminals.busy());
+  }
+
+  /** Whether the daemon is draining for an update: it starts no new turn (docs/daemon.md "自动更新"). */
+  get draining(): boolean {
+    return this.#draining;
+  }
+
+  setDraining(draining: boolean): void {
+    this.#draining = draining;
+  }
+
+  /**
+   * Whether a draining daemon has nothing left to wait for: no turn, no request waiting, no background task (what is
+   * queued does not count) and no terminal running a command. No quiet time is asked: no new turn can start.
+   */
+  async drainedForUpdate(): Promise<boolean> {
+    if (this.#closing) return false;
+    if (this.activity().length > 0) return false;
+    return !(await this.#terminals.busy());
+  }
+
+  /** Tells the clients that take it (`_cycle/daemon/update`) the daemon's update state as it now is. */
+  announceUpdate(): void {
+    const state = this.#updateState?.();
+    if (state !== undefined) this.#clients.broadcastUpdate(NOTIFICATIONS.daemonUpdate, state);
+  }
+
+  /**
+   * Before a forced switch: what the stop will cut short, as counts, and in each session whose background tasks it
+   * stops, a note saying so (the same words as `cycle stop --force`).
+   */
+  async noteForcedStop(): Promise<{ sessions: number; background: number }> {
+    let sessions = 0;
+    let background = 0;
+    for (const session of this.#sessions.values()) {
+      if (session.closed) continue;
+      const tasks = session.backgroundCount();
+      if (this.#turnInProgress(session) || tasks > 0) sessions += 1;
+      if (tasks === 0) continue;
+      background += tasks;
+      await this.#write(session, {
+        kind: "update",
+        data: {
+          sessionUpdate: "notice",
+          severity: "warning",
+          title: "更新 daemon 时停掉了后台任务",
+        },
+      });
+    }
+    return { sessions, background };
   }
 
   /** A turn has started and not ended: on record, or as the daemon has it (a prompt still on its way to the agent). */
@@ -1434,7 +1489,10 @@ export class Daemon {
     const announce = kind === "state_update" || backgroundChanged;
     void this.#write(session, { kind: "update", data: kept }).then((written) => {
       if (written && announce) this.#changed();
-      if (written && backgroundChanged) this.#restartIfStale(session);
+      if (written && backgroundChanged) {
+        this.#restartIfStale(session);
+        if (session.backgroundCount() === 0) this.#onSettled?.();
+      }
     });
     return true;
   }
@@ -1450,6 +1508,7 @@ export class Daemon {
       });
     else this.#log.info("turn_ended", { session: session.id, stopReason: ended.stopReason });
     this.#queueAfterTurn(session, ended.stopReason);
+    this.#onSettled?.();
     // A turn that ended with nothing behind it: an agent started with an old trust decision can go now.
     this.#restartIfStale(session);
   }

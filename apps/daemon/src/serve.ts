@@ -22,7 +22,7 @@ import {
 } from "./self-update.ts";
 import { checkFolder, startAndWait } from "./self-update-host.ts";
 import { agentHomesOf } from "./storage.ts";
-import { listenUnix } from "./transport/server.ts";
+import { AlreadyRunningError, listenUnix } from "./transport/server.ts";
 import { installOf } from "./update.ts";
 import { VERSION } from "./version.ts";
 
@@ -86,7 +86,22 @@ export const serve = async (paths: Paths, options: ServeOptions = {}) => {
     return {
       version: VERSION,
       updates: "on",
-      ...(state.pending !== undefined ? { pending: { version: state.pending.version } } : {}),
+      ...(state.pending !== undefined
+        ? {
+            pending: {
+              version: state.pending.version,
+              ...(state.phase !== undefined
+                ? {
+                    state: state.phase.state,
+                    since: new Date(state.phase.since).toISOString(),
+                    ...(state.phase.forceAt !== undefined
+                      ? { forceAt: new Date(state.phase.forceAt).toISOString() }
+                      : {}),
+                  }
+                : {}),
+            },
+          }
+        : {}),
     };
   };
   const builtin = builtinPlugins();
@@ -116,6 +131,7 @@ export const serve = async (paths: Paths, options: ServeOptions = {}) => {
       ...(agentIdleMs !== undefined ? { agentIdleMs } : {}),
       ...(attachedAgentIdleMs !== undefined ? { attachedAgentIdleMs } : {}),
       updateState,
+      onSettled: () => updater?.nudge(),
     });
     let clients = 0;
     server = await listenUnix({
@@ -132,7 +148,9 @@ export const serve = async (paths: Paths, options: ServeOptions = {}) => {
       },
     });
   } catch (error) {
-    log.error("start_failed", { error: errorText(error) });
+    // Another starter (the app, `cycle proxy`) that meets a switch in progress finds one listening and leaves: not a fault.
+    if (error instanceof AlreadyRunningError) log.info("start_failed", { error: errorText(error) });
+    else log.error("start_failed", { error: errorText(error) });
     log.close();
     throw error;
   }
@@ -223,6 +241,12 @@ export const serve = async (paths: Paths, options: ServeOptions = {}) => {
       stateFile: join(paths.dataDir, "daemon-update.json"),
       check: checkFolder(executable),
       idle: () => daemon.quietForUpdate(QUIET_MS),
+      drained: () => daemon.drainedForUpdate(),
+      setDraining: (draining) => daemon.setDraining(draining),
+      forced: () => daemon.noteForcedStop(),
+      changed: () => daemon.announceUpdate(),
+      drainAfterMs: minutes(config.update.drainAfterMinutes),
+      forceAfterMs: minutes(config.update.forceAfterMinutes),
       apply: switchTo,
       log,
     });
