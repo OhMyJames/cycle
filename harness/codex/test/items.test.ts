@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { ToolResultSchema } from "@cycle/protocol";
 import { itemUpdate, MAX_OUTPUT, outputHead, outputTail } from "../src/items.ts";
 import type { ThreadItem } from "../src/wire.generated.ts";
 
@@ -344,4 +345,11 @@ test("counts follow the +/- lines, not the ---/+++ headers, for full patches and
     ),
   ]);
   expect(added._meta["cycle/toolResult"].edit).toEqual({ additions: 2, deletions: 0 });
+});
+
+test("a file change's toolResult meta passes the protocol's schema whole", () => {
+  const out = edited([change("/a.ts", "@@ -1 +1 @@\n-a\n+b"), change("/b.ts", "x\ny", "add")]);
+  const parsed = ToolResultSchema.safeParse(out._meta["cycle/toolResult"]);
+  expect(parsed.success).toBe(true);
+  expect(parsed.data).toEqual({ edit: { additions: 3, deletions: 1 } });
 });
