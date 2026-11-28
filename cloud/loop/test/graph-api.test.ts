@@ -325,3 +325,51 @@ describe("loop/graph/act", () => {
     expect((await store.load("CYC-2"))?.phase).toBe("blocked");
   });
 });
+
+describe("research and design nodes for clients that know them", () => {
+  const seed = async () => {
+    await store.save(run("CYC-4"));
+    await store.saveGraph({
+      ...graphOf(
+        [
+          node("r1", 0, { role: "research", status: "running", verify: [], report: "R" }),
+          node("n1", 1, { dependsOn: ["r1"], status: "pending" }),
+        ],
+        "r1",
+      ),
+      runKey: "CYC-4",
+    });
+  };
+
+  test("without roles the nodes, their dependsOn ids and the current node are gone", async () => {
+    await seed();
+    const ticket = LoopTicketDetailSchema.parse(
+      await api.call(LOOP_TICKET_GET, { project: "CYC", key: "CYC-4" }),
+    );
+    expect(ticket.graph?.nodes.map((x) => [x.id, x.dependsOn])).toEqual([["n1", []]]);
+    expect(ticket.graph?.currentNodeId).toBeNull();
+    const detail = LoopRunDetailSchema.parse(
+      await api.call(LOOP_RUN_GET, { project: "CYC", key: "CYC-4", roles: ["dev", "qa"] }),
+    );
+    expect(detail.graph?.nodes.map((x) => x.id)).toEqual(["n1"]);
+    const card = LoopBoardSchema.parse(await api.call(LOOP_BOARD_GET, { project: "CYC" }));
+    expect(JSON.stringify(card)).not.toContain("r1");
+  });
+
+  test("with roles they come back, with an empty verify", async () => {
+    await seed();
+    const roles = ["dev", "qa", "research", "design"];
+    const ticket = LoopTicketDetailSchema.parse(
+      await api.call(LOOP_TICKET_GET, { project: "CYC", key: "CYC-4", roles }),
+    );
+    expect(ticket.graph?.nodes.map((x) => [x.id, x.role, x.dependsOn])).toEqual([
+      ["r1", "research", []],
+      ["n1", "dev", ["r1"]],
+    ]);
+    expect(ticket.graph?.currentNodeId).toBe("r1");
+    const only = LoopRunDetailSchema.parse(
+      await api.call(LOOP_RUN_GET, { project: "CYC", key: "CYC-4", roles: ["research"] }),
+    );
+    expect(only.graph?.nodes.map((x) => x.id)).toEqual(["r1", "n1"]);
+  });
+});

@@ -170,7 +170,9 @@ const summaryOf = (run: RunRecord): LoopRunSummary => ({
 });
 
 /** A graph in short: counts by status and the node the loop is at. */
-export const graphSummaryOf = (graph: TaskGraph): LoopGraphSummary => {
+export const graphSummaryOf = (full: TaskGraph, roles?: readonly string[]): LoopGraphSummary => {
+  // Counts follow what the client can see: nodes of roles it does not know are left out.
+  const graph = graphOf(full, roles);
   // Progress counts Dev nodes only: a QA node that rejects is itself `passed`, and QA rounds would inflate it.
   const devNodes = graph.nodes.filter((n) => n.role !== "qa");
   const count = (status: string) => devNodes.filter((n) => n.status === status).length;
@@ -187,11 +189,28 @@ export const graphSummaryOf = (graph: TaskGraph): LoopGraphSummary => {
   };
 };
 
+/** Roles an older client does not know; it only gets nodes of these roles when it says it does. */
+const NEW_ROLES: ReadonlySet<string> = new Set(["research", "design"]);
+
 /** The full graph as the API sends it: nodes in `position` order. */
-const graphOf = (graph: TaskGraph): LoopGraph => ({
-  ...graph,
-  nodes: [...graph.nodes].sort((a, b) => a.position - b.position),
-});
+const graphOf = (graph: TaskGraph, roles?: readonly string[]): LoopGraph => {
+  const known = (role: string) => !NEW_ROLES.has(role) || (roles?.includes(role) ?? false);
+  const dropped = new Set(graph.nodes.filter((n) => !known(n.role)).map((n) => n.id));
+  const nodes = graph.nodes
+    .filter((n) => !dropped.has(n.id))
+    .map((n) =>
+      n.dependsOn.some((d) => dropped.has(d))
+        ? { ...n, dependsOn: n.dependsOn.filter((d) => !dropped.has(d)) }
+        : n,
+    )
+    .sort((a, b) => a.position - b.position);
+  return {
+    ...graph,
+    currentNodeId:
+      graph.currentNodeId !== null && dropped.has(graph.currentNodeId) ? null : graph.currentNodeId,
+    nodes,
+  };
+};
 
 /** The sessions a run holds, with the role each plays. */
 export const sessionsOf = (run: RunRecord): LoopSessionRef[] => {
@@ -382,7 +401,7 @@ export class LoopApiHandler {
       case LOOP_RUN_GET: {
         const p = LoopRunGetParamsSchema.safeParse(params);
         if (!p.success) throw invalid("invalid_params");
-        return this.#run(this.#project(p.data.project), p.data.key);
+        return this.#run(this.#project(p.data.project), p.data.key, p.data.roles);
       }
       case LOOP_NOTICES_LIST: {
         const p = LoopNoticesListParamsSchema.safeParse(params ?? {});
@@ -396,7 +415,7 @@ export class LoopApiHandler {
       case LOOP_TICKET_GET: {
         const p = LoopTicketGetParamsSchema.safeParse(params);
         if (!p.success) throw invalid("invalid_params");
-        return this.#ticket(this.#project(p.data.project), p.data.key);
+        return this.#ticket(this.#project(p.data.project), p.data.key, p.data.roles);
       }
       case LOOP_TICKETS_ACT:
         return this.#act(params);
@@ -497,7 +516,11 @@ export class LoopApiHandler {
 
   // ---- ticket/get ----
 
-  async #ticket(project: ProjectApi, key: string): Promise<LoopTicketDetail> {
+  async #ticket(
+    project: ProjectApi,
+    key: string,
+    roles?: readonly string[],
+  ): Promise<LoopTicketDetail> {
     const match = /^(.+)-(\d+)$/.exec(key);
     const prefix = prefixOf(project.projectKey);
     if (match === null || match[1]?.toLowerCase() !== prefix.toLowerCase())
@@ -535,7 +558,7 @@ export class LoopApiHandler {
       ...(attention === undefined ? {} : { attention }),
       acceptance: acceptanceOf(issue.description),
       links: linksOf(issue.development, issue.description),
-      ...(graph === undefined ? {} : { graph: graphOf(graph) }),
+      ...(graph === undefined ? {} : { graph: graphOf(graph, roles) }),
     };
   }
 
@@ -583,7 +606,7 @@ export class LoopApiHandler {
 
   // ---- runs ----
 
-  async #run(project: ProjectApi, key: string): Promise<LoopRunDetail> {
+  async #run(project: ProjectApi, key: string, roles?: readonly string[]): Promise<LoopRunDetail> {
     const run = await project.store.load(key);
     if (run === undefined) throw invalid("unknown_run");
     const db = sqlite(project.store);
@@ -602,7 +625,7 @@ export class LoopApiHandler {
       prUrl: run.kind === "dev" ? run.dev.prUrl : null,
       events,
       heartbeat: beat === undefined ? null : { at: beat.at, detail: beat.detail },
-      ...(graph === undefined ? {} : { graph: graphOf(graph) }),
+      ...(graph === undefined ? {} : { graph: graphOf(graph, roles) }),
     };
   }
 
@@ -1036,7 +1059,7 @@ export class LoopApiHandler {
           steps.push({
             id: `node:${node.id}`,
             label: node.title,
-            role: node.role,
+            role: node.role === "design" ? "research" : node.role, // the timeline has no design role
             status: node.status,
             sessionId: node.sessionId,
             startedAt: node.startedAt,

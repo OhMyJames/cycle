@@ -173,12 +173,13 @@ export const LoopGraphNodeSchema = z.object({
   position: z.number().int().min(0),
   origin: z.enum(["planned", "fix"]),
   /** Who runs the node; absent (older servers) means `dev`. */
-  role: z.enum(["dev", "qa"]).optional(),
+  role: z.enum(["dev", "qa", "research", "design"]).optional(),
   title: z.string().min(1),
   goal: z.string().min(1),
   dependsOn: z.array(z.string().min(1)),
   filesHint: z.array(z.string()),
-  verify: z.array(z.string().min(1)).min(1),
+  /** May be empty for `research` and `design` nodes. */
+  verify: z.array(z.string().min(1)),
   status: LoopGraphNodeStatusSchema,
   sessionId: z.string().nullable(),
   commitSha: z.string().nullable(),
@@ -307,6 +308,8 @@ export type LoopApiRunsListResult = z.infer<typeof LoopApiRunsListResultSchema>;
 export const LoopRunGetParamsSchema = z.object({
   project: z.string().min(1),
   key: z.string().min(1),
+  /** Node roles the client understands; without `research` and `design` those nodes are left out of the graph. */
+  roles: z.array(z.string()).optional(),
 });
 export type LoopRunGetParams = z.infer<typeof LoopRunGetParamsSchema>;
 
@@ -403,6 +406,8 @@ export type LoopIntentsRetryResult = z.infer<typeof LoopIntentsRetryResultSchema
 export const LoopTicketGetParamsSchema = z.object({
   project: z.string().min(1),
   key: z.string().min(1),
+  /** Node roles the client understands; without `research` and `design` those nodes are left out of the graph. */
+  roles: z.array(z.string()).optional(),
 });
 export type LoopTicketGetParams = z.infer<typeof LoopTicketGetParamsSchema>;
 

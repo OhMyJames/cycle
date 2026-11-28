@@ -30,7 +30,7 @@ export type TaskGraphSource = z.infer<typeof TaskGraphSourceSchema>;
 export const TaskNodeOriginSchema = z.enum(["planned", "fix"]);
 export type TaskNodeOrigin = z.infer<typeof TaskNodeOriginSchema>;
 
-export const TaskNodeRoleSchema = z.enum(["dev", "qa"]);
+export const TaskNodeRoleSchema = z.enum(["dev", "qa", "research", "design"]);
 export type TaskNodeRole = z.infer<typeof TaskNodeRoleSchema>;
 
 export const TaskNodeVerdictSchema = z.enum(["pass", "fail"]);
@@ -58,27 +58,32 @@ export const TaskNodeSpecSchema = z.object({
 export type TaskNodeSpec = z.infer<typeof TaskNodeSpecSchema>;
 
 /** One persisted execution node inside `graph_nodes`. */
-export const TaskNodeSchema = z.object({
-  id: z.string().min(1),
-  position: z.number().int().min(0),
-  origin: TaskNodeOriginSchema,
-  role: TaskNodeRoleSchema.default("dev"),
-  title: z.string().min(1),
-  goal: z.string().min(1),
-  dependsOn: z.array(z.string().min(1)),
-  filesHint: z.array(z.string()),
-  verify: z.array(z.string().min(1)).min(1),
-  status: TaskNodeStatusSchema,
-  sessionId: z.string().nullable(),
-  commitSha: z.string().nullable(),
-  rounds: z.number().int().min(0),
-  lastError: z.string().nullable(),
-  summary: z.string().nullable(),
-  startedAt: z.string().nullable(),
-  finishedAt: z.string().nullable(),
-  verdict: TaskNodeVerdictSchema.nullable().default(null),
-  report: z.string().nullable().default(null),
-});
+export const TaskNodeSchema = z
+  .object({
+    id: z.string().min(1),
+    position: z.number().int().min(0),
+    origin: TaskNodeOriginSchema,
+    role: TaskNodeRoleSchema.default("dev"),
+    title: z.string().min(1),
+    goal: z.string().min(1),
+    dependsOn: z.array(z.string().min(1)),
+    filesHint: z.array(z.string()),
+    verify: z.array(z.string().min(1)),
+    status: TaskNodeStatusSchema,
+    sessionId: z.string().nullable(),
+    commitSha: z.string().nullable(),
+    rounds: z.number().int().min(0),
+    lastError: z.string().nullable(),
+    summary: z.string().nullable(),
+    startedAt: z.string().nullable(),
+    finishedAt: z.string().nullable(),
+    verdict: TaskNodeVerdictSchema.nullable().default(null),
+    report: z.string().nullable().default(null),
+  })
+  .refine((n) => n.role === "research" || n.role === "design" || n.verify.length > 0, {
+    message: "verify needs at least one command",
+    path: ["verify"],
+  });
 export type TaskNode = z.infer<typeof TaskNodeSchema>;
 
 /** Full execution graph for one Level-1 run. */

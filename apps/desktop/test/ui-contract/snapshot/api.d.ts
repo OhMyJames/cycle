@@ -1042,7 +1042,7 @@ export type LoopGraphNode = {
     id: string;
     position: number;
     origin: "planned" | "fix";
-    role?: "dev" | "qa" | undefined;
+    role?: "dev" | "qa" | "research" | "design" | undefined;
     title: string;
     goal: string;
     dependsOn: string[];
