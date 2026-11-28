@@ -6,14 +6,14 @@
 // hang costs that, not the 10 minutes of a default.
 //   bun run test:integration          all of them
 //   bun run test:integration web      only those whose name contains "web"
-// Options: --strict (a suite that was skipped, or ran no test, fails: for a machine that is meant to have
+// Options: --group agents|shell (the part one CI job runs), --strict (a suite that was skipped, or ran no test, fails: for a machine that is meant to have
 // Electron, sshd, Chromium and, on Linux, xvfb), --summary <file> (a markdown table of the result: CI's step summary).
 // The list of suites, and what a suite's result means, are in integration-suites.ts.
 
 import { appendFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { markdown, outcome, type Row, suites } from "./integration-suites.ts";
+import { type Group, groups, markdown, outcome, type Row, suites } from "./integration-suites.ts";
 
 const root = new URL("..", import.meta.url).pathname;
 
@@ -25,18 +25,34 @@ if (summaryAt !== -1 && (summaryFile === undefined || summaryFile.startsWith("--
   console.error("--summary needs a value");
   process.exit(2);
 }
-const isValue = (i: number) => summaryAt !== -1 && i === summaryAt + 1;
+const groupAt = args.indexOf("--group");
+const group = groupAt === -1 ? undefined : args[groupAt + 1];
+if (groupAt !== -1 && !groups.includes(group as Group)) {
+  console.error(`--group needs one of: ${groups.join(", ")}`);
+  process.exit(2);
+}
+const isValue = (i: number) =>
+  (summaryAt !== -1 && i === summaryAt + 1) || (groupAt !== -1 && i === groupAt + 1);
 const unknown = args.find(
-  (a, i) => a.startsWith("--") && a !== "--strict" && a !== "--summary" && !isValue(i),
+  (a, i) =>
+    a.startsWith("--") && a !== "--strict" && a !== "--summary" && a !== "--group" && !isValue(i),
 );
 if (unknown !== undefined) {
-  console.error(`unknown option ${unknown}: the options are --strict and --summary <file>`);
+  console.error(
+    `unknown option ${unknown}: the options are --strict, --summary <file> and --group <name>`,
+  );
   process.exit(2);
 }
 const only = args.find((a, i) => !a.startsWith("--") && !isValue(i));
-const chosen = suites.filter((s) => only === undefined || s.name.includes(only));
+const chosen = suites.filter(
+  (s) =>
+    (only === undefined || s.name.includes(only)) && (group === undefined || s.group === group),
+);
 if (chosen.length === 0) {
-  console.error(`no suite matches "${only}"; they are: ${suites.map((s) => s.name).join(", ")}`);
+  const among = suites.filter((s) => group === undefined || s.group === group);
+  console.error(
+    `no suite matches "${only}"${group === undefined ? "" : ` in the group ${group}`}; they are: ${among.map((s) => s.name).join(", ")}`,
+  );
   process.exit(2);
 }
 

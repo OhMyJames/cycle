@@ -1,6 +1,6 @@
 # Agent Note: 界面测试在真实浏览器里跑,不在门禁里
 
-Status: accepted
+Status: accepted (CI 的作业划分已被 2026-11-27-ci-jobs-fit-two-minutes-on-two-cores.md 取代;不放进门禁的决定仍有效)
 Date: 2026-11-21
 Basis: 2026-11-21 负责人要求界面回归改成网页方式、"替换得越多越好",并同意加 Playwright;本地实测(下面的数字)
 

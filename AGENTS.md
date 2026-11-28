@@ -35,7 +35,8 @@ v1 已可用(桌面应用加 Linux daemon),在迭代功能。协议先行:改行
 ## 命令
 
 - `bun run check`:门禁,提交前必须通过(pre-commit 钩子会运行它)。依次检查边界、类型、lint、没人用的文件和依赖(knip,见 `knip.jsonc`)、测试。
-- `bun run test:browser`(根目录):界面测试,在无界面的 Chromium 里跑(`packages/ui/test/browser`),不在门禁里(约 23 秒、2 GB),CI 的 `browser` 作业每次跑。改了界面,提交前自己跑一次。
+- `bun run test:browser`(根目录):界面测试,在无界面的 Chromium 里跑(`packages/ui/test/browser`),不在门禁里(2 核 4 GB 的容器里整套约 111 秒、峰值约 3 GB;本机按核数开 worker,15 核约 35 秒),CI 切成三份并行跑(`BROWSER_SHARD=n/N`,见 `packages/ui/test/shard.ts`)。改了界面,提交前自己跑一次。
+- **CI 的每个测试类作业按 2 核 4 GB 规划,目标 2 分钟、5 分钟强制终止**(`timeout-minutes`,`scripts/ci-budget.test.ts` 守着)。超了就拆,不加时间;理由和数据见 `.agents/notes/2026-11-27-ci-jobs-fit-two-minutes-on-two-cores.md`。
 - `bun run format`:格式化并修复可自动修复的 lint。
 - `bun run test:integration`(根目录):集成测试,串行跑 8 个套件(Node 下的客户端、Claude、Codex 和 agy 适配、真实 ssh、整个后端、打包后的应用、浏览器里的端到端),每个套件有自己的时限。每次全跑,不按改动挑选(见 `.agents/notes/2026-11-21-integration-runs-every-suite.md`),清单在 `scripts/integration-suites.ts`。它们会启动真实进程(Claude、daemon、打包后的 Electron 应用,Linux 上在 xvfb 下,macOS 上窗口隐藏、不抢焦点;以及无界面的 Chromium),最重的约 1.5 GB,所以不在门禁里。`bun run test:integration web` 只跑名字里有 web 的。
 - **真实模型的运行**必须显式开启:`CYCLE_REAL_MODEL_TOKEN=... bun run test:real`(在 `harness/claude` 下;daemon 层的在 `apps/daemon` 下用 `test:real:daemon`;agy 用 `CYCLE_AGY_REAL_HOME=... bun run --cwd harness/agy test:real` 或 `apps/daemon` 下的 `test:real:agy`),token/凭据目录只给对应 agent 进程,不要从环境里继承,不要进 CI。

@@ -1,17 +1,21 @@
 // The interface's tests run in a real browser (Chromium, headless, through Playwright): real layout, focus, selection and
 // key events, which happy-dom only imitated. `bun run test:browser`, and CI's browser job: not the pre-commit gate (see
 // .agents/notes/2026-11-21-interface-tests-in-a-real-browser.md).
+import { availableParallelism } from "node:os";
 import { playwright } from "@vitest/browser-playwright";
 import { defineConfig } from "vitest/config";
+import { shard } from "./test/shard.ts";
 
 export default defineConfig({
   test: {
-    include: ["test/browser/*.browser.tsx"],
-    // Two files at once: most of a test's time is waiting on the browser (a real click waits for the element to be still),
-    // not computing, so two halve the time (about 40 s to 20 s) even on the 2-core target. Measured on 2026-11-21, adding
-    // up the processes' resident memory (which counts what Chromium's processes share more than once): one file at a
-    // time 1.6 GB, two 2.2 GB, four 3.3 GB. That is why these tests are not in the pre-commit gate.
-    maxWorkers: 2,
+    // BROWSER_SHARD=n/N: one part of them, for a CI job (test/shard.ts).
+    include: shard(process.env.BROWSER_SHARD),
+    // Most of a test's time is the browser answering (a real click is about 60 ms, a retried wait 50), and a run is
+    // CPU-bound: on a 2-core machine two workers are all it can use, which is what CI plans for (the 2-core, 4 GB
+    // target: 111 s for all of it in a container of that size on 2026-11-27, so CI splits it in three, see ci.yml).
+    // A bigger machine uses its cores: half of them, up to six (35 s at six on 15 cores).
+    maxWorkers:
+      process.env.CI !== undefined ? 2 : Math.max(2, Math.min(6, availableParallelism() >> 1)),
     setupFiles: ["test/browser/setup.ts"],
     browser: {
       enabled: true,

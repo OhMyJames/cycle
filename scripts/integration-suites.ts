@@ -4,11 +4,19 @@
 // Every suite runs every time. The original six together took about 35 s on CI, so choosing among them by what a change
 // touched would save less than it costs to keep the rules that choose right (see docs/testing.md).
 
+export type Group = "agents" | "shell";
+export const groups: Group[] = ["agents", "shell"];
+
 export type Suite = {
   name: string;
   cwd: string;
   file: string;
   seconds: number;
+  /**
+   * Which CI job runs it (`--group`): "agents" needs no display, Electron or Chromium; "shell" needs all three. The two run
+   * side by side so that neither job, on a 2-core, 4 GB runner, takes more than the 2 minutes a job may.
+   */
+  group: Group;
   /** What the machine must have for the suite to run at all; a run on a machine that should have it fails without it. */
   needs?: string;
 };
@@ -17,6 +25,7 @@ export type Suite = {
 export const suites: Suite[] = [
   {
     name: "node",
+    group: "shell",
     cwd: "packages/client",
     file: "test/integration/node.integration.ts",
     seconds: 60,
@@ -24,24 +33,28 @@ export const suites: Suite[] = [
   },
   {
     name: "adapter",
+    group: "agents",
     cwd: "harness/claude",
     file: "test/integration/adapter.integration.ts",
     seconds: 90,
   },
   {
     name: "codex",
+    group: "agents",
     cwd: "harness/codex",
     file: "test/integration/adapter.integration.ts",
     seconds: 90,
   },
   {
     name: "agy",
+    group: "agents",
     cwd: "harness/agy",
     file: "test/integration/adapter.integration.ts",
     seconds: 90,
   },
   {
     name: "ssh",
+    group: "agents",
     cwd: "apps/daemon",
     file: "test/integration/ssh.integration.ts",
     seconds: 60,
@@ -49,12 +62,14 @@ export const suites: Suite[] = [
   },
   {
     name: "backend",
+    group: "agents",
     cwd: "apps/daemon",
     file: "test/integration/full.integration.ts",
     seconds: 120,
   },
   {
     name: "package",
+    group: "shell",
     cwd: "apps/desktop",
     file: "test/integration/packaged.integration.ts",
     seconds: 90,
@@ -62,6 +77,7 @@ export const suites: Suite[] = [
   },
   {
     name: "web",
+    group: "shell",
     cwd: "apps/desktop",
     file: "test/integration/web.integration.ts",
     // Above the test's own 120 s: a test that runs long is reported by bun, with where it was, not killed first.
