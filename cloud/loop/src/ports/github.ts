@@ -489,6 +489,7 @@ const OpenPrsSchema = z.array(
     number: z.number().int(),
     headRefName: z.string(),
     headRefOid: z.string(),
+    baseRefName: z.string(),
     isDraft: z.boolean(),
     isCrossRepository: z.boolean(),
     author: z.object({ login: z.string() }).nullable(),
@@ -682,7 +683,7 @@ export const githubForge = (deps: {
         "--limit",
         "100",
         "--json",
-        "number,headRefName,headRefOid,isDraft,isCrossRepository,author,title,body",
+        "number,headRefName,headRefOid,baseRefName,isDraft,isCrossRepository,author,title,body",
       ]);
       if (done.timedOut || done.code !== 0) return timedOutOrFailed("gh pr list", done);
       const parsed = parseJson(done.output, (v) => OpenPrsSchema.parse(v), "gh pr list");
@@ -691,6 +692,7 @@ export const githubForge = (deps: {
         number: p.number,
         headBranch: p.headRefName,
         headSha: p.headRefOid,
+        baseBranch: p.baseRefName,
         isDraft: p.isDraft,
         crossRepository: p.isCrossRepository,
         author: p.author?.login ?? "",

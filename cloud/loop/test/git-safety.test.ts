@@ -313,7 +313,7 @@ test("delivery.git config tamper refuses push/fetch and emits Notice; clean deli
   );
   expect(pulled.code).toBe(0);
   const localPr = (
-    await runCommand(["git", "rev-parse", "refs/heads/loop-pr/7"], {
+    await runCommand(["git", "rev-parse", "refs/loop-pr/loop-pr/7"], {
       cwd: repoRoot,
       env: baseGitEnv(),
       timeoutMs: 10_000,

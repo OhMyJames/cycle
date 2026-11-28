@@ -100,6 +100,27 @@ export async function review(
       true,
     );
   }
+  // A conclusion kept from an earlier call says nothing about CI now: unless CI was seen green on this commit, or the
+  // task has just read it, read it again before green is recorded or the gate is asked.
+  let ciAtHead: "passed" | "failed" | "pending" | "unreadable" = "passed";
+  if (reviewInput.ciKnownGreen !== true && !result.ciReadGreen) {
+    const ci = await h.net(
+      run.key,
+      "gh pr view",
+      () => h.d.forge.ciStatus(where(h, worktree), prUrl, headSha, config.ciChecks),
+      (r) => (r.ok ? undefined : r.error),
+    );
+    ciAtHead = ci.ok ? ci.status.state : "unreadable";
+  }
+  if (ciAtHead !== "passed") {
+    x.greenSeen.delete(run.key);
+    return deliverWith(
+      "merge_blocked",
+      `已开 PR：${prUrl}\n评审结论已有，但这个提交的 CI 当前不是全绿（${ciAtHead}），未开启自动合并，需要人工处理。`,
+      { decision: "system_error", autoMerge: false },
+      true,
+    );
+  }
   x.greenSeen.set(run.key, headSha);
   await h.d.store.saveCi(run.key, { greenSha: headSha });
   const { conclusion } = result;
@@ -117,7 +138,7 @@ export async function review(
   // No valid conclusion even after retries (or read-only violation): review system failure, not a code issue.
   if (verdict === undefined) {
     const reason = conclusion.reason ?? "评审会话未给出有效结论。";
-    const attempts = conclusion.sessions.length;
+    const attempts = conclusion.attempts;
     const commented = await writeAndPostComment(
       renderReviewComment({
         issueKey: run.key,
@@ -197,7 +218,7 @@ export async function review(
       verdict: conclusion.decision,
       reviewedSha: result.headSha,
       headNow: headSha,
-      ciAtHead: "passed",
+      ciAtHead,
       changedPaths: changed.ok ? changed.paths : null,
     });
     const hits = gate.ok ? [] : gate.floorHits;

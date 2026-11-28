@@ -526,7 +526,7 @@ export const gitWorkspace = (deps: {
         return gitDeliver(local, [
           "fetch",
           remote,
-          `+refs/heads/${branch}:refs/heads/${localName}`,
+          `+refs/heads/${branch}:refs/loop-pr/${localName}`,
         ]);
       }
       const repoOk = checkRepoConfig();
@@ -543,7 +543,8 @@ export const gitWorkspace = (deps: {
         `+refs/heads/${branch}:${stageRef}`,
       ]);
       if (fetched.code !== 0 || fetched.timedOut) return fetched;
-      return git(local, ["fetch", delivery.repo.dir, `+${stageRef}:refs/heads/${localName}`]);
+      // Into a ref under refs/loop-pr, never a branch: a branch checked out in an old worktree cannot be fetched into.
+      return git(local, ["fetch", delivery.repo.dir, `+${stageRef}:refs/loop-pr/${localName}`]);
     });
 
   return {

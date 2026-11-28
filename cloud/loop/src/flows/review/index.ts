@@ -5,7 +5,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ReviewTask } from "../../db/store.ts";
-import { branchOf, type FlowHost, tail } from "../../engine/flow.ts";
+import { branchOf, type FlowHost, NetworkWait, tail } from "../../engine/flow.ts";
 import type { At } from "../../ports/forge.ts";
 import { renderReviewComment } from "../../pr.ts";
 import {
@@ -53,13 +53,21 @@ export type ReviewConclusion = {
   reason: string | null;
   /** The session id of every attempt, the last last. */
   sessions: string[];
+  /** How many attempts this call made (a failed attempt may have opened no session). */
+  attempts: number;
   /** False when the comment could not be written to the pull request. */
   commented: boolean;
   commentError: string | null;
 };
 
 export type ReviewResult =
-  | { kind: "concluded"; headSha: string; conclusion: ReviewConclusion }
+  | {
+      kind: "concluded";
+      headSha: string;
+      conclusion: ReviewConclusion;
+      /** True when this call read CI on the commit and found it green (not when the conclusion was kept from before). */
+      ciReadGreen: boolean;
+    }
   /** CI is not green on this commit, so no session was opened. */
   | { kind: "ci_not_green"; reason: string; state: string }
   /** CI or the branch could not be read now; nothing is concluded, and asking again is fine. */
@@ -77,6 +85,7 @@ const asConclusion = (task: ReviewTask): ReviewConclusion => {
     verdict: decision === "system_error" ? null : stored,
     reason: decision === "system_error" ? (stored?.systemError ?? null) : null,
     sessions: task.sessions,
+    attempts: task.sessions.length,
     commented: true,
     commentError: null,
   };
@@ -114,6 +123,8 @@ export async function commentOnce(
     store.transaction((tx) => tx.markReviewCommented(task.id, entry));
     return { ok: true };
   } catch (error) {
+    // A network wait belongs to the engine: it parks the run and comes back.
+    if (error instanceof NetworkWait) throw error;
     return give(error instanceof Error ? error.message : String(error));
   }
 }
@@ -138,8 +149,9 @@ export async function reviewTask(h: FlowHost, input: ReviewInput): Promise<Revie
         systemError: r.systemError ?? null,
       }));
 
-  const finish = async (t: ReviewTask): Promise<ReviewResult> => {
-    const c = asConclusion(t);
+  let ciReadGreen = false;
+  const finish = async (t: ReviewTask, live?: ReviewConclusion): Promise<ReviewResult> => {
+    const c = live ?? asConclusion(t);
     const lastSession = t.sessions.at(-1) ?? null;
     const body = render({
       ...(c.verdict !== null ? { verdict: c.verdict } : {}),
@@ -147,7 +159,7 @@ export async function reviewTask(h: FlowHost, input: ReviewInput): Promise<Revie
         ? {
             systemError: {
               reason: c.reason ?? "评审会话未给出有效结论。",
-              attempts: t.sessions.length,
+              attempts: c.attempts,
             },
           }
         : {}),
@@ -160,6 +172,7 @@ export async function reviewTask(h: FlowHost, input: ReviewInput): Promise<Revie
     return {
       kind: "concluded",
       headSha,
+      ciReadGreen,
       conclusion: {
         ...c,
         commented: posted.ok,
@@ -189,6 +202,7 @@ export async function reviewTask(h: FlowHost, input: ReviewInput): Promise<Revie
         state: read.status.state,
       };
     }
+    ciReadGreen = true;
   }
 
   if (!store.transaction((tx) => tx.claimReviewTask(task.id))) return { kind: "busy" };
@@ -227,16 +241,23 @@ export async function reviewTask(h: FlowHost, input: ReviewInput): Promise<Revie
           title: `[${key}] Review`,
           cwd: config.repoRoot,
           worktree: {
-            base: config.baseRef,
+            // A pull request of a person: the worktree starts at the reviewed commit itself, not at the base.
+            base: input.worktree === undefined ? headSha : config.baseRef,
             name:
               input.context.kind === "ticket"
                 ? branchOf(input.context.issue.number)
-                : `loop-pr/${pr}`,
+                : `loop-pr/${pr}-${headSha.slice(0, 12)}`,
           },
         });
         sessions.push(created.sessionId);
         store.transaction((tx) => tx.addReviewSession(task.id, created.sessionId));
         worktree ??= created.cwd;
+        // What is read must be the commit the conclusion will be bound to.
+        const at0 = await h.d.workspace.head(at(h, worktree));
+        if (!at0.ok || at0.sha !== headSha)
+          throw new Error(
+            `评审工作区不在待审提交 ${headSha.slice(0, 12)} 上（${at0.ok ? at0.sha.slice(0, 12) : tail(at0.error)}）。`,
+          );
         diff ??= await h.d.workspace.diff(at(h, worktree), config.baseRef);
 
         const before = await h.snapshot(worktree);
@@ -279,6 +300,7 @@ export async function reviewTask(h: FlowHost, input: ReviewInput): Promise<Revie
           }
         }
       } catch (error) {
+        if (error instanceof NetworkWait) throw error;
         lastFailure = `评审会话执行失败：${error instanceof Error ? error.message : String(error)}`;
       }
       if (worktreeModified) break;
@@ -286,11 +308,24 @@ export async function reviewTask(h: FlowHost, input: ReviewInput): Promise<Revie
         await store.event(key, "review_retry", { attempt: attempt + 1 });
     }
 
-    const decision = verdict?.decision ?? "system_error";
-    const reason = verdict === undefined ? (lastFailure ?? "评审会话未给出有效结论。") : null;
-    store.transaction((tx) =>
-      tx.finishReviewTask(task.id, decision, verdict ?? { systemError: reason }),
-    );
+    if (verdict === undefined) {
+      // A failure of the review system is not a conclusion about the commit: the task goes back to pending, so
+      // asking again reviews again. The sessions of the attempts stay on the task.
+      const reason = lastFailure ?? "评审会话未给出有效结论。";
+      await store.event(key, "review_decided", { decision: "system_error" });
+      const current = store.transaction((tx) => tx.findReviewTask(repo, pr, headSha)) as ReviewTask;
+      return await finish(current, {
+        decision: "system_error",
+        verdict: null,
+        reason,
+        sessions: current.sessions,
+        attempts: maxAttempts,
+        commented: true,
+        commentError: null,
+      });
+    }
+    const decision = verdict.decision;
+    store.transaction((tx) => tx.finishReviewTask(task.id, decision, verdict));
     concluded = true;
     const done = store.transaction((tx) => tx.findReviewTask(repo, pr, headSha)) as ReviewTask;
     await store.event(key, "review_decided", { decision });

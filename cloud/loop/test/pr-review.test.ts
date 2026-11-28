@@ -15,6 +15,7 @@ const pr = (over: Partial<OpenPr> = {}): OpenPr => ({
   number: 7,
   headBranch: "feature",
   headSha: SHA_A,
+  baseBranch: "main",
   isDraft: false,
   crossRepository: false,
   author: "alice",
@@ -30,6 +31,7 @@ const setup = async (
     max?: number;
     review?: ReturnType<typeof import("./helpers.ts").done>[];
     paths?: string[];
+    commentFails?: boolean;
   } = {},
 ) => {
   const dir = await mkdtemp(join(tmpdir(), "al-pr-"));
@@ -76,6 +78,7 @@ const setup = async (
       return { ok: true };
     },
     comment: async (_a: unknown, _ref: string, path: string) => {
+      if (opts.commentFails) return { ok: false, error: "boom" };
       comments.push(await readFile(path, "utf8"));
       return { ok: true };
     },
@@ -84,10 +87,19 @@ const setup = async (
       return { ok: true };
     },
   };
+  let fetchedBranch = "";
   const workspace = {
     diff: async () => "diff --git a/a b/a",
     snapshot: async () => "snap",
-    fetchPrBranch: async () => ({ code: 0, output: "", timedOut: false }),
+    fetchPrBranch: async (_a: unknown, branch: string) => {
+      fetchedBranch = branch;
+      return { code: 0, output: "", timedOut: false };
+    },
+    // The worktree holds the commit of the branch that was fetched last.
+    head: async () => ({
+      ok: true,
+      sha: state.prs.find((p) => p.headBranch === fetchedBranch)?.headSha ?? SHA_A,
+    }),
   };
   const sessions = new FakeSessions({
     dev: [],
@@ -170,6 +182,22 @@ test("a reject conclusion only comments", async () => {
   const r = await t.pipeline.step();
   expect(r).toEqual({ status: "pr_step", key: "pr:o/r#7", outcome: "reject" });
   expect(t.comments.length).toBe(1);
+  expect(t.calls.some((c) => c.startsWith("merge"))).toBe(false);
+});
+
+test("a pull request into another base branch is not looked at", async () => {
+  const t = await setup({ prs: [pr({ baseBranch: "release" })] });
+  expect((await t.pipeline.step()).status).not.toBe("pr_step");
+  expect(t.sessions.created).toEqual([]);
+});
+
+test("a review whose comment did not get onto the pull request is not merged", async () => {
+  const t = await setup({
+    review: [{ text: REVIEW_MERGE, stopReason: "end_turn", timedOut: false }],
+    commentFails: true,
+  });
+  const r = await t.pipeline.step();
+  expect(r).toMatchObject({ status: "pr_step", outcome: "comment-failed" });
   expect(t.calls.some((c) => c.startsWith("merge"))).toBe(false);
 });
 

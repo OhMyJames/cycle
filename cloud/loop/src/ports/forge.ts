@@ -56,6 +56,8 @@ export type OpenPr = {
   number: number;
   headBranch: string;
   headSha: string;
+  /** The branch the pull request merges into. */
+  baseBranch: string;
   isDraft: boolean;
   /** The head is in a fork. */
   crossRepository: boolean;

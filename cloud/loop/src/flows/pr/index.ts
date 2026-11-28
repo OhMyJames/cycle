@@ -36,15 +36,32 @@ const WRITE = new Set(["write", "maintain", "admin"]);
 export const prKey = (repo: string, pr: number) => `pr:${repo}#${pr}`;
 const prNumberOf = (key: string) => Number(key.slice(key.lastIndexOf("#") + 1));
 
-/** The pull requests the loop may look at: same repository, not a draft, not the loop's own branch. */
-export const eligible = (prs: OpenPr[]): OpenPr[] =>
-  prs.filter((p) => !p.crossRepository && !p.isDraft && !BRANCH_OF_LOOP.test(p.headBranch));
+/** The branch name of a base ref such as "origin/main". */
+const baseBranchOf = (baseRef: string) => baseRef.replace(/^(?:refs\/remotes\/)?origin\//, "");
+
+/**
+ * The pull requests the loop may look at: same repository, into the configured base branch, not a draft, not the
+ * loop's own branch.
+ */
+export const eligible = (prs: OpenPr[], baseBranch: string): OpenPr[] =>
+  prs.filter(
+    (p) =>
+      !p.crossRepository &&
+      !p.isDraft &&
+      p.baseBranch === baseBranch &&
+      !BRANCH_OF_LOOP.test(p.headBranch),
+  );
 
 export class PrFlow {
   readonly #host: FlowHost;
   #lastPoll = 0;
   #open = new Map<number, OpenPr>();
-  /** "<key>@<sha>" that ended without anything left to do until a new commit (CI failed, no write access, cap). */
+  /**
+   * "<key>@<sha>" that ended without anything left to do until a new commit (CI failed, no write access, cap).
+   * Kept in memory only (a departure from Design's persisted state): after a restart such a pull request is looked
+   * at once more, which reads GitHub again and costs a review only if its task is not done (the cap still holds,
+   * it is in `pr_reviews`). Likewise the CI signal is deduped as "<subject>:settled", one per wait.
+   */
   readonly #settled = new Set<string>();
 
   constructor(host: FlowHost) {
@@ -109,7 +126,7 @@ export class PrFlow {
       log(`pr review: cannot read the open pull requests: ${read.error}`);
       return;
     }
-    const prs = eligible(read.prs);
+    const prs = eligible(read.prs, baseBranchOf(config.baseRef));
     this.#open = new Map(prs.map((p) => [p.number, p]));
     if (config.dryRun) return;
     for (const p of prs) {
@@ -142,6 +159,8 @@ export class PrFlow {
       fail: async (error) => {
         const reason = error instanceof Error ? error.message : String(error);
         await store.event(key, "pr_review_failed", { reason: reason.slice(0, 300) });
+        // Looked at again after a pause, not at the next tick: one pull request that keeps failing must not starve the rest.
+        this.#retryLater(key, this.#open.get(prNumberOf(key))?.headSha ?? "error", "failed");
         return { status: "pr_step", key, outcome: "failed" };
       },
       would: { status: "pr_step", key, outcome: "would-review" },
@@ -164,11 +183,15 @@ export class PrFlow {
     if (!head.ok) throw new Error(`cannot read the pull request: ${head.error}`);
     if (head.state !== "OPEN") {
       db(store).clearWaits(key);
+      this.#settled.add(`${key}@${head.sha}`);
       return done("closed");
     }
     const sha = head.sha;
     const info = this.#open.get(number);
-    if (info === undefined) return done("gone");
+    if (info === undefined) {
+      this.#settled.add(`${key}@${sha}`);
+      return done("gone");
+    }
     const mark = `${key}@${sha}`;
     db(store).clearWaits(key);
 
@@ -235,7 +258,7 @@ export class PrFlow {
     }
 
     const result = await reviewTask(h, input);
-    if (result.kind === "busy") return done("busy");
+    if (result.kind === "busy") return this.#retryLater(key, sha, "busy");
     if (result.kind === "ci_not_green") {
       if (result.state === "pending") {
         db(store).wait(
@@ -249,7 +272,10 @@ export class PrFlow {
       return done("ci-failed");
     }
     if (result.kind === "unavailable") return this.#retryLater(key, sha, "unavailable");
+    // The conclusion is kept, but a comment that did not get onto the pull request comes first: no merge on a
+    // review nobody could read. The task is done, so the next look only retries the comment.
     if (!reviewed) db(store).countPrReview(slug, number, sha);
+    if (!result.conclusion.commented) return this.#retryLater(key, sha, "comment-failed");
     const { decision } = result.conclusion;
     await store.event(key, "pr_review_done", { decision });
     if (decision !== "merge") {
