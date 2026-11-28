@@ -291,7 +291,17 @@ test("a merge conclusion on a pull request turned into a draft is not merged; on
   // the review comment and exactly one explanation
   expect(t.comments.length).toBe(2);
   expect(t.comments.filter((c) => c.includes("PR 已是草稿")).length).toBe(1);
-  // not recorded as done: when it is ready again it is a new review of the same commit
+  // no tick without a new poll reviews it again: one review, one explanation
+  expect((await t.pipeline.step()).status).toBe("idle");
+  expect((await t.pipeline.step()).status).toBe("idle");
+  expect(t.sessions.created.length).toBe(1);
+  expect(t.store.prReview("o/r", 7).reviews).toBe(1);
+  // it is a draft at the next poll (dropped from the open list), then ready again: a new review of the same commit
+  const open = t.state.prs;
+  t.state.prs = [];
+  t.advance(31_000);
+  await t.pipeline.step();
+  t.state.prs = open;
   t.state.laterHead = undefined;
   t.advance(31_000);
   expect((await t.pipeline.step()).status).toBe("pr_step");
