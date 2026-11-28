@@ -12,7 +12,7 @@
 
 门禁依次是:边界检查、Tailwind 生成 css、类型检查(约 1 秒)、lint、knip 查没人用的文件和依赖(约 2 秒,配置在根目录 `knip.jsonc`;误报加进它的 `entry` 或 `ignoreDependencies` 并写明原因,不要关掉检查)、常规测试(约 1300 个,两个 worker 并行约 13 秒)。`check.ts` 在最后打印每一步的耗时。
 
-迭代期可以用 `bun run check:changed`:按当前分支相对 main 的 merge-base 的改动加上未提交的改动,只跑受影响的包(含依赖它们的包)的测试;改了根 `package.json`、`bun.lock`、根 `tsconfig*.json`、`biome.json`、`bunfig.toml`、`.github/**`、`scripts/check*`、`scripts/boundaries.ts`、`scripts/workspaces.ts` 时跑全部测试,只改 `docs/` 之类不属于任何包的文件时什么都不跑。选包逻辑在 `scripts/changed.ts`。它不取代门禁,提交前仍跑 `bun run check`。
+迭代期可以用 `bun run check:changed`:按当前分支相对 main 的 merge-base 的改动加上未提交的改动,只跑受影响的包(含依赖它们的包)的测试;改了根 `package.json`、`bun.lock`、根 `tsconfig*.json`、`biome.json`、`bunfig.toml`、`.github/**`、`scripts/check*`、`scripts/boundaries.ts`、`scripts/workspaces.ts`、模块依赖图脚本及其测试时跑全部测试,只改 `docs/` 之类不属于任何包的文件时什么都不跑。选包逻辑在 `scripts/changed.ts`。它不取代门禁,提交前仍跑 `bun run check`。
 
 测试用 `bun test --parallel=2`:2026-11-23 量,一个进程跑约 24 秒、峰值约 0.63 GB,两个 worker 约 13 秒、各进程加起来约 1.2 GB。测试大多在等 I/O 和子进程,2 核上也能并起来;不要再往上加 worker,4 GB 的机器要留给编辑器和应用本身。
 

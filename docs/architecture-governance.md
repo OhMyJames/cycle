@@ -1,6 +1,6 @@
 # 架构治理进度
 
-审计基线为 `95bb58db`。依赖边以各 workspace 的 manifest 为准。对 481 个 src 下 TS/TSX 文件，用 Bun.Transpiler.scanImports 按文件类型提取依赖。可解析的相对运行时导入中无环。此扫描未覆盖计算生成的路径、跨包导入和纯类型依赖。
+审计基线为 `95bb58db`。依赖边以各 workspace 的 manifest 为准。用 `bun scripts/module-graph.ts > modules.dot` 导出完整生产模块图。门禁使用同一个图检查环，失败时显示闭环路径。当前 482 个文件、1,405 条边，覆盖 workspace 的 src 下 TS/TSX 文件、相对路径与包导出、字面量动态加载和 require。计算生成的模块名、纯类型依赖和进程间 RPC 各有不同语义。
 
 ## 模块、依赖与状态所有权
 

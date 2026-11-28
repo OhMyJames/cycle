@@ -18,6 +18,7 @@ const FULL = [
   /^scripts\/check/,
   /^scripts\/boundaries\.ts$/,
   /^scripts\/workspaces\.ts$/,
+  /^scripts\/module-graph(?:\.test)?\.ts$/,
 ];
 
 export type Selection = { full: true } | { full: false; dirs: string[] };

@@ -39,6 +39,8 @@ describe("select", () => {
     "scripts/check-extra.ts",
     "scripts/boundaries.ts",
     "scripts/workspaces.ts",
+    "scripts/module-graph.ts",
+    "scripts/module-graph.test.ts",
   ])("%s selects everything", (file) => {
     expect(select([file, "packages/other/a.ts"], pkgs)).toEqual({ full: true });
   });
