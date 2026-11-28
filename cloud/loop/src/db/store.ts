@@ -322,7 +322,8 @@ export class StoreOps {
     const rows = this.db
       .query(
         `SELECT node_id, position, origin, title, goal, depends_on, files_hint, verify, status,
-                session_id, commit_sha, rounds, last_error, summary, started_at, finished_at
+                session_id, commit_sha, rounds, last_error, summary, started_at, finished_at,
+                role, verdict, report
          FROM graph_nodes WHERE run_key = ? ORDER BY position`,
       )
       .all(key) as {
@@ -342,6 +343,9 @@ export class StoreOps {
       summary: string | null;
       started_at: string | null;
       finished_at: string | null;
+      role: string;
+      verdict: string | null;
+      report: string | null;
     }[];
     return TaskGraphSchema.parse({
       runKey: meta.run_key,
@@ -367,6 +371,9 @@ export class StoreOps {
         summary: r.summary,
         startedAt: r.started_at,
         finishedAt: r.finished_at,
+        role: r.role,
+        verdict: r.verdict,
+        report: r.report,
       })),
     });
   }
@@ -395,8 +402,9 @@ export class StoreOps {
       const insert = this.db.query(
         `INSERT INTO graph_nodes (
            run_key, node_id, position, origin, title, goal, depends_on, files_hint, verify, status,
-           session_id, commit_sha, rounds, last_error, summary, started_at, finished_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           session_id, commit_sha, rounds, last_error, summary, started_at, finished_at, updated_at,
+           role, verdict, report
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       for (const n of next.nodes) {
         insert.run(
@@ -418,6 +426,9 @@ export class StoreOps {
           n.startedAt,
           n.finishedAt,
           now,
+          n.role,
+          n.verdict,
+          n.report,
         );
       }
     })();

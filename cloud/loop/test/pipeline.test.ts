@@ -2811,6 +2811,9 @@ test("Task Graph: crash recovery resumes directly on the active node without re-
         summary: "n1 done before crash",
         startedAt: nowIso,
         finishedAt: nowIso,
+        role: "dev",
+        verdict: null,
+        report: null,
       },
       {
         id: "n2",
@@ -2829,6 +2832,9 @@ test("Task Graph: crash recovery resumes directly on the active node without re-
         summary: null,
         startedAt: nowIso,
         finishedAt: null,
+        role: "dev",
+        verdict: null,
+        report: null,
       },
     ],
   });

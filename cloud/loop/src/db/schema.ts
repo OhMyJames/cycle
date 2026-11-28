@@ -189,6 +189,10 @@ export const MIGRATIONS: readonly string[] = [
     last_sha TEXT,
     PRIMARY KEY (repo, pr)
   )`,
+  // CYC-542: a graph node has a role (dev / qa), and a QA node a verdict and its report.
+  `ALTER TABLE graph_nodes ADD COLUMN role TEXT NOT NULL DEFAULT 'dev'`,
+  `ALTER TABLE graph_nodes ADD COLUMN verdict TEXT`,
+  `ALTER TABLE graph_nodes ADD COLUMN report TEXT`,
 ];
 
 /** The statements a migration may be made of. */
