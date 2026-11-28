@@ -2,6 +2,7 @@ import type { CriteriaBook } from "../../criteria.ts";
 import { tail } from "../../engine/flow.ts";
 import { deadlineFor, recordHeartbeat } from "../../engine/heartbeat.ts";
 import { mayMerge } from "../../guard/merge-gate.ts";
+import { isCleanStatusError } from "../../ports/github.ts";
 import { renderReviewComment } from "../../pr.ts";
 import { formatReviewFindings, type ReviewVerdict } from "../../prompts/index.ts";
 import type { Issue } from "../../types.ts";
@@ -287,12 +288,24 @@ export async function review(
       "merge",
     );
     if (ciGreen && commented.ok) {
-      const merged = await h.net(
+      let merged = await h.net(
         run.key,
         "gh pr merge",
         () => h.d.forge.autoMerge(where(h, worktree), prUrl, true),
         (r) => (r.ok ? undefined : r.error),
       );
+      // GitHub refuses auto-merge for a PR that can already be merged (clean status). CI is green and the gate has
+      // passed, so merge it now, pinned to the reviewed commit; if the head moved GitHub refuses and a person takes over.
+      let direct = false;
+      if (!merged.ok && isCleanStatusError(merged.error)) {
+        direct = true;
+        merged = await h.net(
+          run.key,
+          "gh pr merge",
+          () => h.d.forge.mergeAt(where(h, worktree), prUrl, result.headSha),
+          (r) => (r.ok ? undefined : r.error),
+        );
+      }
       if (merged.ok) {
         h.mirror(run.key, issue, "merge");
         recordHeartbeat(h.d.store, run.key, {
@@ -310,17 +323,17 @@ export async function review(
         }
         return deliverWith(
           "merge",
-          `已开 PR：${prUrl}\nCI（${config.ciChecks.join(" / ")}）全部通过，独立评审结论为合并（merge：${verdict.summary}），已开启 GitHub 自动合并（squash）。`,
+          `已开 PR：${prUrl}\nCI（${config.ciChecks.join(" / ")}）全部通过，独立评审结论为合并（merge：${verdict.summary}），${direct ? "PR 已可直接合并，GitHub 不允许开启自动合并，已改为钉住评审过的提交直接合并（squash）。" : "已开启 GitHub 自动合并（squash）。"}`,
           { decision: "merge", autoMerge: true },
           false,
         );
       }
       return deliverWith(
         "merge_failed",
-        `已开 PR：${prUrl}\nCI（${config.ciChecks.join(" / ")}）全部通过且独立评审通过，但开启 GitHub 自动合并失败（这是系统/GitHub 操作故障，不是代码问题），需要人工处理：\n${tail(merged.error)}`,
+        `已开 PR：${prUrl}\nCI（${config.ciChecks.join(" / ")}）全部通过且独立评审通过，但${direct ? "直接合并" : "开启 GitHub 自动合并"}失败（这是系统/GitHub 操作故障，不是代码问题），需要人工处理：\n${tail(merged.error)}`,
         { decision: "merge", autoMerge: false },
         true,
-        `独立评审通过，但开启自动合并失败：\n${tail(merged.error, 600)}`,
+        `独立评审通过，但${direct ? "直接合并" : "开启自动合并"}失败：\n${tail(merged.error, 600)}`,
       );
     }
 
