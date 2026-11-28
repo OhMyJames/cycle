@@ -10,6 +10,7 @@ import {
   gitWorkspace,
   initDeliveryRepo,
   inspectGitConfig,
+  inspectRepoGitConfig,
   repoGitConfigPath,
 } from "../src/ports/git.ts";
 import { githubForge } from "../src/ports/github.ts";
@@ -58,7 +59,7 @@ const makeRealGitRepo = async (root: string, remoteUrl: string) => {
   expect((await git(["commit", "-m", "init"])).code).toBe(0);
 };
 
-test("inspectGitConfig rejects include, includeIf, insteadOf, pushurl and sshCommand", () => {
+test("inspectGitConfig rejects include, includeIf, insteadOf, pushurl, sshCommand, and parser bypass syntaxes", () => {
   expect(
     inspectGitConfig(
       '[core]\n\tbare = false\n[remote "origin"]\n\turl = https://github.com/o/r.git\n',
@@ -70,6 +71,19 @@ test("inspectGitConfig rejects include, includeIf, insteadOf, pushurl and sshCom
     '[url "https://evil.example/"]\n\tinsteadOf = https://github.com/\n',
     '[remote "origin"]\n\tpushurl = https://evil.example/r.git\n',
     "[core]\n\tsshCommand = curl https://evil.example\n",
+    // Same-line `[section] key = value`, chained headers, legacy `[section.sub]`, `#`/`\"` inside quotes, malformed header, NUL byte.
+    "[include] path = /tmp/evil\n",
+    "[core] [include] path = /tmp/evil\n",
+    '[core] [url "https://evil.example/"] insteadOf = https://github.com/\n',
+    "[core] sshCommand = id\n",
+    '[url "https://evil.example/"] insteadOf = https://github.com/\n',
+    '[remote "origin"] pushurl = https://evil.example/r.git\n',
+    "[filter.evil]\n\tsmudge = id\n",
+    '[includeIf "gitdir:/tmp#x"]\n\tpath = /tmp/evil\n',
+    '[filter "a#b"]\n\tsmudge = id\n',
+    '[filter "a\\"b"]\n\tsmudge = id\n',
+    '[branch "autosetupmerge\0x"]\n\trebase = false\n',
+    "[unclosed\n\tfoo = bar\n",
   ]) {
     expect(inspectGitConfig(bad).ok).toBe(false);
   }
@@ -88,7 +102,7 @@ test("when a worktree tampers with shared .git/config, loop runs zero credential
   await makeRealGitRepo(repoRoot, upstream);
 
   const cfgPath = repoGitConfigPath(repoRoot) as string;
-  const inspected = inspectGitConfig(await readFile(cfgPath, "utf8"));
+  const inspected = inspectRepoGitConfig(await readFile(cfgPath, "utf8"));
   expect(inspected.ok).toBe(true);
   const deliveryRepo = await initDeliveryRepo(stateDir, upstream, runCommand, process.env);
 
@@ -217,7 +231,7 @@ test("delivery.git config tamper refuses push/fetch and emits Notice; clean deli
   await makeRealGitRepo(repoRoot, upstream);
 
   const cfgPath = repoGitConfigPath(repoRoot) as string;
-  const inspected = inspectGitConfig(await readFile(cfgPath, "utf8"));
+  const inspected = inspectRepoGitConfig(await readFile(cfgPath, "utf8"));
   const deliveryRepo = await initDeliveryRepo(stateDir, upstream, runCommand, process.env);
 
   const calls: { argv: string[]; env: Record<string, string>; cwd: string }[] = [];
@@ -357,4 +371,186 @@ test("gh runs in empty <stateDir>/gh-cwd with minimal ghEnv and explicit --repo 
   expect(authArgs.length).toBeGreaterThan(0);
   expect(authArgs.join(" ")).toContain("credential.https://github.com.helper=");
   expect(authArgs.join(" ")).not.toContain("ghp_secret_value");
+});
+
+test("inspectRepoGitConfig ignores benign branch tracking entries but detects tampered keys inside [branch] or other sections", () => {
+  const baseCfg = [
+    "[core]",
+    "\trepositoryformatversion = 0",
+    "\tbare = false",
+    '[remote "origin"]',
+    "\turl = https://github.com/o/r.git",
+    "\tfetch = +refs/heads/*:refs/remotes/origin/*",
+    '[branch "main"]',
+    "\tremote = origin",
+    "\tmerge = refs/heads/main",
+    "",
+  ].join("\n");
+  const baseline = inspectRepoGitConfig(baseCfg);
+  expect(baseline.ok).toBe(true);
+  if (!baseline.ok) return;
+
+  // Adding/removing normal branch tracking sections must not drift the repo config hash.
+  const withBranches = [
+    baseCfg,
+    '[branch "feat/other-work"]',
+    "\tremote = origin",
+    "\tmerge = refs/heads/feat/other-work",
+    "\trebase = true",
+    "\tgh-merge-base = main",
+    "\tvscode-merge-base = origin/main",
+    '[branch "local-track"]',
+    "\tremote = .",
+    "\tmerge = refs/heads/main",
+    "",
+  ].join("\n");
+  const afterBranches = inspectRepoGitConfig(withBranches);
+  expect(afterBranches).toEqual(baseline);
+
+  // Deleting [branch "main"] or leaving an empty [branch "foo"] (git branch --unset-upstream) keeps the same hash.
+  const withoutMainBranch = [
+    "[core]",
+    "\trepositoryformatversion = 0",
+    "\tbare = false",
+    '[remote "origin"]',
+    "\turl = https://github.com/o/r.git",
+    "\tfetch = +refs/heads/*:refs/remotes/origin/*",
+    '[branch "unset-upstream"]',
+    "",
+  ].join("\n");
+  expect(inspectRepoGitConfig(withoutMainBranch)).toEqual(baseline);
+
+  // Tampering inside [branch "..."] or outside it MUST either fail inspection or change the hash.
+  for (const tampered of [
+    `${baseCfg}[branch "evil"]\n\tpushRemote = https://attacker.invalid/r.git\n`,
+    `${baseCfg}[branch "evil"]\n\tremote = https://attacker.invalid/r.git\n`,
+    `${baseCfg}[branch "evil"]\n\tremote = undeclared-local-dir.git\n`,
+    `${baseCfg}[branch "evil"]\n\tremote = ../evil\n`,
+    `${baseCfg}[branch "evil"]\n\tmerge = refs/heads/../../evil\n`,
+    `${baseCfg}[branch "evil"]\n\tremote = origin \\\n\tpushRemote = evil\n`,
+    `${baseCfg}[branch "evil"]\n\tunknownKey = something\n`,
+    `${baseCfg}[branch "autosetupmerge\0x"]\n\trebase = false\n`,
+    `${baseCfg}[branch.foo]\n\tremote = origin\n`,
+    `${baseCfg}[branch "foo"] pushRemote = evil\n`,
+    `${baseCfg}[branch "foo"] # comment\n\tremote = origin\n`,
+    `${baseCfg}[branch]\n\tautoSetupMerge = always\n`,
+    `${baseCfg}[remote "origin"]\n\turl = https://attacker.invalid/r.git\n`,
+    `${baseCfg}[core]\n\thooksPath = /tmp/evil\n`,
+    `${baseCfg}# injected comment\n`,
+  ]) {
+    const res = inspectRepoGitConfig(tampered);
+    const blocked = !res.ok || res.hash !== baseline.hash;
+    expect(blocked).toBe(true);
+  }
+
+  // A baseline [branch] section containing a non-benign key must still detect changes to that key.
+  const withCustomBranchKey = `${baseCfg}[branch "main"]\n\tremote = origin\n\tmerge = refs/heads/main\n\tdescription = keep-me\n`;
+  const customBase = inspectRepoGitConfig(withCustomBranchKey);
+  expect(customBase.ok).toBe(true);
+  const customChanged = inspectRepoGitConfig(
+    `${baseCfg}[branch "main"]\n\tremote = origin\n\tmerge = refs/heads/main\n\tdescription = changed\n`,
+  );
+  expect(customChanged.ok).toBe(true);
+  if (customBase.ok && customChanged.ok) {
+    expect(customChanged.hash).not.toBe(customBase.hash);
+  }
+
+  // Inserting a blank line after a trailing `\` continuation changes git parsing and must change the hash.
+  const contBase = inspectRepoGitConfig("[core]\n\tfoo = bar \\\n\tbaz = 1\n");
+  const contBroken = inspectRepoGitConfig("[core]\n\tfoo = bar \\\n\n\tbaz = 1\n");
+  expect(contBase.ok && contBroken.ok).toBe(true);
+  if (contBase.ok && contBroken.ok) {
+    expect(contBroken.hash).not.toBe(contBase.hash);
+  }
+
+  // A comment ending with `\` does not continue onto `[branch "main"]`.
+  const commentSlashBefore = inspectRepoGitConfig(
+    `${baseCfg}# note \\\n[branch "tmp"]\n\tremote = origin\n`,
+  );
+  const commentSlashAfter = inspectRepoGitConfig(`${baseCfg}# note \\\n`);
+  expect(commentSlashBefore).toEqual(commentSlashAfter);
+});
+
+test("creating and deleting tracking branches in shared repoRoot does not block configClean or delivery push", async () => {
+  const base = await tempDir("loop-shared-branch-");
+  const repoRoot = join(base, "repo");
+  const stateDir = join(base, "state");
+  const upstream = join(base, "upstream.git");
+  await runCommand(["git", "init", "--bare", upstream], {
+    cwd: base,
+    env: baseGitEnv(),
+    timeoutMs: 15_000,
+  });
+  await makeRealGitRepo(repoRoot, upstream);
+  // Push main to upstream and fetch so origin/main exists.
+  expect(
+    (
+      await runCommand(["git", "push", "-u", "origin", "main"], {
+        cwd: repoRoot,
+        env: baseGitEnv(),
+        timeoutMs: 15_000,
+      })
+    ).code,
+  ).toBe(0);
+
+  const cfgPath = repoGitConfigPath(repoRoot) as string;
+  const inspected = inspectRepoGitConfig(await readFile(cfgPath, "utf8"));
+  expect(inspected.ok).toBe(true);
+  const deliveryRepo = await initDeliveryRepo(stateDir, upstream, runCommand, process.env);
+
+  const notices: string[] = [];
+  const ws = gitWorkspace({
+    exec: runCommand,
+    env: { PATH: process.env.PATH, HOME: "/real/home" },
+    repoRoot,
+    remote: "origin",
+    stateDir,
+    delivery: {
+      repo: deliveryRepo,
+      repoConfigHash: inspected.ok ? inspected.hash : "",
+      onTamper: (reason) => notices.push(reason),
+    },
+  });
+
+  // Simulate normal human/agent git activity modifying shared `.git/config` with `[branch "..."]` entries.
+  expect(
+    (
+      await runCommand(["git", "checkout", "-b", "feat/concurrent-work", "origin/main"], {
+        cwd: repoRoot,
+        env: baseGitEnv(),
+        timeoutMs: 15_000,
+      })
+    ).code,
+  ).toBe(0);
+  expect(await ws.configClean({ cwd: repoRoot, timeoutMs: 10_000 })).toEqual({ ok: true });
+  expect((await ws.push({ cwd: repoRoot, timeoutMs: 15_000 }, "auto/cyc-517")).code).toBe(0);
+  expect(notices).toEqual([]);
+
+  // Deleting that tracking branch also rewrites `.git/config` and must stay clean.
+  expect(
+    (
+      await runCommand(["git", "checkout", "main"], {
+        cwd: repoRoot,
+        env: baseGitEnv(),
+        timeoutMs: 15_000,
+      })
+    ).code,
+  ).toBe(0);
+  expect(
+    (
+      await runCommand(["git", "branch", "-D", "feat/concurrent-work"], {
+        cwd: repoRoot,
+        env: baseGitEnv(),
+        timeoutMs: 15_000,
+      })
+    ).code,
+  ).toBe(0);
+  expect(await ws.configClean({ cwd: repoRoot, timeoutMs: 10_000 })).toEqual({ ok: true });
+  expect(notices).toEqual([]);
+
+  // Adding a suspicious directive inside `[branch "..."]` must still block.
+  await appendFile(cfgPath, '\n[branch "sneaky"]\n\tpushRemote = https://attacker.invalid/r.git\n');
+  const blocked = await ws.configClean({ cwd: repoRoot, timeoutMs: 10_000 });
+  expect(blocked.ok).toBe(false);
+  expect(notices).toHaveLength(1);
 });

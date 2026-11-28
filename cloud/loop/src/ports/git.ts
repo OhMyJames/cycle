@@ -26,43 +26,285 @@ const lines = (text: string): string[] =>
 export const hashGitConfig = (text: string): string =>
   createHash("sha256").update(text).digest("hex");
 
+const hasLineContinuation = (raw: string): boolean => {
+  let backslashes = 0;
+  for (let i = raw.length - 1; i >= 0 && raw[i] === "\\"; i -= 1) {
+    backslashes += 1;
+  }
+  return backslashes % 2 === 1;
+};
+
+/** Strips a `#` or `;` comment outside double-quoted strings (respecting `\"` and `\\` escapes). */
+const stripUnquotedComment = (raw: string): string => {
+  let inQuotes = false;
+  let escaped = false;
+  for (let i = 0; i < raw.length; i += 1) {
+    const ch = raw[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (inQuotes) {
+      if (ch === "\\") escaped = true;
+      else if (ch === '"') inQuotes = false;
+      continue;
+    }
+    if (ch === '"') inQuotes = true;
+    else if (ch === "#" || ch === ";") return raw.slice(0, i).trim();
+  }
+  return raw.trim();
+};
+
+type ParsedHeader =
+  | { valid: true; section: string; subsection: string | undefined; rest: string }
+  | { valid: false };
+
+/**
+ * Parses a git config section header starting with `[`: `[section]`, `[section "sub"]`, or legacy
+ * `[section.sub]`, including `\"` / `\\` escapes in quoted subsections and any trailing `key = value` on the same line.
+ */
+const parseSectionHeader = (line: string): ParsedHeader => {
+  if (!line.startsWith("[")) return { valid: false };
+  let i = 1;
+  const nameStart = i;
+  while (i < line.length && /[A-Za-z0-9.-]/.test(line[i] ?? "")) i += 1;
+  const rawName = line.slice(nameStart, i);
+  if (rawName === "") return { valid: false };
+
+  let section: string;
+  let subsection: string | undefined;
+  const dot = rawName.indexOf(".");
+  if (dot !== -1) {
+    section = rawName.slice(0, dot).toLowerCase();
+    subsection = rawName.slice(dot + 1);
+  } else {
+    section = rawName.toLowerCase();
+  }
+  if (section === "") return { valid: false };
+
+  while (i < line.length && (line[i] === " " || line[i] === "\t")) i += 1;
+
+  if (line[i] === '"') {
+    if (dot !== -1) return { valid: false };
+    i += 1;
+    let sub = "";
+    let closed = false;
+    while (i < line.length) {
+      const ch = line[i];
+      if (ch === "\\") {
+        i += 1;
+        if (i >= line.length) return { valid: false };
+        sub += line[i] ?? "";
+        i += 1;
+        continue;
+      }
+      if (ch === '"') {
+        i += 1;
+        closed = true;
+        break;
+      }
+      sub += ch ?? "";
+      i += 1;
+    }
+    if (!closed) return { valid: false };
+    subsection = sub;
+    while (i < line.length && (line[i] === " " || line[i] === "\t")) i += 1;
+  }
+
+  if (line[i] !== "]") return { valid: false };
+  const rest = line.slice(i + 1).trim();
+  return { valid: true, section, subsection, rest };
+};
+
+const collectDeclaredRemotes = (text: string): Set<string> => {
+  const remotes = new Set<string>();
+  let inContinuation = false;
+  for (const raw of text.split(/\r?\n/)) {
+    const continues = hasLineContinuation(raw);
+    if (inContinuation) {
+      inContinuation = continues;
+      continue;
+    }
+    const trimmed = raw.trim();
+    if (trimmed === "" || trimmed.startsWith("#") || trimmed.startsWith(";")) {
+      inContinuation = false;
+      continue;
+    }
+    const line = stripUnquotedComment(raw);
+    inContinuation = continues;
+    if (!line.startsWith("[")) continue;
+    const header = parseSectionHeader(line);
+    if (
+      header.valid &&
+      header.section === "remote" &&
+      header.subsection !== undefined &&
+      header.subsection !== ""
+    ) {
+      remotes.add(header.subsection);
+    }
+  }
+  return remotes;
+};
+
+const hasControlChar = (s: string): boolean => {
+  for (let i = 0; i < s.length; i += 1) {
+    const code = s.charCodeAt(i);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+};
+
+const isBenignBranchTrackingEntry = (trimmed: string, declaredRemotes: Set<string>): boolean => {
+  if (hasControlChar(trimmed)) return false;
+  const remote = /^remote[ \t]*=[ \t]*([A-Za-z0-9._-]+)$/i.exec(trimmed);
+  if (remote !== null) {
+    const val = remote[1] ?? "";
+    return val === "." || declaredRemotes.has(val);
+  }
+  const merge = /^merge[ \t]*=[ \t]*(refs\/(?:heads|pull)\/[^ \t\\";#:]+)$/i.exec(trimmed);
+  if (merge !== null) return !(merge[1] ?? "").includes("..");
+  if (/^rebase[ \t]*=[ \t]*(?:true|false|merges|interactive|preserve)$/i.test(trimmed)) return true;
+  const mergeBase = /^(?:gh-merge-base|vscode-merge-base)[ \t]*=[ \t]*([^ \t\\";#:]+)$/i.exec(
+    trimmed,
+  );
+  if (mergeBase !== null) return !(mergeBase[1] ?? "").includes("..");
+  return false;
+};
+
+/**
+ * Computes a security fingerprint of a shared repository `.git/config` by hashing every line outside benign
+ * `[branch "<name>"]` tracking entries (`remote` matching `.` or a declared remote, `merge`, `rebase`,
+ * `gh-merge-base`, `vscode-merge-base`). Normal branch creation/deletion in a shared repo will not drift this hash,
+ * while any change to `[core]`, `[remote]`, `[credential]`, `[url]`, comments, or any non-benign key inside
+ * `[branch "..."]` (such as `pushRemote`, an undeclared `remote`, or a URL) still changes the digest.
+ */
+const hashRepoGitConfig = (text: string): string => {
+  const declaredRemotes = collectDeclaredRemotes(text);
+  const kept: string[] = [];
+  let branchHeader: string | null = null;
+  let emittedBranchHeader = false;
+  let inContinuation = false;
+
+  for (const raw of text.split(/\r?\n/)) {
+    const continues = hasLineContinuation(raw);
+    const trimmed = raw.trim();
+    if (inContinuation) {
+      if (branchHeader !== null && !emittedBranchHeader) {
+        kept.push(branchHeader);
+        emittedBranchHeader = true;
+      }
+      // Preserve even an empty line that terminates a continuation so line-structure changes cannot hide.
+      kept.push(trimmed);
+      inContinuation = continues;
+      continue;
+    }
+
+    if (trimmed === "") continue;
+
+    // Comments never continue onto the next line in git config.
+    if (trimmed.startsWith("#") || trimmed.startsWith(";")) {
+      if (branchHeader !== null && !emittedBranchHeader) {
+        kept.push(branchHeader);
+        emittedBranchHeader = true;
+      }
+      kept.push(trimmed);
+      continue;
+    }
+
+    inContinuation = continues;
+
+    if (!continues && !hasControlChar(trimmed) && /^\[branch[ \t]+"([^"\\]+)"\]$/i.test(trimmed)) {
+      branchHeader = trimmed;
+      emittedBranchHeader = false;
+      continue;
+    }
+
+    if (trimmed.startsWith("[")) {
+      branchHeader = null;
+      emittedBranchHeader = false;
+      kept.push(trimmed);
+      continue;
+    }
+
+    if (branchHeader !== null) {
+      if (!continues && isBenignBranchTrackingEntry(trimmed, declaredRemotes)) {
+        continue;
+      }
+      if (!emittedBranchHeader) {
+        kept.push(branchHeader);
+        emittedBranchHeader = true;
+      }
+      kept.push(trimmed);
+      continue;
+    }
+
+    kept.push(trimmed);
+  }
+
+  return hashGitConfig(`${kept.join("\n")}\n`);
+};
+
+/**
+ * Inspects a shared repository `.git/config` for forbidden directives and returns its security-relevant hash
+ * (ignoring benign `[branch "<name>"]` tracking metadata). For Loop-owned `delivery.git/config`, use
+ * `inspectGitConfig` which keeps the exact whole-file SHA-256.
+ */
+export const inspectRepoGitConfig = (
+  text: string,
+): { ok: true; hash: string } | { ok: false; reason: string } => {
+  const inspected = inspectGitConfig(text);
+  if (!inspected.ok) return inspected;
+  return { ok: true, hash: hashRepoGitConfig(text) };
+};
+
+const checkDirective = (section: string, entry: string): string | undefined => {
+  if (entry === "") return undefined;
+  const eq = entry.indexOf("=");
+  if (eq === -1) return undefined;
+  const key = entry.slice(0, eq).trim().toLowerCase();
+  if (key === "sshcommand") return "git config contains forbidden key core.sshCommand";
+  if (key === "insteadof" || key === "pushinsteadof") {
+    return `git config contains forbidden key url.*.${key}`;
+  }
+  if (key === "pushurl") return "git config contains forbidden key remote.*.pushurl";
+  if (key === "uploadpack" || key === "receivepack") {
+    return `git config contains forbidden key remote.*.${key}`;
+  }
+  if (section === "include" || section === "includeif" || section === "filter") {
+    return `git config contains forbidden directive in [${section}]`;
+  }
+  return undefined;
+};
+
 /**
  * Checks a git config file for directives that can redirect remotes, include arbitrary files, or run commands on
- * fetch/push (CYC-478): `include.*`, `includeIf.*`, `url.*.insteadOf`, `remote.*.pushurl`, `core.sshCommand`.
+ * fetch/push (CYC-478): `include.*`, `includeIf.*`, `filter.*`, `url.*.insteadOf`, `remote.*.pushurl`,
+ * `core.sshCommand`, `remote.*.uploadpack`, `remote.*.receivepack`.
  */
 export const inspectGitConfig = (
   text: string,
 ): { ok: true; hash: string } | { ok: false; reason: string } => {
+  if (text.includes("\0")) {
+    return { ok: false, reason: "git config contains NUL byte" };
+  }
   let section = "";
   for (const raw of text.split(/\r?\n/)) {
-    const line = raw.replace(/[;#].*$/, "").trim();
+    const line = stripUnquotedComment(raw);
     if (line === "") continue;
-    const sec = /^\[([^\s\]]+)(?:\s+"([^"]*)")?\]$/.exec(line);
-    if (sec !== null) {
-      section = (sec[1] ?? "").toLowerCase();
-      if (section === "include" || section === "includeif" || section === "filter") {
-        return { ok: false, reason: `git config contains forbidden section [${sec[1]}]` };
+    let entry = line;
+    while (entry.startsWith("[")) {
+      const header = parseSectionHeader(entry);
+      if (!header.valid) {
+        return { ok: false, reason: "git config contains malformed section header" };
       }
-      continue;
+      section = header.section;
+      if (section === "include" || section === "includeif" || section === "filter") {
+        return { ok: false, reason: `git config contains forbidden section [${section}]` };
+      }
+      entry = header.rest;
     }
-    const eq = line.indexOf("=");
-    if (eq === -1) continue;
-    const key = line.slice(0, eq).trim().toLowerCase();
-    if (key === "sshcommand") {
-      return { ok: false, reason: "git config contains forbidden key core.sshCommand" };
-    }
-    if (key === "insteadof" || key === "pushinsteadof") {
-      return { ok: false, reason: `git config contains forbidden key url.*.${key}` };
-    }
-    if (key === "pushurl") {
-      return { ok: false, reason: "git config contains forbidden key remote.*.pushurl" };
-    }
-    if (key === "uploadpack" || key === "receivepack") {
-      return { ok: false, reason: `git config contains forbidden key remote.*.${key}` };
-    }
-    if (section === "include" || section === "includeif" || section === "filter") {
-      return { ok: false, reason: `git config contains forbidden directive in [${section}]` };
-    }
+    const violation = checkDirective(section, entry);
+    if (violation !== undefined) return { ok: false, reason: violation };
   }
   return { ok: true, hash: hashGitConfig(text) };
 };
@@ -162,7 +404,7 @@ export const initDeliveryRepo = async (
 
 export type DeliveryConfig = {
   repo: DeliveryRepo;
-  /** Expected sha256 of the shared `repoRoot/.git/config` read at startup. */
+  /** Expected security fingerprint from `inspectRepoGitConfig` for shared `repoRoot/.git/config` read at startup. */
   repoConfigHash: string;
   /** Called whenever a config tamper is detected (e.g. to record a Notice). */
   onTamper?: (reason: string) => void;
@@ -199,7 +441,7 @@ export const gitWorkspace = (deps: {
       return { ok: false, error: reason };
     }
     const text = readFileSync(cfgPath, "utf8");
-    const inspected = inspectGitConfig(text);
+    const inspected = inspectRepoGitConfig(text);
     if (!inspected.ok || inspected.hash !== delivery.repoConfigHash) {
       const detail = inspected.ok ? "digest changed since startup" : inspected.reason;
       const reason = "仓库配置被改动，未推送";
