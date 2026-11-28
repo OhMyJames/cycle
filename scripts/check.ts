@@ -4,6 +4,8 @@
 import { Glob } from "bun";
 import { violations } from "./boundaries.ts";
 
+import { workspaceManifests } from "./workspaces.ts";
+
 const root = new URL("..", import.meta.url).pathname;
 
 type Rule = { name: string; pattern: RegExp; allowed: (file: string) => boolean; why: string };
@@ -72,10 +74,7 @@ for await (const file of sources.scan({ cwd: root })) {
       `package.json: workspaces.catalog["@agentclientprotocol/sdk"] must be an exact semver version (got ${JSON.stringify(pinned)})`,
     );
   }
-  const manifests = [
-    "package.json",
-    ...Array.from(new Glob("{packages,harness,apps,cloud}/*/package.json").scanSync({ cwd: root })),
-  ];
+  const manifests = ["package.json", ...(await workspaceManifests(root))];
   for (const file of manifests) {
     const pkg = (await Bun.file(root + file).json()) as Manifest;
     for (const section of sections) {

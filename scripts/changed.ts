@@ -3,7 +3,8 @@
 // Commit-time still runs the full `bun run check`; this does not replace it.
 
 import { spawnSync } from "node:child_process";
-import { Glob } from "bun";
+import { join } from "node:path";
+import { workspaceManifests } from "./workspaces.ts";
 
 export type Pkg = { name: string; dir: string; deps: string[] };
 
@@ -16,6 +17,7 @@ const FULL = [
   /^\.github\//,
   /^scripts\/check/,
   /^scripts\/boundaries\.ts$/,
+  /^scripts\/workspaces\.ts$/,
 ];
 
 export type Selection = { full: true } | { full: false; dirs: string[] };
@@ -59,9 +61,11 @@ type Manifest = Partial<
 
 export async function loadPackages(root: string): Promise<Pkg[]> {
   const manifests: [string, Manifest][] = [];
-  const glob = new Glob("{packages,harness,apps,cloud}/*/package.json");
-  for (const file of glob.scanSync({ cwd: root })) {
-    manifests.push([file.slice(0, -"/package.json".length), await Bun.file(root + file).json()]);
+  for (const file of await workspaceManifests(root)) {
+    manifests.push([
+      file.slice(0, -"/package.json".length),
+      await Bun.file(join(root, file)).json(),
+    ]);
   }
   const names = new Set(manifests.map(([, m]) => m.name).filter((n): n is string => !!n));
   return manifests.flatMap(([dir, m]) => {
