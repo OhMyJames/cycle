@@ -101,6 +101,8 @@ test("openPrs reads number, head, draft, fork and author", async () => {
         isDraft: false,
         crossRepository: true,
         author: "bob",
+        title: "",
+        body: "",
       },
     ],
   });

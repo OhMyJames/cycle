@@ -112,6 +112,17 @@ export const PlanningSchema = z
   .strict();
 export type PlanningFile = z.infer<typeof PlanningSchema>;
 
+/**
+ * Review of pull requests a person opened (CYC-540). Left out, or `enabled: false` (the default), means off: the loop
+ * does not even read the pull requests.
+ */
+export const PrReviewSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    maxReviewsPerPr: whole(1, 50).default(5),
+  })
+  .strict();
+
 export const ConfigFileSchema = z.object({
   /** Absolute path of the repository the Project's work happens in. */
   repoRoot: text,
@@ -149,6 +160,7 @@ export const ConfigFileSchema = z.object({
   tuning: TuningSchema.optional(),
   research: ResearchSchema.optional(),
   planning: PlanningSchema.optional(),
+  prReview: PrReviewSchema.optional(),
 });
 /** As parsed: a research section always has its `readRoots`, absolute and with `~` expanded. */
 export type ConfigFile = Omit<z.infer<typeof ConfigFileSchema>, "research"> & {

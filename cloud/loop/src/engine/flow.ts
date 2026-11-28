@@ -55,7 +55,9 @@ export type StepResult =
     }
   /** A planning round stopped before shaping (triage could not be used): nothing was written. */
   | { status: "plan_stopped"; key: string; reason: string }
-  | { status: "would-plan"; key: string };
+  | { status: "would-plan"; key: string }
+  /** One step on a pull request a person opened (CYC-540): what came of it (a conclusion, a wait, a merge). */
+  | { status: "pr_step"; key: string; outcome: string };
 
 export type Deps = {
   config: Config;

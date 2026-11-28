@@ -492,6 +492,8 @@ const OpenPrsSchema = z.array(
     isDraft: z.boolean(),
     isCrossRepository: z.boolean(),
     author: z.object({ login: z.string() }).nullable(),
+    title: z.string().default(""),
+    body: z.string().nullable().default(""),
   }),
 );
 
@@ -680,7 +682,7 @@ export const githubForge = (deps: {
         "--limit",
         "100",
         "--json",
-        "number,headRefName,headRefOid,isDraft,isCrossRepository,author",
+        "number,headRefName,headRefOid,isDraft,isCrossRepository,author,title,body",
       ]);
       if (done.timedOut || done.code !== 0) return timedOutOrFailed("gh pr list", done);
       const parsed = parseJson(done.output, (v) => OpenPrsSchema.parse(v), "gh pr list");
@@ -692,6 +694,8 @@ export const githubForge = (deps: {
         isDraft: p.isDraft,
         crossRepository: p.isCrossRepository,
         author: p.author?.login ?? "",
+        title: p.title,
+        body: p.body ?? "",
       }));
       return { ok: true, prs };
     },

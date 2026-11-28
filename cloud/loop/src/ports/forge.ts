@@ -60,6 +60,9 @@ export type OpenPr = {
   /** The head is in a fork. */
   crossRepository: boolean;
   author: string;
+  /** What the author wrote: untrusted text. */
+  title: string;
+  body: string;
 };
 
 export type OpenPrsResult = { ok: true; prs: OpenPr[] } | Failed;
