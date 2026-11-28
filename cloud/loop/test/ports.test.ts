@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { GIT_SAFE, gitDeliverAuthArgs } from "../src/env.ts";
 import { gitWorkspace } from "../src/ports/git.ts";
-import { githubForge } from "../src/ports/github.ts";
+import { githubForge, isCleanStatusError } from "../src/ports/github.ts";
 import type { Exec } from "../src/types.ts";
 
 const src = (name: string) => readFile(join(import.meta.dir, "../src", name), "utf8");
@@ -167,4 +167,22 @@ test("prHead reads the head commit and state", async () => {
     sha: SHA,
     state: "OPEN",
   });
+});
+
+test("isCleanStatusError recognises only GitHub refusing auto-merge on a clean PR", () => {
+  expect(
+    isCleanStatusError(
+      "gh pr merge --auto --squash 失败（exit 1）：GraphQL: Pull request Pull request is in clean status (enablePullRequestAutoMerge)",
+    ),
+  ).toBe(true);
+  for (const other of [
+    "gh pr merge --auto --squash 超时。",
+    "gh pr merge --auto --squash 失败（exit 1）：GraphQL: Resource not accessible by integration (enablePullRequestAutoMerge)",
+    "gh pr merge --auto --squash 失败（exit 1）：GraphQL: Pull request is in unstable status",
+    "gh pr merge --auto --squash 失败（exit 1）：Pull request has merge conflicts (enablePullRequestAutoMerge)",
+    "gh pr merge --auto --squash 失败（exit 1）：Auto merge is not allowed for this repository (enablePullRequestAutoMerge)",
+    "",
+  ]) {
+    expect(isCleanStatusError(other)).toBe(false);
+  }
 });
