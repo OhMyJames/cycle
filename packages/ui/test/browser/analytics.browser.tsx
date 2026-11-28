@@ -65,18 +65,38 @@ test("opening the search from the sidebar is counted, with how it was opened", a
   expect(tracked(calls)).toEqual([["panel_opened", { panel: "search", via: "click" }]]);
 });
 
-test("pressing Sessions in the Loop mode is counted once, and does nothing while already in Sessions", async () => {
-  const { user, calls } = await mount();
-  const sessions = await screen.findByRole("button", { name: "Sessions" });
-  await user.click(sessions);
-  expect(tracked(calls)).toEqual([]);
-  await user.click(await screen.findByRole("button", { name: "Loop" }));
-  await user.click(sessions);
-  await user.click(sessions);
-  expect(tracked(calls)).toEqual([
+test("opening Loop Overview and project views from the sidebar reports fixed properties only", async () => {
+  const script = fakeBridge({
+    connected: true,
+    loopProjects: {
+      kind: "ok",
+      projects: [
+        {
+          name: "Cycle",
+          projectKey: "CYC",
+          repo: { displayName: "clawdot/cycle", forge: "github" },
+        },
+      ],
+    },
+    workspaceRepos: { "/work": "clawdot/cycle" },
+    loopBoards: { CYC: { kind: "ok", stale: false, columns: [] } },
+  });
+  await renderApp(script.bridge);
+  const user = userEvent.setup();
+  const loop = await screen.findByRole("button", { name: "Loop" });
+  await user.click(loop);
+  // Pressing Loop while already on Overview does not count twice.
+  await user.click(loop);
+  await user.click(await screen.findByRole("button", { name: "Kanban" }));
+  await user.click(await screen.findByRole("button", { name: "Timeline" }));
+  expect(tracked(script.calls)).toEqual([
     ["panel_opened", { panel: "loop", via: "click" }],
-    ["sessions_mode_shown", {}],
+    ["loop_project_view_opened", { view: "kanban", from: "sidebar" }],
+    ["loop_project_view_opened", { view: "timeline", from: "sidebar" }],
   ]);
+  const payload = JSON.stringify(tracked(script.calls));
+  expect(payload.includes("CYC")).toBe(false);
+  expect(payload.includes("clawdot/cycle")).toBe(false);
 });
 
 test("toggling the sidebar and opening remote location panels report only fixed event properties", async () => {

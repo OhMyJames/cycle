@@ -224,6 +224,7 @@ test.skipIf(!ready)(
           "updateState",
           "upgradeDaemon",
           "workspaceFile",
+          "workspaceRepo",
           "workspaceStatus",
         ].sort(),
       );

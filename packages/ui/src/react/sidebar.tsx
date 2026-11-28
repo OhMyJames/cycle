@@ -1,15 +1,24 @@
 import { Button } from "@ui-sdk/react/button";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@ui-sdk/react/menu";
-import type { LocationConfig, LocationStatus, SessionSummary } from "../api.ts";
+import type { LocationConfig, LocationStatus, LoopProjectInfo, SessionSummary } from "../api.ts";
 import type { Elsewhere, SessionList, Workspace } from "../sessions.ts";
 import { useI18n } from "./i18n.tsx";
-import { MoreIcon, PlugIcon, PlusIcon, RefreshIcon, SearchIcon } from "./icons.tsx";
+import {
+  KanbanIcon,
+  MoreIcon,
+  PlugIcon,
+  PlusIcon,
+  RefreshIcon,
+  SearchIcon,
+  TimelineIcon,
+} from "./icons.tsx";
+import type { LoopProjectTab } from "./loop-nav.ts";
 import { type Away, type RowAction, SessionListView } from "./session-list.tsx";
 import { LOCATION_STATE, StatusDot } from "./status.tsx";
 import { Tip } from "./tip.tsx";
 import { WorkspaceSwitcher } from "./workspace-switcher.tsx";
 
-/** The sidebar's actions, the same in the sessions and the Loop: a new session, search, Connectors, and the two modes. */
+/** The sidebar's top global actions: new session, search, Connectors, and Loop Overview (CYC-533). */
 export type SidebarActionsProps = {
   locations: LocationConfig[];
   status: Record<string, LocationStatus>;
@@ -17,17 +26,15 @@ export type SidebarActionsProps = {
   onSearch: () => void;
   /** Opens the Connectors page: what the daemons keep for every agent. */
   onConnectors?: () => void;
-  /** Switches to the Loop mode: the Projects of the Loop server and their boards. */
+  /** Opens the Loop Overview: cross-project Notices and all Loop Projects. */
   onLoop?: () => void;
-  /** Switches back to the Sessions mode. */
-  onSessions?: () => void;
-  /** Which of the two is shown. */
-  mode: "sessions" | "loop";
-  /** How many Loop Notices currently need the person, for the badge on the Loop mode switch. */
+  /** True while the main area shows the Loop Overview. */
+  loopOverviewActive?: boolean;
+  /** How many Loop Notices currently need the person, for the badge on the Loop action. */
   loopNoticeCount?: number;
 };
 
-/** What the sidebar shows under its actions in the sessions: the workspace, the locations that are away, the sessions. */
+/** What the sidebar shows under its global actions: the workspace switcher, its Loop views, and the sessions. */
 export type SessionsNavProps = {
   locations: LocationConfig[];
   status: Record<string, LocationStatus>;
@@ -37,6 +44,13 @@ export type SessionsNavProps = {
   /** What the other workspaces have, for the switcher's badge. */
   elsewhere: Elsewhere;
   onChooseWorkspace: (workspaceKey: string) => void;
+  /** The Loop Project matched to `current` by git repo, if any (CYC-533). */
+  loopProject?: LoopProjectInfo | undefined;
+  /** True when the Loop server was seen before and is currently unreachable. */
+  loopAway?: boolean | undefined;
+  /** Which project-level Loop view is open for `loopProject`, if any. */
+  activeProjectTab?: LoopProjectTab | undefined;
+  onOpenProjectTab?: ((tab: LoopProjectTab) => void) | undefined;
   /** What is shown, grouped and ordered (sessions.ts): the sessions of the current workspace. */
   list: SessionList;
   /** The open session, by its `sessionKey`. */
@@ -66,81 +80,67 @@ export const MOD = /Mac/.test(globalThis.navigator?.userAgent ?? "") ? "⌘" : "
 export function SidebarActions(props: SidebarActionsProps) {
   const { t } = useI18n();
   const connected = props.locations.filter((h) => props.status[h.id]?.state === "connected");
-  const loopMode = props.mode === "loop";
+  const loopActive = props.loopOverviewActive === true;
   return (
-    <>
-      <div data-slot="sidebar-actions">
+    <div data-slot="sidebar-actions">
+      <Button
+        data-variant="ghost"
+        data-kind="sidebar-action"
+        disabled={connected.length === 0}
+        aria-label={t("sidebar.newSession")}
+        title={`${t("sidebar.newSession")}  ${MOD}N`}
+        onClick={props.onNewSession}
+      >
+        <PlusIcon />
+        {t("sidebar.newShort")}
+        <kbd>{MOD}N</kbd>
+      </Button>
+      <Button
+        data-variant="ghost"
+        data-kind="sidebar-action"
+        aria-label={t("search.open")}
+        title={`${t("search.open")}  ${MOD}K`}
+        onClick={props.onSearch}
+      >
+        <SearchIcon />
+        {t("sidebar.searchShort")}
+        <kbd>{MOD}K</kbd>
+      </Button>
+      {props.onConnectors !== undefined ? (
         <Button
           data-variant="ghost"
           data-kind="sidebar-action"
-          disabled={connected.length === 0}
-          aria-label={t("sidebar.newSession")}
-          title={`${t("sidebar.newSession")}  ${MOD}N`}
-          onClick={props.onNewSession}
+          data-page-open="connectors"
+          onClick={props.onConnectors}
         >
-          <PlusIcon />
-          {t("sidebar.newShort")}
-          <kbd>{MOD}N</kbd>
+          <PlugIcon />
+          {t("connectors.open")}
         </Button>
-        <Button
-          data-variant="ghost"
-          data-kind="sidebar-action"
-          aria-label={t("search.open")}
-          title={`${t("search.open")}  ${MOD}K`}
-          onClick={props.onSearch}
-        >
-          <SearchIcon />
-          {t("sidebar.searchShort")}
-          <kbd>{MOD}K</kbd>
-        </Button>
-        {props.onConnectors !== undefined ? (
-          <Button
-            data-variant="ghost"
-            data-kind="sidebar-action"
-            data-page-open="connectors"
-            onClick={props.onConnectors}
-          >
-            <PlugIcon />
-            {t("connectors.open")}
-          </Button>
-        ) : null}
-      </div>
-      {props.onLoop !== undefined && props.onSessions !== undefined ? (
-        <section data-slot="mode-switch" aria-label={t("sidebar.mode")}>
-          <Button
-            data-variant="ghost"
-            data-kind="mode-switch"
-            data-mode="sessions"
-            aria-pressed={!loopMode}
-            data-selected={!loopMode ? "" : undefined}
-            onClick={props.onSessions}
-          >
-            {t("sessions.label")}
-          </Button>
-          <Button
-            data-variant="ghost"
-            data-kind="mode-switch"
-            data-mode="loop"
-            aria-pressed={loopMode}
-            data-selected={loopMode ? "" : undefined}
-            aria-description={
-              props.loopNoticeCount !== undefined && props.loopNoticeCount > 0
-                ? t("loop.notices.count", { count: props.loopNoticeCount })
-                : undefined
-            }
-            onClick={props.onLoop}
-          >
-            <RefreshIcon size={14} />
-            <span>{t("loop.open")}</span>
-            {props.loopNoticeCount !== undefined && props.loopNoticeCount > 0 ? (
-              <span data-slot="loop-nav-badge" aria-hidden="true">
-                {props.loopNoticeCount}
-              </span>
-            ) : null}
-          </Button>
-        </section>
       ) : null}
-    </>
+      {props.onLoop !== undefined ? (
+        <Button
+          data-variant="ghost"
+          data-kind="sidebar-action"
+          data-page-open="loop"
+          aria-current={loopActive ? "page" : undefined}
+          data-selected={loopActive ? "" : undefined}
+          aria-description={
+            props.loopNoticeCount !== undefined && props.loopNoticeCount > 0
+              ? t("loop.notices.count", { count: props.loopNoticeCount })
+              : undefined
+          }
+          onClick={props.onLoop}
+        >
+          <RefreshIcon />
+          <span>{t("loop.open")}</span>
+          {props.loopNoticeCount !== undefined && props.loopNoticeCount > 0 ? (
+            <span data-slot="loop-nav-badge" aria-hidden="true">
+              {props.loopNoticeCount}
+            </span>
+          ) : null}
+        </Button>
+      ) : null}
+    </div>
   );
 }
 
@@ -148,6 +148,7 @@ export function SessionsNav(props: SessionsNavProps) {
   const { t } = useI18n();
   const connected = props.locations.filter((h) => props.status[h.id]?.state === "connected");
   const apart = props.locations.filter((h) => props.away.has(h.id));
+  const loopAway = props.loopAway === true;
   return (
     <>
       {/* Below the actions, above the list it chooses: the switcher names what the list shows. */}
@@ -181,6 +182,34 @@ export function SessionsNav(props: SessionsNavProps) {
           </Menu>
         ) : null}
       </div>
+      {props.loopProject !== undefined && props.onOpenProjectTab !== undefined ? (
+        <section data-slot="project-nav" aria-label={t("loop.projectNav")}>
+          <button
+            type="button"
+            data-slot="project-nav-item"
+            data-kind="project-nav-kanban"
+            aria-current={props.activeProjectTab === "kanban" ? "page" : undefined}
+            disabled={loopAway}
+            onClick={() => props.onOpenProjectTab?.("kanban")}
+          >
+            <KanbanIcon />
+            <span>{t("loop.tab.kanban")}</span>
+            {loopAway ? <span data-slot="loop-nav-note">{t("loop.offline.note")}</span> : null}
+          </button>
+          <button
+            type="button"
+            data-slot="project-nav-item"
+            data-kind="project-nav-timeline"
+            aria-current={props.activeProjectTab === "timeline" ? "page" : undefined}
+            disabled={loopAway}
+            onClick={() => props.onOpenProjectTab?.("timeline")}
+          >
+            <TimelineIcon />
+            <span>{t("loop.tab.timeline")}</span>
+            {loopAway ? <span data-slot="loop-nav-note">{t("loop.offline.note")}</span> : null}
+          </button>
+        </section>
+      ) : null}
       {apart.map((h) => {
         const state = props.status[h.id];
         const how = LOCATION_STATE[state?.state ?? "closed"];

@@ -278,6 +278,20 @@ describe("the dictionary", () => {
     expect(EVENTS.loop_notice_notified.safeParse({ kind: "intent_stuck" }).success).toBe(true);
     expect(EVENTS.loop_notice_opened.safeParse({ kind: "intent_stuck" }).success).toBe(true);
     expect(EVENTS.loop_notice_opened.safeParse({ kind: "operator" }).success).toBe(true);
+    expect(isUiEvent("loop_project_view_opened")).toBe(true);
+    expect(
+      EVENTS.loop_project_view_opened.safeParse({ view: "kanban", from: "sidebar" }).success,
+    ).toBe(true);
+    expect(
+      EVENTS.loop_project_view_opened.safeParse({ view: "timeline", from: "overview" }).success,
+    ).toBe(true);
+    expect(
+      EVENTS.loop_project_view_opened.safeParse({
+        view: "kanban",
+        from: "sidebar",
+        projectKey: "CYC",
+      }).success,
+    ).toBe(false);
   });
 
   test("no event takes free text: every property is a number, a boolean or one of a list", () => {

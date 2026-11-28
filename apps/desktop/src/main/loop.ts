@@ -3,8 +3,10 @@
 // itsaplan request, parses no comment and knows no label name. The Loop server's code is not imported: only the
 // protocol's types are.
 
+import { execFile } from "node:child_process";
 import { mkdir, rm } from "node:fs/promises";
 import { connect } from "node:net";
+import { isAbsolute } from "node:path";
 import { agentOf, type EventProps } from "@cycle/analytics/events";
 import {
   LOOP_API_PROJECTS_LIST,
@@ -941,4 +943,61 @@ export const answerRuns = async (
   const runs: LoopRunsAnswer = feed ? await feed.read() : { kind: "disconnected" };
   track("loop_runs_read", { result: runs.kind });
   return runs;
+};
+
+/**
+ * `owner/name` from a git remote URL (https, ssh or scp form), matching `cloud/loop/src/projects.ts`.
+ * Strips scheme, credentials, host and `.git`; returns null when the URL does not look like `owner/name`.
+ */
+export const repoDisplayName = (url: string): string | null => {
+  const trimmed = url.trim();
+  if (trimmed === "" || /^file:\/\//i.test(trimmed)) return null;
+  let rest: string;
+  if (/^[a-z+]+:\/\//i.test(trimmed)) {
+    rest = trimmed.replace(/^[a-z+]+:\/\/(?:[^/@]*@)?[^/]+\//i, "");
+  } else if (/^[^@/\s]+@[^:\s]+:/.test(trimmed)) {
+    rest = trimmed.replace(/^[^@/\s]+@[^:\s]+:/, "");
+  } else {
+    return null;
+  }
+  const path = rest.replace(/\.git$/i, "").replace(/^\/+|\/+$/g, "");
+  return /^[\w.-]+(?:\/[\w.-]+)+$/.test(path) ? path : null;
+};
+
+const cleanGitEnv = (): NodeJS.ProcessEnv => {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  delete env.GIT_DIR;
+  delete env.GIT_WORK_TREE;
+  delete env.GIT_COMMON_DIR;
+  delete env.GIT_INDEX_FILE;
+  return env;
+};
+
+const runGit = (cwd: string, args: string[]): Promise<string | null> =>
+  new Promise((resolve) => {
+    execFile(
+      "git",
+      ["-C", cwd, ...args],
+      { timeout: 3_000, encoding: "utf8", env: cleanGitEnv() },
+      (error, stdout) => {
+        if (error !== null) return resolve(null);
+        const out = stdout.trim();
+        resolve(out === "" ? null : out);
+      },
+    );
+  });
+
+/**
+ * Reads a local workspace folder's git remote and returns its normalised `owner/name`, or null when it is not a git
+ * repository or has no remote (CYC-533). Never returns a path, host or credential.
+ */
+export const readWorkspaceRepo = async (cwd: unknown): Promise<string | null> => {
+  if (typeof cwd !== "string" || cwd === "" || !isAbsolute(cwd)) return null;
+  const origin = await runGit(cwd, ["remote", "get-url", "--", "origin"]);
+  if (origin !== null) return repoDisplayName(origin);
+  const remotes = await runGit(cwd, ["remote"]);
+  const first = remotes?.split(/\r?\n/)[0]?.trim();
+  if (first === undefined || first === "") return null;
+  const url = await runGit(cwd, ["remote", "get-url", "--", first]);
+  return url === null ? null : repoDisplayName(url);
 };

@@ -63,12 +63,27 @@ const withTickets = (tickets: Record<string, LoopTicket[]>): LoopBoardAnswer => 
 
 const mount = async (script: NonNullable<Parameters<typeof fakeBridge>[0]>) => {
   // `options` stays live: a test can change what the bridge answers later.
-  const options = { connected: true, ...script };
+  const options = {
+    connected: true,
+    workspaceRepos: { "/work": cycle.repo.displayName },
+    ...script,
+  };
   const fake = fakeBridge(options);
-  await renderApp(fake.bridge);
+  const store = await renderApp(fake.bridge);
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: "Loop" }));
-  return { user, options, ...fake };
+  return { user, options, store, ...fake };
+};
+
+const openOverviewProject = async (user: ReturnType<typeof userEvent.setup>, name: string) => {
+  const overview = await screen.findByRole("region", { name: "Projects" });
+  await user.click(within(overview).getByRole("button", { name: new RegExp(`\\b${name}\\b`) }));
+};
+
+const mountBoard = async (script: NonNullable<Parameters<typeof fakeBridge>[0]>) => {
+  const mounted = await mount(script);
+  await mounted.user.click(await screen.findByRole("button", { name: "Kanban" }));
+  return mounted;
 };
 
 test("the Loop page shows a full-width board as a row of columns, with Done open at the end", async () => {
@@ -76,7 +91,7 @@ test("the Loop page shows a full-width board as a row of columns, with Done open
     loopProjects: { kind: "ok", projects: [cycle, docs] },
     loopBoards: { CYC: board },
   });
-  await user.click(await screen.findByRole("button", { name: "Cycle Kanban" }));
+  await user.click(await screen.findByRole("button", { name: "Kanban" }));
   const text = (name: string) =>
     within(screen.getByRole("region", { name }))
       .getAllByRole("listitem")
@@ -102,22 +117,25 @@ test("the Loop page shows a full-width board as a row of columns, with Done open
   expect(calls.some(([name, key]) => name === "loopBoard" && key === "CYC")).toBe(true);
 });
 
-test("with the Loop server away, the Projects it had are greyed out and the page says so", async () => {
+test("with the Loop server away, the project Kanban and Timeline entries are greyed out and the page says so", async () => {
   const options: Parameters<typeof fakeBridge>[0] = {
     connected: true,
     loopProjects: { kind: "ok", projects: [cycle] },
+    workspaceRepos: { "/work": cycle.repo.displayName },
     loopBoards: { CYC: board },
   };
   const fake = fakeBridge(options);
   const store = await renderApp(fake.bridge);
   const user = userEvent.setup();
+  const kanban = await screen.findByRole("button", { name: "Kanban" });
+  expect(kanban.hasAttribute("disabled") || kanban.getAttribute("aria-disabled") === "true").toBe(
+    false,
+  );
   await user.click(await screen.findByRole("button", { name: "Loop" }));
-  const tab = await screen.findByRole("button", { name: "Cycle Kanban" });
-  expect(tab.hasAttribute("disabled") || tab.getAttribute("aria-disabled") === "true").toBe(false);
-  // The server goes away: the next read says so, and the Project stays listed, greyed, with the reason.
+  // The server goes away: the next read says so, and the project entries stay listed, greyed, with the reason.
   options.loopProjects = { kind: "disconnected" };
   await act(() => store.loadLoopProjects());
-  const grey = await screen.findByRole("button", { name: "Cycle Kanban" });
+  const grey = await screen.findByRole("button", { name: /Kanban/ });
   expect(grey.hasAttribute("disabled") || grey.getAttribute("aria-disabled") === "true").toBe(true);
   expect(within(grey).getByText("Offline")).toBeTruthy();
   expect(await screen.findByText("The Loop server is not running")).toBeTruthy();
@@ -130,7 +148,7 @@ test("with no server ever seen, the page says it is not running and offers to re
 });
 
 test("with no server for the board, the page says the Loop server is not running", async () => {
-  await mount({
+  await mountBoard({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: { CYC: { kind: "no_server" } },
   });
@@ -142,40 +160,71 @@ test("a stale board says its data may be out of date, and a fresh one does not",
     loopProjects: { kind: "ok", projects: [cycle, docs] },
     loopBoards: { CYC: { ...board, stale: true } as LoopBoardAnswer, DOC: board },
   });
-  await user.click(await screen.findByRole("button", { name: "Cycle Kanban" }));
+  await openOverviewProject(user, "Cycle");
   expect(await screen.findByText("Data may be out of date")).toBeTruthy();
-  await user.click(screen.getByRole("button", { name: "Docs Kanban" }));
+  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  await openOverviewProject(user, "Docs");
   await screen.findByRole("region", { name: "In Progress" });
   expect(screen.queryByText("Data may be out of date")).toBeNull();
 });
 
-test("leaving the Loop and coming back lands on the level it was left on", async () => {
+test("clicking Loop always opens Overview; sidebar Kanban and Timeline open the matched project", async () => {
   const { user } = await mount({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: { CYC: board },
   });
-  await screen.findByRole("region", { name: "In Progress" });
-  // Overview, then out of the Loop (Sessions) and back in: Escape does not leave the Loop.
-  await user.click(screen.getByRole("button", { name: "Overview" }));
+  // Clicking Loop lands directly on Overview (even with a single project).
   await screen.findByRole("region", { name: "Projects" });
   await user.keyboard("{Escape}");
   expect(document.querySelector('[data-kind="loop-overview"]')).not.toBeNull();
-  await user.click(screen.getByRole("button", { name: "Sessions" }));
-  await waitFor(() => expect(document.querySelector('[data-kind="loop-overview"]')).toBeNull());
+  // Sidebar Kanban opens the project's Kanban board.
+  await user.click(await screen.findByRole("button", { name: "Kanban" }));
+  await screen.findByRole("region", { name: "In Progress" });
+  // Sidebar Timeline opens the Timeline placeholder, with a button back to Kanban.
+  await user.click(await screen.findByRole("button", { name: "Timeline" }));
+  await screen.findByText("Loop timeline is coming soon");
+  await user.click(screen.getByRole("button", { name: "Open Kanban" }));
+  await screen.findByRole("region", { name: "In Progress" });
+  // Clicking Loop in the top actions always returns to Overview.
   await user.click(await screen.findByRole("button", { name: "Loop" }));
   await screen.findByRole("region", { name: "Projects" });
 });
 
-test("the Backlog opens on 20 tickets and shows more when asked", async () => {
-  const many = Array.from({ length: 45 }, (_, i) => ticket(500 + i, "Backlog"));
-  const user = userEvent.setup();
+test("unmatched workspaces hide Kanban and Timeline, and switching projects updates them", async () => {
   const fake = fakeBridge({
     connected: true,
+    workspaceRepos: {
+      "/work": cycle.repo.displayName,
+      "/other": "org/unmatched",
+    },
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: { CYC: board },
+  });
+  fake.bridge.sessions = async () => [
+    { ...summary("s1"), cwd: "/work", title: "Cycle session", updatedAt: "2026-11-26T02:00:00Z" },
+    { ...summary("s2"), cwd: "/other", title: "Other session", updatedAt: "2026-11-26T01:00:00Z" },
+  ];
+  await renderApp(fake.bridge);
+  const user = userEvent.setup();
+  // Initially in /work (matched): Kanban and Timeline appear above the session list.
+  await screen.findByRole("button", { name: "Kanban" });
+  await screen.findByRole("button", { name: "Timeline" });
+  // Open Kanban, then switch workspace to /other (unmatched): Kanban/Timeline disappear and view leaves Loop.
+  await user.click(screen.getByRole("button", { name: "Kanban" }));
+  await screen.findByRole("region", { name: "In Progress" });
+  await user.click(screen.getByRole("button", { name: /Switch workspace/ }));
+  await user.click(await screen.findByRole("menuitem", { name: /other/ }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Kanban" })).toBeNull());
+  expect(screen.queryByRole("button", { name: "Timeline" })).toBeNull();
+  expect(document.querySelector('[data-kind="loop-board"]')).toBeNull();
+});
+
+test("the Backlog opens on 20 tickets and shows more when asked", async () => {
+  const many = Array.from({ length: 45 }, (_, i) => ticket(500 + i, "Backlog"));
+  const { user } = await mountBoard({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: { CYC: withTickets({ Backlog: many }) },
   });
-  await renderApp(fake.bridge);
-  await user.click(await screen.findByRole("button", { name: "Loop" }));
   const backlog = await screen.findByRole("region", { name: "Backlog" });
   expect(within(backlog).getAllByRole("listitem")).toHaveLength(20);
   await user.click(within(backlog).getByRole("button", { name: "Show 25 more" }));
@@ -188,16 +237,12 @@ test("the Backlog opens on 20 tickets and shows more when asked", async () => {
 test("Approve asks first; only the confirmation writes, and a failure is said, not hidden", async () => {
   const backlog = ticket(600, "Backlog");
   const doing = ticket(601, "In Progress");
-  const user = userEvent.setup();
-  const fake = fakeBridge({
-    connected: true,
+  const { user, calls } = await mountBoard({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: { CYC: withTickets({ "In Progress": [doing], Backlog: [backlog] }) },
     loopTickets: { "CYC-600": detailOf(backlog, { actions: ["approve", "to_todo"], chat: "new" }) },
     loopAct: { kind: "failed", reason: "forbidden" },
   });
-  await renderApp(fake.bridge);
-  await user.click(await screen.findByRole("button", { name: "Loop" }));
   const column = await screen.findByRole("region", { name: "Backlog" });
   // A card has no state buttons of its own, and Loop's own ticket in Doing none either.
   expect(
@@ -208,20 +253,18 @@ test("Approve asks first; only the confirmation writes, and a failure is said, n
   expect(within(column).queryByRole("button", { name: /Approve|Back to/ })).toBeNull();
   await user.click(within(column).getByRole("button", { name: "Ticket 600" }));
   await user.click(await screen.findByRole("button", { name: "Approve CYC-600" }));
-  expect(fake.calls.some(([name]) => name === "loopAct")).toBe(false);
+  expect(calls.some(([name]) => name === "loopAct")).toBe(false);
   const dialog = await screen.findByRole("alertdialog");
   await user.click(within(dialog).getByRole("button", { name: "Approve" }));
   expect(await within(dialog).findByText(/did not accept this from Loop/)).toBeTruthy();
-  expect(fake.calls.filter(([name]) => name === "loopAct")).toEqual([
+  expect(calls.filter(([name]) => name === "loopAct")).toEqual([
     ["loopAct", "CYC", "CYC-600", "approve", true],
   ]);
 });
 
 test("a failed Back to Backlog in the ticket drawer is said there, and gone after closing", async () => {
   const mine = ticket(602, "In Review");
-  const user = userEvent.setup();
-  const fake = fakeBridge({
-    connected: true,
+  const { user } = await mountBoard({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: { CYC: withTickets({ "In Progress": [mine] }) },
     loopTickets: {
@@ -232,8 +275,6 @@ test("a failed Back to Backlog in the ticket drawer is said there, and gone afte
     },
     loopAct: { kind: "failed", reason: "offline" },
   });
-  await renderApp(fake.bridge);
-  await user.click(await screen.findByRole("button", { name: "Loop" }));
   await user.click(await screen.findByRole("button", { name: "Ticket 602" }));
   const drawer = await screen.findByRole("complementary", { name: "CYC-602" });
   // Board remains mounted under the right-side drawer.
@@ -259,6 +300,7 @@ const openTicketDrawer = async (
   const fake = fakeBridge({
     connected: true,
     loopProjects: { kind: "ok", projects: [cycle] },
+    workspaceRepos: { "/work": cycle.repo.displayName },
     loopBoards: {
       CYC: withTickets({
         Backlog: chat === "new" ? [mine] : [],
@@ -269,7 +311,7 @@ const openTicketDrawer = async (
     ...script,
   });
   await renderApp(fake.bridge);
-  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  await user.click(await screen.findByRole("button", { name: "Kanban" }));
   await user.click(await screen.findByRole("button", { name: "Ticket 700" }));
   return { user, fake };
 };
@@ -342,17 +384,17 @@ test("a card clicked while the drawer closes opens that ticket", async () => {
   expect(screen.getByRole("complementary", { name: "CYC-700" })).toBeTruthy();
 });
 
-test("leaving the Loop from a ticket drawer and coming back lands on the level it was left on", async () => {
+test("Escape closes the ticket drawer to its board and leaves the board open; clicking a session returns to sessions", async () => {
   const { user } = await openTicketDrawer("new");
   await screen.findByRole("complementary", { name: "CYC-700" });
-  // Ticket drawer → board by Escape; the board stays, out of the Loop by Sessions, and back on the board.
+  // Ticket drawer → board by Escape; the board stays, out of Loop by clicking a session, and back to Kanban from the sidebar.
   await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("complementary", { name: "CYC-700" })).toBeNull());
   await user.keyboard("{Escape}");
   expect(document.querySelector('[data-kind="loop-board"]')).not.toBeNull();
-  await user.click(screen.getByRole("button", { name: "Sessions" }));
+  await user.click(screen.getByRole("option"));
   await waitFor(() => expect(document.querySelector('[data-kind="loop-board"]')).toBeNull());
-  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  await user.click(await screen.findByRole("button", { name: "Kanban" }));
   await waitFor(() => expect(document.querySelector('[data-kind="loop-board"]')).not.toBeNull());
 });
 
@@ -387,14 +429,15 @@ test("with two Projects the Loop lands on the overview, with each Project's coun
   await screen.findByRole("region", { name: "In Progress" });
 });
 
-test("with one Project the Loop lands on its board, and Overview in the sidebar goes up", async () => {
+test("even with one Project, clicking top Loop opens Overview instead of redirecting", async () => {
   const { user } = await mount({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: { CYC: board },
   });
-  await screen.findByRole("region", { name: "In Progress" });
-  await user.click(screen.getByRole("button", { name: "Overview" }));
   await screen.findByRole("region", { name: "Projects" });
+  expect(document.querySelector('[data-kind="loop-board"]')).toBeNull();
+  await openOverviewProject(user, "CYC");
+  await screen.findByRole("region", { name: "In Progress" });
 });
 
 test("Needs you is on the overview, not on the board, and absent when empty", async () => {
@@ -412,7 +455,7 @@ test("Needs you is on the overview, not on the board, and absent when empty", as
   );
   const notices = await screen.findByRole("region", { name: "Needs you" });
   expect(within(notices).getByText("CYC-9")).toBeTruthy();
-  await user.click(screen.getByRole("button", { name: "Cycle Kanban" }));
+  await openOverviewProject(user, "CYC");
   await screen.findByRole("region", { name: "In Progress" });
   expect(screen.queryByRole("region", { name: "Needs you" })).toBeNull();
 });
@@ -424,7 +467,7 @@ test("with nothing that needs a person, the section is not there", async () => {
 });
 
 test("a Project opens on its board with clean breadcrumbs leading back to Overview", async () => {
-  const { user } = await mount({
+  const { user } = await mountBoard({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: { CYC: board },
   });
@@ -439,7 +482,7 @@ test("a Project opens on its board with clean breadcrumbs leading back to Overvi
 });
 
 test("opening a ticket drawer updates breadcrumbs to Project / ticket and clicking Project closes it", async () => {
-  const { user } = await mount({
+  const { user } = await mountBoard({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: { CYC: board },
   });
@@ -453,7 +496,7 @@ test("opening a ticket drawer updates breadcrumbs to Project / ticket and clicki
 });
 
 test("the board shows the columns by name, with Done last, the rest in the order they come", async () => {
-  await mount({ loopProjects: { kind: "ok", projects: [cycle] }, loopBoards: { CYC: board } });
+  await mountBoard({ loopProjects: { kind: "ok", projects: [cycle] }, loopBoards: { CYC: board } });
   await screen.findByRole("region", { name: "In Review" });
   const names = [...document.querySelectorAll('[data-slot="loop-column"]')].map((e) =>
     e.getAttribute("aria-label"),
@@ -462,7 +505,7 @@ test("the board shows the columns by name, with Done last, the rest in the order
 });
 
 test("the board is a row of columns: cards are not draggable, there is no move menu, and Done is open with its card", async () => {
-  await mount({ loopProjects: { kind: "ok", projects: [cycle] }, loopBoards: { CYC: board } });
+  await mountBoard({ loopProjects: { kind: "ok", projects: [cycle] }, loopBoards: { CYC: board } });
   await screen.findByRole("region", { name: "In Review" });
   expect(document.querySelectorAll("[draggable='true']")).toHaveLength(0);
   expect(screen.queryByText(/Move to/i)).toBeNull();
@@ -478,7 +521,7 @@ test("the board is a row of columns: cards are not draggable, there is no move m
 
 test("a card opens its drawer, a button on it does not, and cancelling Approve writes nothing", async () => {
   const backlog = waiting(600, "high", "Ready");
-  const { user, calls } = await mount({
+  const { user, calls } = await mountBoard({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: { CYC: withTickets({ Backlog: [backlog] }) },
   });
@@ -502,7 +545,7 @@ test("at 720px the page has no sideways scrollbar and the columns scroll by them
 });
 
 const checkNarrow = async () => {
-  await mount({ loopProjects: { kind: "ok", projects: [cycle] }, loopBoards: { CYC: board } });
+  await mountBoard({ loopProjects: { kind: "ok", projects: [cycle] }, loopBoards: { CYC: board } });
   await screen.findByRole("region", { name: "In Review" });
   const strip = document.querySelector<HTMLElement>('[data-slot="loop-columns"]');
   if (strip === null) throw new Error("no columns");
@@ -519,7 +562,7 @@ const checkNarrow = async () => {
 };
 
 test("a column header lays its dot, title and count on one row", async () => {
-  await mount({ loopProjects: { kind: "ok", projects: [cycle] }, loopBoards: { CYC: board } });
+  await mountBoard({ loopProjects: { kind: "ok", projects: [cycle] }, loopBoards: { CYC: board } });
   const todo = await screen.findByRole("region", { name: "Todo" });
   const head = todo.querySelector<HTMLElement>('[data-slot="loop-column-head"]') as HTMLElement;
   expect(getComputedStyle(head).flexDirection).toBe("row");
@@ -535,7 +578,7 @@ test("a column header lays its dot, title and count on one row", async () => {
 
 test("a column's cards sit symmetrically whether or not the column scrolls", async () => {
   const many = Array.from({ length: 30 }, (_, i) => ticket(700 + i, "Backlog"));
-  await mount({
+  await mountBoard({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: { CYC: withTickets({ Backlog: many }) },
   });
@@ -565,13 +608,14 @@ test("while the board is read each column shows skeleton cards", async () => {
   const fake = fakeBridge({
     connected: true,
     loopProjects: { kind: "ok", projects: [cycle] },
+    workspaceRepos: { "/work": cycle.repo.displayName },
     loopBoards: { CYC: board },
   });
   const never = new Promise<LoopBoardAnswer>(() => {});
   fake.bridge.loopBoard = () => never;
   await renderApp(fake.bridge);
   const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  await user.click(await screen.findByRole("button", { name: "Kanban" }));
   await waitFor(() =>
     expect(document.querySelectorAll('[data-slot="loop-column"][data-skeleton]').length).toBe(3),
   );
@@ -579,7 +623,7 @@ test("while the board is read each column shows skeleton cards", async () => {
 });
 
 test("a short title is not clipped or masked", async () => {
-  await mount({ loopProjects: { kind: "ok", projects: [cycle] }, loopBoards: { CYC: board } });
+  await mountBoard({ loopProjects: { kind: "ok", projects: [cycle] }, loopBoards: { CYC: board } });
   const text = (await screen.findByText("Ticket 386")) as HTMLElement;
   expect(text.scrollHeight).toBeLessThanOrEqual(text.clientHeight);
   expect(getComputedStyle(text).maskImage).toBe("none");
@@ -591,7 +635,7 @@ test("an In Progress card shows Loop's stage and how long, with a nudge past 30 
     ...ticket(n, "In Progress"),
     phase: { name: stage, since: ago(min) },
   });
-  const { user } = await mount({
+  await mountBoard({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: {
       CYC: withTickets({
@@ -600,7 +644,6 @@ test("an In Progress card shows Loop's stage and how long, with a nudge past 30 
       }),
     },
   });
-  await user.click(await screen.findByRole("button", { name: "Cycle Kanban" }));
   const quick = await screen.findByText("QA · 3 min");
   expect(quick.getAttribute("data-slow")).toBeNull();
   const slow = screen.getByText("Developing · 1 h 12 min");
@@ -615,9 +658,7 @@ const waiting = (n: number, priority: string, reason: string): LoopTicket => ({
 });
 
 test("awaiting-approval cards sit at the top of Backlog with a badge, quick approve, and floating batch bar", async () => {
-  const user = userEvent.setup();
-  const fake = fakeBridge({
-    connected: true,
+  const { user, calls } = await mountBoard({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: {
       CYC: withTickets({
@@ -636,8 +677,6 @@ test("awaiting-approval cards sit at the top of Backlog with a badge, quick appr
       ],
     },
   });
-  await renderApp(fake.bridge);
-  await user.click(await screen.findByRole("button", { name: "Loop" }));
   const backlog = await screen.findByRole("region", { name: "Backlog" });
   // Pending tickets appear first in Backlog sorted by priority, each with its badge, criteria, reason and quick Approve.
   const items = within(backlog).getAllByRole("listitem");
@@ -656,13 +695,13 @@ test("awaiting-approval cards sit at the top of Backlog with a badge, quick appr
   await user.click(within(backlog).getByRole("checkbox", { name: "Select all" }));
   const bar = await screen.findByRole("region", { name: "Awaiting approval" });
   await user.click(within(bar).getByRole("button", { name: "Approve selected" }));
-  expect(fake.calls.some(([name]) => name === "loopActMany")).toBe(false);
+  expect(calls.some(([name]) => name === "loopActMany")).toBe(false);
   const dialog = await screen.findByRole("alertdialog");
   expect(dialog.textContent).toContain("CYC-702 Ticket 702");
   expect(dialog.textContent).toContain("CYC-701 Ticket 701");
   await user.click(within(dialog).getByRole("button", { name: "Approve selected" }));
   expect(await screen.findByText(/1 succeeded, 1 skipped, 0 failed/)).toBeTruthy();
-  expect(fake.calls.filter(([name]) => name === "loopActMany")).toEqual([
+  expect(calls.filter(([name]) => name === "loopActMany")).toEqual([
     ["loopActMany", "CYC", "approve_many", ["CYC-702", "CYC-701"], true, undefined],
   ]);
 
@@ -672,7 +711,7 @@ test("awaiting-approval cards sit at the top of Backlog with a badge, quick appr
   await user.type(within(bar2).getByRole("textbox"), "not now");
   await user.click(within(bar2).getByRole("button", { name: "Return selected" }));
   await waitFor(() =>
-    expect(fake.calls.filter(([name]) => name === "loopActMany")[1]).toEqual([
+    expect(calls.filter(([name]) => name === "loopActMany")[1]).toEqual([
       "loopActMany",
       "CYC",
       "return_many",
@@ -689,9 +728,7 @@ const withPriority = (n: number, column: string, priority: string | null): LoopT
 });
 
 test("open columns sort by priority (stable), Backlog keeps pending first, Done keeps server order", async () => {
-  const user = userEvent.setup();
-  const fake = fakeBridge({
-    connected: true,
+  await mountBoard({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: {
       CYC: withTickets({
@@ -717,8 +754,6 @@ test("open columns sort by priority (stable), Backlog keeps pending first, Done 
       }),
     },
   });
-  await renderApp(fake.bridge);
-  await user.click(await screen.findByRole("button", { name: "Loop" }));
   const idsOf = async (name: string) =>
     within(await screen.findByRole("region", { name }))
       .getAllByRole("listitem")
@@ -736,7 +771,7 @@ test("open columns sort by priority (stable), Backlog keeps pending first, Done 
 });
 
 test("with nothing waiting for approval there is no awaiting-approval badge or filter chip", async () => {
-  await mount({
+  await mountBoard({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: { CYC: withTickets({ Backlog: [ticket(710, "Backlog")] }) },
   });
@@ -745,7 +780,7 @@ test("with nothing waiting for approval there is no awaiting-approval badge or f
 });
 
 test("search and awaiting-approval filter chip narrow visible cards and can be cleared", async () => {
-  const { user } = await mount({
+  const { user } = await mountBoard({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: {
       CYC: withTickets({
@@ -768,7 +803,7 @@ test("search and awaiting-approval filter chip narrow visible cards and can be c
 });
 
 test("a batch return that fails is said on the board, and the picks stay", async () => {
-  const { user, calls } = await mount({
+  const { user, calls } = await mountBoard({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: { CYC: withTickets({ Backlog: [waiting(720, "high", "Why")] }) },
     loopActMany: { kind: "failed", reason: "offline" },
@@ -785,7 +820,7 @@ test("a batch return that fails is said on the board, and the picks stay", async
 });
 
 test("a Backlog of only waiting tickets does not say it is empty", async () => {
-  await mount({
+  await mountBoard({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: { CYC: withTickets({ Backlog: [waiting(730, "high", "Why")] }) },
   });
@@ -802,6 +837,7 @@ test("the counts of a batch stay when the reloaded board has nothing waiting any
   const fake = fakeBridge({
     connected: true,
     loopProjects: { kind: "ok", projects: [cycle] },
+    workspaceRepos: { "/work": cycle.repo.displayName },
     loopBoards: {
       get CYC() {
         return asked() ? after : before;
@@ -811,7 +847,7 @@ test("the counts of a batch stay when the reloaded board has nothing waiting any
   asked = () => fake.calls.some(([name]) => name === "loopActMany");
   const bridge = fake.bridge;
   await renderApp(bridge);
-  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  await user.click(await screen.findByRole("button", { name: "Kanban" }));
   const backlog = await screen.findByRole("region", { name: "Backlog" });
   await user.click(within(backlog).getByRole("checkbox", { name: "Select all" }));
   const bar = await screen.findByRole("region", { name: "Awaiting approval" });
@@ -893,23 +929,19 @@ const detailOf = (
 
 test("Approve in the ticket drawer asks first; only the confirmation writes, and a failure is said", async () => {
   const backlog = ticket(600, "Backlog");
-  const user = userEvent.setup();
-  const fake = fakeBridge({
-    connected: true,
+  const { user, calls } = await mountBoard({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: { CYC: withTickets({ Backlog: [backlog] }) },
     loopTickets: { "CYC-600": detailOf(backlog, { actions: ["approve", "to_todo"], chat: "new" }) },
     loopAct: { kind: "failed", reason: "forbidden" },
   });
-  await renderApp(fake.bridge);
-  await user.click(await screen.findByRole("button", { name: "Loop" }));
   await user.click(await screen.findByRole("button", { name: "Ticket 600" }));
   await user.click(await screen.findByRole("button", { name: "Approve CYC-600" }));
-  expect(fake.calls.some(([name]) => name === "loopAct")).toBe(false);
+  expect(calls.some(([name]) => name === "loopAct")).toBe(false);
   const dialog = await screen.findByRole("alertdialog");
   await user.click(within(dialog).getByRole("button", { name: "Approve" }));
   expect(await within(dialog).findByText(/did not accept this from Loop/)).toBeTruthy();
-  expect(fake.calls.filter(([name]) => name === "loopAct")).toEqual([
+  expect(calls.filter(([name]) => name === "loopAct")).toEqual([
     ["loopAct", "CYC", "CYC-600", "approve", true],
   ]);
 });
@@ -917,9 +949,7 @@ test("Approve in the ticket drawer asks first; only the confirmation writes, and
 test("cancelling Approve writes nothing; a ticket with no buttons shows none", async () => {
   const backlog = ticket(600, "Backlog");
   const doing = ticket(601, "In Progress");
-  const user = userEvent.setup();
-  const fake = fakeBridge({
-    connected: true,
+  const { user, calls } = await mountBoard({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: { CYC: withTickets({ Backlog: [backlog], "In Progress": [doing] }) },
     loopTickets: {
@@ -927,14 +957,12 @@ test("cancelling Approve writes nothing; a ticket with no buttons shows none", a
       "CYC-601": detailOf(doing),
     },
   });
-  await renderApp(fake.bridge);
-  await user.click(await screen.findByRole("button", { name: "Loop" }));
   await user.click(await screen.findByRole("button", { name: "Ticket 600" }));
   await user.click(await screen.findByRole("button", { name: "Approve CYC-600" }));
   await user.click(
     within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Cancel" }),
   );
-  expect(fake.calls.some(([name]) => name === "loopAct")).toBe(false);
+  expect(calls.some(([name]) => name === "loopAct")).toBe(false);
   await user.click(screen.getByRole("button", { name: /Close ticket/ }));
   await user.click(await screen.findByRole("button", { name: "Ticket 601" }));
   await screen.findByText("text");
@@ -943,28 +971,22 @@ test("cancelling Approve writes nothing; a ticket with no buttons shows none", a
 
 test("a state button that works reads the board again", async () => {
   const mine = ticket(603, "Todo");
-  const user = userEvent.setup();
-  const fake = fakeBridge({
-    connected: true,
+  const { user, named } = await mountBoard({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: { CYC: withTickets({ Todo: [mine] }) },
     loopTickets: { "CYC-603": detailOf(mine, { actions: ["to_backlog"] }) },
   });
-  await renderApp(fake.bridge);
-  await user.click(await screen.findByRole("button", { name: "Loop" }));
   await user.click(await screen.findByRole("button", { name: "Ticket 603" }));
-  const reads = () => fake.named("loopBoard").length;
+  const reads = () => named("loopBoard").length;
   const before = reads();
   await user.click(await screen.findByRole("button", { name: "Back to Backlog CYC-603" }));
   await waitFor(() => expect(reads()).toBeGreaterThan(before));
-  expect(fake.named("loopAct")).toEqual([["loopAct", "CYC", "CYC-603", "to_backlog", false]]);
+  expect(named("loopAct")).toEqual([["loopAct", "CYC", "CYC-603", "to_backlog", false]]);
 });
 
 test("a ticket drawer shows the text, the criteria, why it needs a person, and joins its session", async () => {
   const mine = ticket(710, "Blocked");
-  const user = userEvent.setup();
-  const fake = fakeBridge({
-    connected: true,
+  const { user } = await mountBoard({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: { CYC: withTickets({ Blocked: [mine] }) },
     loopTickets: {
@@ -976,8 +998,6 @@ test("a ticket drawer shows the text, the criteria, why it needs a person, and j
       }),
     },
   });
-  await renderApp(fake.bridge);
-  await user.click(await screen.findByRole("button", { name: "Loop" }));
   await user.click(await screen.findByRole("button", { name: "Ticket 710" }));
   expect(await screen.findByText("The body")).toBeTruthy();
   expect(screen.getAllByText("first")).toHaveLength(2);
@@ -1026,7 +1046,7 @@ test("reopening the Loop page reads the run state again, and applies what change
   const { user, options } = await mount(script);
   const projects = await screen.findByRole("region", { name: "Projects" });
   await waitFor(() => expect(runState(projects, "CYC")).toBe("Not running"));
-  await user.click(screen.getByRole("button", { name: "Sessions" }));
+  await user.click(screen.getByRole("option"));
   await waitFor(() => expect(document.querySelector('[data-kind="loop-overview"]')).toBeNull());
   // Loop started while the page was closed, and nothing was pushed to it.
   options.loopRuns = { kind: "ok", running: { CYC: ["CYC-386"], DOC: [] } };
@@ -1039,7 +1059,7 @@ test("a pushed run state that changes who Loop is running reads the board again"
   const { named, emit, user } = await mount(
     overviewScript({ loopRuns: { kind: "ok", running: { CYC: [], DOC: [] } } }),
   );
-  await user.click(await screen.findByRole("button", { name: "Cycle Kanban" }));
+  await openOverviewProject(user, "CYC");
   await screen.findByRole("region", { name: "In Progress" });
   const reads = named("loopBoard").length;
   act(() => emit({ type: "loop-runs", runs: { kind: "ok", running: { CYC: ["CYC-386"] } } }));
@@ -1075,34 +1095,207 @@ test("an older board read that lands last does not replace a newer one", async (
   expect(projects.querySelector('[data-project="CYC"]')?.textContent).toContain("Todo 2");
 });
 
-test("the Loop keeps the sidebar's frame: Sessions and Loop side by side, the account menu, the fold button", async () => {
-  const { user } = await mount(overviewScript());
-  await screen.findByRole("region", { name: "Projects" });
-  const sessions = screen.getByRole("button", { name: "Sessions" });
-  const loop = screen.getByRole("button", { name: "Loop" });
-  expect(loop.getAttribute("aria-pressed")).toBe("true");
-  expect(sessions.getAttribute("aria-pressed")).toBe("false");
-  expect(screen.getByRole("navigation", { name: "Loop" })).toBeTruthy();
-  expect(screen.getByRole("region", { name: "Loop navigation" })).toBeTruthy();
+test("sidebar keeps New/Search/Connectors/Loop at top, shows Kanban and Timeline under matched workspace, and hides them on unmatched workspaces", async () => {
+  const user = userEvent.setup();
+  const fake = fakeBridge({
+    connected: true,
+    loopProjects: { kind: "ok", projects: [cycle, docs] },
+    loopBoards: { CYC: board, DOC: board },
+    workspaceRepos: {
+      "/work/cycle-v1": "CLAWDOT/CYCLE",
+      "/work/plain": null,
+    },
+  });
+  fake.bridge.sessions = async () => [
+    {
+      ...summary("s1"),
+      cwd: "/work/cycle-v1",
+      title: "Cycle chat",
+      updatedAt: "2020-01-03T00:00:00Z",
+    },
+    {
+      ...summary("s2"),
+      cwd: "/work/plain",
+      title: "Plain chat",
+      updatedAt: "2020-01-02T00:00:00Z",
+    },
+  ];
+  await renderApp(fake.bridge);
+
+  // Top global actions: New, Search, Connectors, Loop; no Sessions/Loop mode switch.
+  expect(document.querySelector('[data-slot="mode-switch"]')).toBeNull();
+  expect(screen.getByRole("button", { name: "New session" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Search sessions" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Connectors" })).toBeTruthy();
+  const loopBtn = screen.getByRole("button", { name: "Loop" });
   expect(document.querySelector('[data-kind="sidebar-toggle"]')).not.toBeNull();
   expect(document.querySelector('[data-kind="account-menu"]')).not.toBeNull();
-  expect(screen.getByRole("button", { name: "New session" })).toBeTruthy();
-  // The lower half is the Loop's: Overview and each Project's Kanban, not the sessions' list.
-  expect(screen.getByRole("button", { name: "Overview" })).toBeTruthy();
-  expect(screen.queryByRole("button", { name: "Show archived" })).toBeNull();
-  await user.click(screen.getByRole("button", { name: "Cycle Kanban" }));
+
+  // Matched workspace shows Kanban and Timeline above the session list.
+  const kanbanBtn = await screen.findByRole("button", { name: "Kanban" });
+  const timelineBtn = screen.getByRole("button", { name: "Timeline" });
+  expect(screen.getByRole("button", { name: "Show archived" })).toBeTruthy();
+
+  // Clicking Kanban opens the board and marks Kanban current.
+  await user.click(kanbanBtn);
   await screen.findByRole("region", { name: "In Progress" });
-  expect(screen.getByRole("button", { name: "Cycle Kanban" }).getAttribute("aria-current")).toBe(
-    "page",
+  expect(kanbanBtn.getAttribute("aria-current")).toBe("page");
+  expect(timelineBtn.getAttribute("aria-current")).toBeNull();
+
+  // Clicking Timeline opens the placeholder page with breadcrumbs and a button to Kanban.
+  await user.click(timelineBtn);
+  expect(await screen.findByText("Loop timeline is coming soon")).toBeTruthy();
+  expect(screen.getByRole("navigation", { name: "Where you are" }).textContent).toBe(
+    "Cycle/Timeline",
   );
-  // Sessions brings the list back.
-  await user.click(sessions);
-  expect(await screen.findByRole("button", { name: "Show archived" })).toBeTruthy();
-  expect(screen.getByRole("navigation", { name: "Sessions" })).toBeTruthy();
-  expect(sessions.getAttribute("aria-pressed")).toBe("true");
+  expect(timelineBtn.getAttribute("aria-current")).toBe("page");
+  await user.click(screen.getByRole("button", { name: "Open Kanban" }));
+  await screen.findByRole("region", { name: "In Progress" });
+
+  // Clicking top Loop opens Overview and marks Loop current.
+  await user.click(loopBtn);
+  await screen.findByRole("region", { name: "Projects" });
+  expect(loopBtn.getAttribute("aria-current")).toBe("page");
+
+  // Switching to an unmatched workspace hides Kanban & Timeline; switching from Kanban to unmatched leaves Loop.
+  await user.click(kanbanBtn);
+  await screen.findByRole("region", { name: "In Progress" });
+  await user.click(screen.getByRole("button", { name: /Switch workspace/ }));
+  await user.click(await screen.findByRole("menuitem", { name: /plain/ }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Kanban" })).toBeNull());
+  expect(screen.queryByRole("button", { name: "Timeline" })).toBeNull();
+  expect(document.querySelector('[data-kind="loop-board"]')).toBeNull();
 });
 
-test("the right panel stays mounted but hidden in the Loop mode and returns intact", async () => {
+test("switching between two matched workspaces updates Kanban and Timeline, and Overview syncs workspace", async () => {
+  const user = userEvent.setup();
+  const fake = fakeBridge({
+    connected: true,
+    loopProjects: { kind: "ok", projects: [cycle, docs] },
+    loopBoards: {
+      CYC: withTickets({ "In Progress": [ticket(386, "In Progress")] }),
+      DOC: withTickets({ "In Progress": [ticket(901, "In Progress")] }),
+    },
+    workspaceRepos: {
+      "/work/cycle-v1": cycle.repo.displayName,
+      "/work/docs": docs.repo.displayName,
+    },
+  });
+  fake.bridge.sessions = async () => [
+    {
+      ...summary("s1"),
+      cwd: "/work/cycle-v1",
+      title: "Cycle chat",
+      updatedAt: "2020-01-03T00:00:00Z",
+    },
+    {
+      ...summary("s2"),
+      cwd: "/work/docs",
+      title: "Docs chat",
+      updatedAt: "2020-01-02T00:00:00Z",
+    },
+  ];
+  await renderApp(fake.bridge);
+
+  // Open Cycle's Timeline, then switch workspace to Docs -> main switches to Docs Timeline.
+  await user.click(await screen.findByRole("button", { name: "Timeline" }));
+  expect(screen.getByRole("navigation", { name: "Where you are" }).textContent).toBe(
+    "Cycle/Timeline",
+  );
+  await user.click(screen.getByRole("button", { name: /Switch workspace/ }));
+  await user.click(await screen.findByRole("menuitem", { name: /docs/ }));
+  await waitFor(() =>
+    expect(screen.getByRole("navigation", { name: "Where you are" }).textContent).toBe(
+      "Docs/Timeline",
+    ),
+  );
+
+  // Open Overview and click Cycle -> syncs sidebar workspace back to cycle-v1 and highlights Kanban.
+  await user.click(screen.getByRole("button", { name: "Loop" }));
+  await openOverviewProject(user, "Cycle");
+  await screen.findByText("Ticket 386");
+  expect(screen.getByRole("button", { name: /Switch workspace/ }).textContent).toContain(
+    "cycle-v1",
+  );
+  expect(screen.getByRole("button", { name: "Kanban" }).getAttribute("aria-current")).toBe("page");
+});
+
+test("a loop-open notification syncs the matched workspace and tracks from notification", async () => {
+  const fake = fakeBridge({
+    connected: true,
+    loopProjects: { kind: "ok", projects: [cycle, docs] },
+    loopBoards: {
+      CYC: board,
+      DOC: withTickets({ "In Progress": [ticket(902, "In Progress")] }),
+    },
+    loopTickets: { "DOC-902": detailOf(ticket(902, "In Progress")) },
+    workspaceRepos: {
+      "/work/cycle-v1": cycle.repo.displayName,
+      "/work/docs": docs.repo.displayName,
+    },
+  });
+  fake.bridge.sessions = async () => [
+    {
+      ...summary("s1"),
+      cwd: "/work/cycle-v1",
+      title: "Cycle chat",
+      updatedAt: "2020-01-03T00:00:00Z",
+    },
+    {
+      ...summary("s2"),
+      cwd: "/work/docs",
+      title: "Docs chat",
+      updatedAt: "2020-01-02T00:00:00Z",
+    },
+  ];
+  await renderApp(fake.bridge);
+  await screen.findByRole("button", { name: "Kanban" });
+
+  await act(() => {
+    fake.emit({ type: "open-loop-ticket", projectKey: "DOC", identifier: "DOC-902" });
+  });
+  await screen.findByRole("complementary", { name: "DOC-902" });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: /Switch workspace/ }).textContent).toContain("docs"),
+  );
+  expect(tracked(fake.calls)).toContainEqual([
+    "loop_project_view_opened",
+    { view: "kanban", from: "notification" },
+  ]);
+});
+
+test("a remote workspace with the same cwd as a local repo never shows Kanban or Timeline", async () => {
+  const remote = {
+    id: "ssh-1",
+    name: "Box",
+    kind: "remote" as const,
+    transport: { type: "ssh" as const, host: "box.example" },
+  };
+  const fake = fakeBridge({
+    connected: true,
+    locations: [remote],
+    states: { "ssh-1": "connected" },
+    loopProjects: { kind: "ok", projects: [cycle] },
+    workspaceRepos: { "/work/cycle-v1": cycle.repo.displayName },
+  });
+  fake.bridge.sessions = async (locationId) =>
+    locationId === "ssh-1"
+      ? [
+          {
+            ...summary("s1", "ssh-1"),
+            cwd: "/work/cycle-v1",
+            title: "Remote work",
+            updatedAt: "2020-01-04T00:00:00Z",
+          },
+        ]
+      : [];
+  await renderApp(fake.bridge);
+  await screen.findByRole("option", { name: /Remote work/ });
+  expect(screen.queryByRole("button", { name: "Kanban" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Timeline" })).toBeNull();
+});
+
+test("the right panel stays mounted but hidden in the Loop view and returns intact", async () => {
   const user = userEvent.setup();
   const fake = fakeBridge({
     connected: true,
@@ -1123,7 +1316,7 @@ test("the right panel stays mounted but hidden in the Loop mode and returns inta
   expect(document.querySelector('[data-slot="side-panel"]')).toBe(sidePanel);
   expect(sidePanel.hidden).toBe(true);
   expect(sidePanel.inert).toBe(true);
-  await user.click(screen.getByRole("button", { name: "Sessions" }));
+  await user.click(screen.getByRole("option", { name: /Work/ }));
   await waitFor(() => expect(sidePanel.hidden).toBe(false));
   expect(document.querySelector('[data-slot="side-panel"]')).toBe(sidePanel);
   expect(sidePanel.inert).toBe(false);
@@ -1146,19 +1339,15 @@ test("a focus-session request while Settings is open over the Loop leaves both S
     expect(screen.queryByRole("tab", { name: "General" })).toBeNull();
     expect(document.querySelector('[data-kind="loop-overview"]')).toBeNull();
   });
-  expect(screen.getByRole("button", { name: "Sessions" }).getAttribute("aria-pressed")).toBe(
-    "true",
-  );
+  expect(screen.getByRole("button", { name: "Loop" }).getAttribute("aria-current")).toBeNull();
 });
 
-test("New session leaves the Loop mode", async () => {
+test("New session leaves the Loop view", async () => {
   const { user } = await mount(overviewScript());
   await screen.findByRole("region", { name: "Projects" });
   await user.click(screen.getByRole("button", { name: "New session" }));
   await waitFor(() => expect(document.querySelector('[data-kind="loop-overview"]')).toBeNull());
-  expect(screen.getByRole("button", { name: "Sessions" }).getAttribute("aria-pressed")).toBe(
-    "true",
-  );
+  expect(screen.getByRole("button", { name: "Loop" }).getAttribute("aria-current")).toBeNull();
 });
 
 test("the sidebar folds in the Loop and the title bar then has the button to show it, without sideways overflow", async () => {
@@ -1170,7 +1359,7 @@ test("the sidebar folds in the Loop and the title bar then has the button to sho
   const root = document.documentElement;
   expect(root.scrollWidth).toBeLessThanOrEqual(root.clientWidth);
   await user.click(within(header as HTMLElement).getByRole("button", { name: "Show sidebar" }));
-  expect(screen.getByRole("button", { name: "Overview" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Loop" })).toBeTruthy();
 });
 
 test("Settings opened from the Loop returns to the Loop", async () => {
@@ -1179,12 +1368,10 @@ test("Settings opened from the Loop returns to the Loop", async () => {
   await openSettings(user);
   await user.keyboard("{Escape}");
   await screen.findByRole("region", { name: "Projects" });
-  expect(screen.getByRole("button", { name: "Loop" }).getAttribute("aria-pressed")).toBe("true");
+  expect(screen.getByRole("button", { name: "Loop" }).getAttribute("aria-current")).toBe("page");
 });
 
-// The Loop stays under a page opened from it, and can still move by itself (it lands on the only Project's board once
-// the Projects are read): the page stays, and the way back finds the board.
-test("Settings opened over a Loop that is still landing stays open when the Projects arrive", async () => {
+test("Settings opened while Loop projects are loading stays open when the Projects arrive", async () => {
   const fake = fakeBridge({ connected: true, loopBoards: { CYC: board } });
   let answer: (value: LoopProjectsAnswer) => void = () => {};
   fake.bridge.loopProjects = () =>
@@ -1202,12 +1389,12 @@ test("Settings opened over a Loop that is still landing stays open when the Proj
   });
   expect(screen.getByRole("heading", { name: "General", level: 2 })).toBeTruthy();
   await user.click(screen.getByRole("button", { name: /Back to Loop/ }));
-  await screen.findByRole("region", { name: "In Progress" });
+  await screen.findByRole("region", { name: "Projects" });
 });
 
 // The board's Escape clears its picks only while the board is shown: over it, Escape is the page's.
 test("Escape leaves a page opened over a board with picks, and the picks stay", async () => {
-  const { user } = await mount({
+  const { user } = await mountBoard({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: { CYC: withTickets({ Backlog: [waiting(740, "high", "Why")] }) },
   });
@@ -1233,9 +1420,7 @@ test("a parent card folds a sub-ticket list; children keep their cards and name 
     ...ticket(n, column),
     parent: { identifier: "CYC-381", title: "The Epic" },
   });
-  const user = userEvent.setup();
-  const fake = fakeBridge({
-    connected: true,
+  const { user, calls } = await mountBoard({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: {
       CYC: withTickets({
@@ -1244,8 +1429,6 @@ test("a parent card folds a sub-ticket list; children keep their cards and name 
       }),
     },
   });
-  await renderApp(fake.bridge);
-  await user.click(await screen.findByRole("button", { name: "Loop" }));
   const todo = await screen.findByRole("region", { name: "Todo" });
   const toggle = within(todo).getByRole("button", { name: /Subtasks/ });
   expect(toggle.textContent).toContain("1/2");
@@ -1261,14 +1444,12 @@ test("a parent card folds a sub-ticket list; children keep their cards and name 
   expect(done?.textContent).toContain("Ticket 391");
   await user.click(done as HTMLElement);
   await waitFor(() =>
-    expect(fake.calls.some(([n, , id]) => n === "loopTicket" && id === "CYC-391")).toBe(true),
+    expect(calls.some(([n, , id]) => n === "loopTicket" && id === "CYC-391")).toBe(true),
   );
 });
 
 test("the parent id on a child card opens the parent", async () => {
-  const user = userEvent.setup();
-  const fake = fakeBridge({
-    connected: true,
+  const { user, calls } = await mountBoard({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: {
       CYC: withTickets({
@@ -1276,16 +1457,14 @@ test("the parent id on a child card opens the parent", async () => {
       }),
     },
   });
-  await renderApp(fake.bridge);
-  await user.click(await screen.findByRole("button", { name: "Loop" }));
   await user.click(await screen.findByRole("button", { name: "Parent CYC-381" }));
   await waitFor(() =>
-    expect(fake.calls.some(([n, , id]) => n === "loopTicket" && id === "CYC-381")).toBe(true),
+    expect(calls.some(([n, , id]) => n === "loopTicket" && id === "CYC-381")).toBe(true),
   );
 });
 
 test("the Loop title and crumbs fade at the end, and the scrolling areas fade at the top", async () => {
-  const { user } = await mount({
+  const { user } = await mountBoard({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: { CYC: board },
   });
@@ -1299,7 +1478,7 @@ test("the Loop title and crumbs fade at the end, and the scrolling areas fade at
   ) as HTMLElement;
   expect(getComputedStyle(column).maskImage).toContain("linear-gradient");
   expect(Number.parseFloat(getComputedStyle(column).paddingTop)).toBeGreaterThan(0);
-  await user.click(screen.getByRole("button", { name: "Overview" }));
+  await user.click(screen.getByRole("button", { name: "Loop" }));
   await screen.findByRole("region", { name: "Projects" });
   const heading = document.querySelector<HTMLElement>('[data-slot="loop-heading"]') as HTMLElement;
   expect(getComputedStyle(heading).textOverflow).not.toBe("ellipsis");
@@ -1351,7 +1530,7 @@ test("a card shows passed/total and the current node when it has a graph, and no
     },
   };
   const plain = ticket(611, "In Progress");
-  await mount({
+  await mountBoard({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: { CYC: withTickets({ "In Progress": [withGraph, plain] }) },
   });
@@ -1388,6 +1567,7 @@ const graphTicket = () => {
   return {
     connected: true,
     loopProjects: { kind: "ok", projects: [cycle] },
+    workspaceRepos: { "/work": cycle.repo.displayName },
     loopBoards: { CYC: withTickets({ "In Progress": [mine] }) },
     loopTickets: { "CYC-610": detailOf(mine, { graph: graphOf(nodes) }) },
   } satisfies NonNullable<Parameters<typeof fakeBridge>[0]>;
@@ -1402,7 +1582,7 @@ const openGraphDrawer = async (
   const fake = fakeBridge({ ...graphTicket(), ...extra });
   fake.bridge.sessions = async () => [{ ...summary("sess-2"), title: "[CYC-610] Node 2" }];
   const store = await renderApp(fake.bridge);
-  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  await user.click(await screen.findByRole("button", { name: "Kanban" }));
   await user.click(await screen.findByRole("button", { name: "Ticket 610" }));
   const drawer = await screen.findByRole("complementary", { name: "CYC-610" });
   await within(drawer).findByRole("heading", { name: "Execution Graph" });
@@ -1547,6 +1727,7 @@ test("a pending Backlog ticket can be returned from the drawer with an optional 
   const options = {
     connected: true,
     loopProjects: { kind: "ok" as const, projects: [cycle] },
+    workspaceRepos: { "/work": cycle.repo.displayName },
     loopBoards: { CYC: withTickets({ Backlog: [mine] }) },
     loopTickets: {
       "CYC-705": detailOf(mine, { actions: ["approve", "return"] }),
@@ -1557,7 +1738,7 @@ test("a pending Backlog ticket can be returned from the drawer with an optional 
   };
   const fake = fakeBridge(options);
   await renderApp(fake.bridge);
-  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  await user.click(await screen.findByRole("button", { name: "Kanban" }));
   await user.click(await screen.findByRole("button", { name: "Ticket 705" }));
   const drawer = await screen.findByRole("complementary", { name: "CYC-705" });
   await user.click(await within(drawer).findByRole("button", { name: "Return CYC-705" }));
@@ -1583,6 +1764,7 @@ test("ticket chat shows an agent picker when multiple local agents are available
   const fake = fakeBridge({
     connected: true,
     loopProjects: { kind: "ok", projects: [cycle] },
+    workspaceRepos: { "/work": cycle.repo.displayName },
     loopBoards: { CYC: withTickets({ Todo: [mine] }) },
     loopTickets: { "CYC-388": detailOf(mine, { chat: "new" }) },
     loopChat: { kind: "failed", reason: "offline" },
@@ -1593,7 +1775,7 @@ test("ticket chat shows an agent picker when multiple local agents are available
     { id: "pi", name: "Pi", available: false, configSchema: {} },
   ];
   await renderApp(fake.bridge);
-  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  await user.click(await screen.findByRole("button", { name: "Kanban" }));
   await user.click(await screen.findByRole("button", { name: "Ticket 388" }));
   const drawer = await screen.findByRole("complementary", { name: "CYC-388" });
 
@@ -1628,11 +1810,12 @@ test("ticket chat shows an agent picker when multiple local agents are available
   const single = fakeBridge({
     connected: true,
     loopProjects: { kind: "ok", projects: [cycle] },
+    workspaceRepos: { "/work": cycle.repo.displayName },
     loopBoards: { CYC: withTickets({ Todo: [mine] }) },
     loopTickets: { "CYC-388": detailOf(mine, { chat: "new" }) },
   });
   await renderApp(single.bridge);
-  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  await user.click(await screen.findByRole("button", { name: "Kanban" }));
   await user.click(await screen.findByRole("button", { name: "Ticket 388" }));
   const singleDrawer = await screen.findByRole("complementary", { name: "CYC-388" });
   await within(singleDrawer).findByRole("button", { name: "Talk with an agent CYC-388" });
@@ -1646,7 +1829,7 @@ test("a refused retry says why", async () => {
     loopGraphAct: { kind: "failed", reason: "not_allowed" },
   });
   await renderApp(fake.bridge);
-  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  await user.click(await screen.findByRole("button", { name: "Kanban" }));
   await user.click(await screen.findByRole("button", { name: "Ticket 610" }));
   const drawer = await screen.findByRole("complementary", { name: "CYC-610" });
   await user.click(await within(drawer).findByRole("button", { name: "Retry node Node 2" }));
@@ -1663,6 +1846,7 @@ test("an In Progress ticket drawer shows run progress, translated stage, heartbe
   const fake = fakeBridge({
     connected: true,
     loopProjects: { kind: "ok", projects: [cycle] },
+    workspaceRepos: { "/work": cycle.repo.displayName },
     loopBoards: { CYC: withTickets({ "In Progress": [mine] }) },
     loopTickets: { "CYC-900": detailOf(mine, { chat: "watch" }) },
     loopRunDetails: {
@@ -1694,7 +1878,7 @@ test("an In Progress ticket drawer shows run progress, translated stage, heartbe
   });
   fake.bridge.sessions = async () => [{ ...summary("sess-qa"), title: "[CYC-900] QA" }];
   await renderApp(fake.bridge);
-  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  await user.click(await screen.findByRole("button", { name: "Kanban" }));
   await user.click(await screen.findByRole("button", { name: "Ticket 900" }));
   const drawer = await screen.findByRole("complementary", { name: "CYC-900" });
 
@@ -1739,11 +1923,12 @@ test("an In Progress ticket drawer shows run progress, translated stage, heartbe
   expect(sent.includes("Ticket 900")).toBe(false);
 });
 
-test("board alert strip, sidebar/nav notice badges, intent retry, and loop-activity live refresh work together", async () => {
+test("board alert strip, sidebar notice badge, intent retry, and loop-activity live refresh work together", async () => {
   const user = userEvent.setup();
   const fake = fakeBridge({
     connected: true,
     loopProjects: { kind: "ok", projects: [cycle] },
+    workspaceRepos: { "/work": cycle.repo.displayName },
     loopBoards: { CYC: board },
     loopNotices: {
       CYC: {
@@ -1769,14 +1954,12 @@ test("board alert strip, sidebar/nav notice badges, intent retry, and loop-activ
     loopRetryIntents: { kind: "ok", retried: 2 },
   });
   await renderApp(fake.bridge);
-  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  await user.click(await screen.findByRole("button", { name: "Kanban" }));
 
-  // Single-project board shows the compact alert strip and sidebar/nav badges without breaking exact button names.
+  // Board shows the compact alert strip and top Loop action shows the notice badge without breaking its exact button name.
   await screen.findByText("2 items need you");
   const loopBtn = screen.getByRole("button", { name: "Loop" });
   expect(loopBtn.querySelector('[data-slot="loop-nav-badge"]')?.textContent).toBe("2");
-  const overviewBtn = screen.getByRole("button", { name: "Overview" });
-  expect(overviewBtn.querySelector('[data-slot="loop-nav-badge"]')?.textContent).toBe("2");
 
   // Retry write calls loopRetryIntents and displays dismissible status.
   await user.click(screen.getByRole("button", { name: "Retry write for CYC-386" }));

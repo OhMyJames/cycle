@@ -99,7 +99,7 @@ type LocationConfig = {
 - **Switcher** 是一个菜单,列出所有 workspace,按工作位置分组(本地在前;多于一个工作位置时才显示分组标题,标题带连接状态),组内按 `updatedAt` 倒序。只有一个工作位置时,没有按工作位置分组的标题(没有可选的东西)。
 - Switcher 上有一个方块数字徽章,数**其他 workspace**(所有工作位置)里最紧急的那一类;完整的计数写进 aria-label。
 - 搜索跨所有 workspace 和工作位置,结果按 workspace 分组。
-- 版式(DESIGN.md §4.1):顶部是 New session、Search,其下是 switcher(它是下面会话列表的标题);只有中间的会话列表滚动;底部一行是版本、更新状态和进入设置页的按钮(见下面"设置页")。
+- 版式(DESIGN.md §4.1、§4.7):顶部固定 `New`、`Search`、`Connectors`、`Loop`(点开进入跨项目 Overview)四项全局动作;分隔线之下是当前 workspace 的 switcher;当本地 workspace 的 git remote 匹配到 Loop Project(`owner/name`)时,紧接在 switcher 下展示 `Kanban` 和 `Timeline` 入口(再以细分隔线与会话列表隔开);只有中间的会话列表滚动;底部一行是账号菜单入口(含版本、更新状态和进入设置页的按钮,见下面"设置页")。
 
 当前 workspace 里的会话分组:**Needs you**(`requires_action`)、**Running**(`running`,以及有后台子 agent 的)、然后 Today / Yesterday / Earlier,按本地日界线分,用 `updatedAt`。每个 workspace 默认显示 20 条,"Show N more";有状态的和当前打开的永远显示。
 

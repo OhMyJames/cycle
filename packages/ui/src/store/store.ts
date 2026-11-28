@@ -358,6 +358,7 @@ export class AppStore extends StoreBase {
   // ---- loop ----
 
   loadLoopProjects = this.#loop.loadProjects;
+  loadWorkspaceRepo = this.#loop.loadWorkspaceRepo;
   loadLoopBoard = this.#loop.loadBoard;
   loadLoopRuns = this.#loop.loadRuns;
   loadLoopTicket = this.#loop.loadTicket;

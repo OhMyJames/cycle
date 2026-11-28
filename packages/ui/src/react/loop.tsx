@@ -1,8 +1,7 @@
-// The Loop mode (CYC-386, CYC-387, CYC-500): the Projects the Loop server on this computer serves, and one Project's board.
-// The sidebar keeps its frame and only its lower half becomes the Loop's navigation (`LoopNav`); the main area shows the
-// overview or the board (`LoopMain`). The Projects are listed in the navigation: with the server away they stay listed,
-// greyed, and say so. The page only reads and shows what the Loop server answers (the board, the
-// Notices) and asks it to approve or return a batch (`loop-board.tsx`, `loop-ticket.tsx`, `loop-notices.tsx`).
+// The Loop views (CYC-386, CYC-387, CYC-533): cross-project Overview from the top Loop action, and one Project's
+// Kanban or Timeline opened from under the matched workspace (or from Overview). The page only reads and shows what
+// the Loop server answers (the board, the Notices) and asks it to approve or return a batch (`loop-board.tsx`,
+// `loop-ticket.tsx`, `loop-notices.tsx`).
 import { isComposing } from "@ui-sdk/core";
 import { Button } from "@ui-sdk/react/button";
 import { useEffect, useRef, useState } from "react";
@@ -10,7 +9,7 @@ import type { LoopBoardColumn, LoopProjectInfo, LoopRunsAnswer } from "../api.ts
 import { useI18n } from "./i18n.tsx";
 import { ChevronRightIcon, RefreshIcon } from "./icons.tsx";
 import { Board } from "./loop-board.tsx";
-import { type LoopView, up, viewProject } from "./loop-nav.ts";
+import { type LoopProjectTab, type LoopView, up, viewProject } from "./loop-nav.ts";
 import { Notices, noticeUrgency, type RetryIntents } from "./loop-notices.tsx";
 import { PageGroup, PageRows } from "./page-layout.tsx";
 import { ShellNotices, ShellTitle } from "./shell.tsx";
@@ -209,75 +208,24 @@ function RunState({ runs, projectKey }: { runs: LoopRunsAnswer | undefined; proj
   );
 }
 
-/** The sidebar's lower half in the Loop mode: the Overview, then every Project with its Kanban. */
-export function LoopNav({ view, onView }: { view: LoopView; onView: (view: LoopView) => void }) {
-  const { t } = useI18n();
-  const { projects, connected, notices } = useAppState((s) => s.loop);
-  const away = connected === false;
-  const chosenKey = projects.find((p) => p.projectKey === viewProject(view))?.projectKey;
-  const noticeCount = projects.reduce((sum, p) => {
-    const answer = notices[p.projectKey];
-    return sum + (answer?.kind === "ok" ? answer.notices.length : 0);
-  }, 0);
-  return (
-    <section data-slot="loop-nav" aria-label={t("loop.nav")}>
-      <button
-        type="button"
-        data-slot="loop-nav-item"
-        data-kind="loop-nav-overview"
-        aria-current={chosenKey === undefined ? "page" : undefined}
-        aria-description={
-          noticeCount > 0 ? t("loop.notices.count", { count: noticeCount }) : undefined
-        }
-        onClick={() => onView({ at: "overview" })}
-      >
-        <span>{t("loop.overview")}</span>
-        {noticeCount > 0 ? (
-          <span data-slot="loop-nav-badge" aria-hidden="true">
-            {noticeCount}
-          </span>
-        ) : null}
-      </button>
-      {projects.length > 0 ? (
-        <div data-slot="loop-nav-group">
-          <div data-slot="loop-nav-heading">{t("loop.projects")}</div>
-          {projects.map((p) => (
-            <div key={p.projectKey} data-slot="loop-nav-project" data-project={p.projectKey}>
-              <span data-slot="loop-nav-name" title={p.name}>
-                {p.name}
-              </span>
-              <button
-                type="button"
-                data-slot="loop-nav-item"
-                data-kind="loop-nav-kanban"
-                data-child=""
-                aria-label={t("loop.kanbanOf", { project: p.name })}
-                aria-current={chosenKey === p.projectKey ? "page" : undefined}
-                disabled={away}
-                onClick={() => onView({ at: "project", projectKey: p.projectKey, tab: "kanban" })}
-              >
-                <span>{t("loop.tab.kanban")}</span>
-                {away ? <span data-slot="loop-nav-note">{t("loop.offline.note")}</span> : null}
-              </button>
-            </div>
-          ))}
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-/** The main area in the Loop mode: the title bar, what is wrong, then the overview or one Project's board. */
+/** The main area in a Loop view: the title bar, what is wrong, then the overview, one Project's board, or its timeline. */
 export function LoopMain({
   view,
   onView,
+  onOpenProject,
   onBack,
   onClose,
   active = true,
 }: {
   view: LoopView;
   onView: (view: LoopView) => void;
-  /** Closes the open ticket drawer back to its board; does nothing elsewhere in the Loop mode. */
+  /** Opens a Project's Kanban or Timeline from Overview or Timeline; syncs workspace & tracks analytics in App. */
+  onOpenProject?: (
+    projectKey: string,
+    tab: LoopProjectTab,
+    from: "overview" | "sidebar" | "timeline",
+  ) => void;
+  /** Closes the open ticket drawer back to its board; does nothing elsewhere in Loop. */
   onBack: () => void;
   /** Out of the Loop: a conversation about a ticket was started. */
   onClose: () => void;
@@ -299,25 +247,24 @@ export function LoopMain({
   const projectKey = viewProject(view);
   const chosen = projects.find((p) => p.projectKey === projectKey);
   const chosenKey = chosen?.projectKey;
+  const isTimeline = view.at === "project" && view.tab === "timeline";
   const allKeys = projects.map((p) => p.projectKey).join("\n");
 
-  // Entering with nowhere remembered: the board when there is only one Project, else the overview.
-  const landing = view.at === "overview" && view.landing === true;
-  useEffect(() => {
-    if (!landing || connected !== true || projects.length === 0) return;
-    const only = projects.length === 1 ? projects[0] : undefined;
-    onView(
-      only !== undefined
-        ? { at: "project", projectKey: only.projectKey, tab: "kanban" }
-        : { at: "overview" },
-    );
-  }, [landing, connected, projects, onView]);
+  const openProject = (
+    key: string,
+    tab: LoopProjectTab,
+    from: "overview" | "sidebar" | "timeline",
+  ) => {
+    if (onOpenProject !== undefined) onOpenProject(key, tab, from);
+    else onView({ at: "project", projectKey: key, tab });
+  };
 
   useEffect(() => {
     if (connected !== true) return;
-    if (chosenKey !== undefined) void store.loadLoopBoard(chosenKey);
-    else for (const key of allKeys.split("\n")) if (key !== "") void store.loadLoopBoard(key);
-  }, [store, chosenKey, connected, allKeys]);
+    if (chosenKey !== undefined) {
+      if (!isTimeline) void store.loadLoopBoard(chosenKey);
+    } else for (const key of allKeys.split("\n")) if (key !== "") void store.loadLoopBoard(key);
+  }, [store, chosenKey, isTimeline, connected, allKeys]);
 
   // Sessions that wait on an answer are part of the Notices: they are read again when that set changes.
   const waiting = useAppState((s) =>
@@ -328,8 +275,8 @@ export function LoopMain({
       .sort()
       .join(),
   );
-  // Read every Project's Notices while the Loop view is open (both Overview and Kanban), so badges and the board's
-  // compact alert strip stay fresh even for single-project users who land straight on Kanban.
+  // Read every Project's Notices while the Loop view is open (Overview, Kanban, or Timeline), so badges and the
+  // board's compact alert strip stay fresh.
   useEffect(() => {
     if (connected !== true) return;
     const read = () => {
@@ -353,8 +300,8 @@ export function LoopMain({
     if (unknown || failed) store.takeLoopRequest(request.n);
   }, [store, request, requestedBoard, connected, projects]);
 
-  // Escape closes the ticket drawer (one level up). It does not leave the Loop mode: the sidebar's Sessions does. What is
-  // drawn over the page (a dialog, a menu) takes its own Escape first, and the board's batch selection before this.
+  // Escape closes the ticket drawer (one level up). It does not leave Loop: picking a session or New session does.
+  // What is drawn over the page (a dialog, a menu) takes its own Escape first, and the board's batch selection before this.
   const goBack = useRef(onBack);
   goBack.current = onBack;
   const viewRef = useRef(view);
@@ -402,7 +349,9 @@ export function LoopMain({
         <span aria-current="page">
           {view.at === "ticket" && view.projectKey === chosen.projectKey
             ? view.identifier
-            : t("loop.tab.kanban")}
+            : isTimeline
+              ? t("loop.tab.timeline")
+              : t("loop.tab.kanban")}
         </span>
       </nav>
     );
@@ -428,7 +377,19 @@ export function LoopMain({
         data-kind="loop-body"
         data-full={chosen !== undefined ? "" : undefined}
       >
-        {chosen !== undefined ? (
+        {chosen !== undefined && isTimeline ? (
+          <div data-slot="loop-board-state" data-kind="loop-timeline">
+            <StateBlock
+              tone="empty"
+              title={t("loop.timeline.placeholder.title")}
+              body={t("loop.timeline.placeholder.body")}
+              action={{
+                label: t("loop.openKanban"),
+                onAction: () => openProject(chosen.projectKey, "kanban", "timeline"),
+              }}
+            />
+          </div>
+        ) : chosen !== undefined ? (
           <Board
             projectKey={chosen.projectKey}
             answer={loop.boards[chosen.projectKey]}
@@ -464,7 +425,7 @@ export function LoopMain({
               <Overview
                 projects={projects}
                 away={away}
-                onOpenProject={(key) => onView({ at: "project", projectKey: key, tab: "kanban" })}
+                onOpenProject={(key) => openProject(key, "kanban", "overview")}
                 onOpenTicket={(key, identifier) =>
                   onView({ at: "ticket", projectKey: key, identifier })
                 }

@@ -23,14 +23,15 @@ import { ConversationView } from "./conversation.tsx";
 import { ConfirmDialog, LocationDialog, type RemoteLocation } from "./dialogs.tsx";
 import { I18nProvider, useI18n } from "./i18n.tsx";
 import { ErrorCircleIcon, SidebarIcon } from "./icons.tsx";
-import { LoopMain, LoopNav } from "./loop.tsx";
+import { LoopMain } from "./loop.tsx";
+import { type LoopProjectTab, matchLoopProject } from "./loop-nav.ts";
 import { errorText, SessionNotices } from "./notice-line.tsx";
 import { currentPlan } from "./plan.tsx";
 import { SearchDialog } from "./search.tsx";
 import { SessionHeader } from "./session-header.tsx";
 import { SessionSettings } from "./session-settings.tsx";
 import { SettingsPage } from "./settings.tsx";
-import { AppShell, Place, ShellNotices, ShellSidebar } from "./shell.tsx";
+import { AppShell, Place, ShellNotices } from "./shell.tsx";
 import { SidePanel } from "./side-panel.tsx";
 import { SessionsNav, SidebarActions } from "./sidebar.tsx";
 import { SplitLayout } from "./split-layout.tsx";
@@ -164,6 +165,9 @@ function AppWindow() {
 
   const places = usePlaces(appRef);
   const { place } = places;
+  const loopProjects = useAppState((s) => s.loop.projects);
+  const loopConnected = useAppState((s) => s.loop.connected);
+  const workspaceRepos = useAppState((s) => s.loop.workspaceRepos);
   const loopNoticeCount = useAppState((s) =>
     s.loop.projects.reduce((sum, p) => {
       const answer = s.loop.notices[p.projectKey];
@@ -183,6 +187,66 @@ function AppWindow() {
   });
   const trust = useWorkspaceTrust(nav.current, status, panel !== "none");
   useMarkRead(session, status, places.base === "sessions");
+
+  // Discover Loop Projects once signed in so a matched local workspace shows Kanban and Timeline in the sidebar (CYC-533).
+  useEffect(() => {
+    if (!ready) return;
+    void store.loadLoopProjects();
+  }, [ready, store]);
+
+  const localCwdsKey = useMemo(
+    () =>
+      nav.workspaces
+        .filter(
+          (w) => locations.find((h) => h.id === w.locationId)?.kind === "local" && w.cwd !== "",
+        )
+        .map((w) => w.cwd)
+        .join("\n"),
+    [nav.workspaces, locations],
+  );
+  useEffect(() => {
+    if (!ready || localCwdsKey === "") return;
+    for (const cwd of localCwdsKey.split("\n")) void store.loadWorkspaceRepo(cwd);
+  }, [ready, store, localCwdsKey]);
+
+  const matchedProjectOf = (workspace: { locationId: string; cwd: string } | undefined) => {
+    if (workspace === undefined) return undefined;
+    if (locations.find((h) => h.id === workspace.locationId)?.kind !== "local") return undefined;
+    return matchLoopProject(loopProjects, workspaceRepos[workspace.cwd]);
+  };
+  const currentLoopProject = matchedProjectOf(nav.current);
+  const syncWorkspaceForProject = (projectKey: string) => {
+    const project = loopProjects.find((p) => p.projectKey === projectKey);
+    if (project === undefined) return;
+    const hit = nav.workspaces.find((w) => matchedProjectOf(w)?.projectKey === project.projectKey);
+    if (hit !== undefined && hit.key !== nav.current?.key) nav.chooseWorkspace(hit.key);
+  };
+  const loopRequest = useAppState((s) => s.loop.request);
+  const lastSyncedRequest = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (loopRequest === undefined || loopRequest.n === lastSyncedRequest.current) return;
+    const project = loopProjects.find((p) => p.projectKey === loopRequest.projectKey);
+    const localWorkspaces = nav.workspaces.filter(
+      (w) => locations.find((h) => h.id === w.locationId)?.kind === "local" && w.cwd !== "",
+    );
+    const hit =
+      project === undefined
+        ? undefined
+        : localWorkspaces.find(
+            (w) =>
+              matchLoopProject(loopProjects, workspaceRepos[w.cwd])?.projectKey ===
+              project.projectKey,
+          );
+    if (hit !== undefined) {
+      lastSyncedRequest.current = loopRequest.n;
+      if (hit.key !== nav.current?.key) nav.chooseWorkspace(hit.key);
+      return;
+    }
+    const allReposSettled = localWorkspaces.every((w) => w.cwd in workspaceRepos);
+    if (loopConnected !== undefined && allReposSettled) {
+      lastSyncedRequest.current = loopRequest.n;
+    }
+  }, [loopRequest, loopProjects, loopConnected, nav, locations, workspaceRepos]);
 
   const close = () => setPanel("none");
   // Opens a panel, and counts that it was opened (which one, and whether by a key).
@@ -308,23 +372,96 @@ function AppWindow() {
   );
   // The way back from a page says where it goes.
   const backLabel = t(places.base === "loop" ? "settings.backToLoop" : "settings.back");
-  // The sidebar's actions: the same in the sessions and in the Loop, with the mode that is shown.
-  const sidebarActions = (mode: "sessions" | "loop") => (
-    <SidebarActions
-      locations={locations}
-      status={status}
-      onNewSession={() => newSession()}
-      onSearch={() => open("search")}
-      onConnectors={places.openConnectors}
-      onLoop={places.openLoop}
-      onSessions={() => {
-        if (place.id !== "loop") return;
-        store.track("sessions_mode_shown", {});
-        places.leaveLoop();
-      }}
-      mode={mode}
-      loopNoticeCount={loopNoticeCount}
-    />
+  const activeProjectTab: LoopProjectTab | undefined =
+    place.id === "loop" && currentLoopProject !== undefined
+      ? place.view.at === "project" && place.view.projectKey === currentLoopProject.projectKey
+        ? place.view.tab
+        : place.view.at === "ticket" && place.view.projectKey === currentLoopProject.projectKey
+          ? "kanban"
+          : undefined
+      : undefined;
+
+  // The sidebar shared by the sessions and the Loop: top global actions, then the current workspace with its Loop views and session list.
+  const mainSidebar = (
+    <>
+      <SidebarActions
+        locations={locations}
+        status={status}
+        onNewSession={() => newSession()}
+        onSearch={() => open("search")}
+        onConnectors={places.openConnectors}
+        onLoop={places.openLoop}
+        loopOverviewActive={place.id === "loop" && place.view.at === "overview"}
+        loopNoticeCount={loopNoticeCount}
+      />
+      <SessionsNav
+        locations={locations}
+        status={status}
+        workspaces={nav.workspaces}
+        current={nav.current}
+        elsewhere={nav.elsewhere}
+        onChooseWorkspace={(key) => {
+          nav.chooseWorkspace(key);
+          if (place.id === "loop" && place.view.at !== "overview") {
+            const ws = nav.workspaces.find((w) => w.key === key);
+            const matched = matchedProjectOf(ws);
+            if (matched !== undefined) {
+              const nextTab: LoopProjectTab =
+                place.view.at === "project" ? place.view.tab : "kanban";
+              places.openLoopProject(matched.projectKey, nextTab, "sidebar");
+            } else {
+              places.leaveLoop();
+            }
+          }
+        }}
+        loopProject={currentLoopProject}
+        loopAway={loopConnected === false}
+        activeProjectTab={activeProjectTab}
+        onOpenProjectTab={
+          currentLoopProject !== undefined
+            ? (tab) => places.openLoopProject(currentLoopProject.projectKey, tab, "sidebar")
+            : undefined
+        }
+        list={nav.list}
+        selected={place.id === "sessions" ? nav.openKey : undefined}
+        away={nav.away}
+        showArchived={nav.showArchived}
+        pinned={pinned}
+        onSelectSession={(chosen) => {
+          const alreadyOpen =
+            blank === undefined &&
+            chosen.locationId === selectedLocation &&
+            chosen.sessionId === selectedSession;
+          if (place.id !== "sessions") places.leaveLoop();
+          if (!alreadyOpen) void store.selectSession(chosen.locationId, chosen.sessionId);
+        }}
+        onSessionAction={(chosen, action) => {
+          switch (action) {
+            case "pin":
+            case "unpin":
+              pin(chosen, action === "pin", "sidebar");
+              return;
+            case "archive":
+            case "restore":
+              void store.archiveSession(chosen.sessionId, action === "archive", chosen.locationId);
+              return;
+            case "delete":
+              askDelete(chosen);
+              return;
+            default:
+              action satisfies never;
+          }
+        }}
+        onConnectLocation={(id) => void store.connectLocation(id)}
+        onToggleArchived={() => nav.setShowArchived((v) => !v)}
+        onShowAll={nav.showAllSessions}
+        trust={trust.trusted}
+        onTrust={(trusted) => {
+          if (trusted) open("trust");
+          else void trust.changeTrust(false);
+        }}
+      />
+    </>
   );
   const { loopView } = places;
 
@@ -361,9 +498,7 @@ function AppWindow() {
         sidebarLabel={sidebarLabel}
         sidebarCollapsed={sidebarCollapsed}
         toggle={sidebarToggle}
-        sidebarActions={
-          place.id === "sessions" || place.id === "loop" ? sidebarActions(place.id) : null
-        }
+        sidebarActions={place.id === "sessions" || place.id === "loop" ? mainSidebar : null}
         sidebarNotices={<AppNotices />}
         topNotices={<AppNotices at="top" />}
         // The sessions say what failed in their own notices, with what is the matter with the open one.
@@ -372,53 +507,6 @@ function AppWindow() {
       >
         {/* Always here, under whatever else is shown: what was open and half-written is there on the way back. */}
         <Place id="sessions" active={place.id === "sessions"}>
-          <ShellSidebar>
-            <SessionsNav
-              locations={locations}
-              status={status}
-              workspaces={nav.workspaces}
-              current={nav.current}
-              elsewhere={nav.elsewhere}
-              onChooseWorkspace={nav.chooseWorkspace}
-              list={nav.list}
-              selected={nav.openKey}
-              away={nav.away}
-              showArchived={nav.showArchived}
-              pinned={pinned}
-              onSelectSession={(chosen) =>
-                void store.selectSession(chosen.locationId, chosen.sessionId)
-              }
-              onSessionAction={(chosen, action) => {
-                switch (action) {
-                  case "pin":
-                  case "unpin":
-                    pin(chosen, action === "pin", "sidebar");
-                    return;
-                  case "archive":
-                  case "restore":
-                    void store.archiveSession(
-                      chosen.sessionId,
-                      action === "archive",
-                      chosen.locationId,
-                    );
-                    return;
-                  case "delete":
-                    askDelete(chosen);
-                    return;
-                  default:
-                    action satisfies never;
-                }
-              }}
-              onConnectLocation={(id) => void store.connectLocation(id)}
-              onToggleArchived={() => nav.setShowArchived((v) => !v)}
-              onShowAll={nav.showAllSessions}
-              trust={trust.trusted}
-              onTrust={(trusted) => {
-                if (trusted) open("trust");
-                else void trust.changeTrust(false);
-              }}
-            />
-          </ShellSidebar>
           <ShellNotices>
             <SessionNotices
               locationId={selectedLocation}
@@ -503,14 +591,17 @@ function AppWindow() {
         {/* Kept under a page opened from it, as the sessions are. */}
         {loopView !== undefined ? (
           <Place id="loop" active={place.id === "loop"}>
-            <ShellSidebar>
-              <div data-slot="sidebar-scroll" data-mode="loop">
-                <LoopNav view={loopView} onView={places.showLoopView} />
-              </div>
-            </ShellSidebar>
             <LoopMain
               view={loopView}
-              onView={places.showLoopView}
+              onView={(next) => {
+                if (next.at === "ticket" && loopView.at === "overview")
+                  syncWorkspaceForProject(next.projectKey);
+                places.showLoopView(next);
+              }}
+              onOpenProject={(projectKey, tab, from) => {
+                syncWorkspaceForProject(projectKey);
+                places.openLoopProject(projectKey, tab, from);
+              }}
               onBack={places.loopBack}
               onClose={places.leaveLoop}
               active={place.id === "loop"}

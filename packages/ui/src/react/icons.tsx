@@ -435,3 +435,28 @@ export const TrashIcon = ({ size = 16, ...rest }: IconProps) => (
     </g>
   </Svg>
 );
+
+/** iconmcp: columns-3 */
+export const KanbanIcon = ({ size = 16, ...rest }: IconProps) => (
+  <Svg size={size} {...rest}>
+    <g>
+      <rect x="2.25" y="2.75" width="11.5" height="10.5" rx="1.5" />
+      <line x1="6.25" y1="2.75" x2="6.25" y2="13.25" />
+      <line x1="9.75" y1="2.75" x2="9.75" y2="13.25" />
+    </g>
+  </Svg>
+);
+
+/** iconmcp: list-timeline */
+export const TimelineIcon = ({ size = 16, ...rest }: IconProps) => (
+  <Svg size={size} {...rest}>
+    <g>
+      <circle cx="4" cy="4.25" r="1.25" />
+      <circle cx="4" cy="11.75" r="1.25" />
+      <line x1="4" y1="5.75" x2="4" y2="10.25" />
+      <line x1="7.5" y1="4.25" x2="13.25" y2="4.25" />
+      <line x1="7.5" y1="8" x2="11.75" y2="8" />
+      <line x1="7.5" y1="11.75" x2="13.25" y2="11.75" />
+    </g>
+  </Svg>
+);

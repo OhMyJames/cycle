@@ -48,6 +48,7 @@ import {
   cancelLoopRun,
   loopFeed,
   readLoopProjects,
+  readWorkspaceRepo,
   retireKeyFile,
   retryLoopIntents,
   startTicketChat,
@@ -399,6 +400,7 @@ export const startApp = async (options: AppOptions) => {
         ? await readLoopProjects(options.loop.socket)
         : ({ kind: "disconnected" } as const);
     },
+    workspaceRepo: (cwd: unknown) => readWorkspaceRepo(cwd),
     loopRuns: () => answerRuns(loopRuns, (event, props) => analytics.track(event, props)),
     loopBoard: (projectKey: unknown) =>
       answerBoard(loopOptions(), projectKey, (event, props) => analytics.track(event, props)),

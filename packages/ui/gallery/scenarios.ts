@@ -3510,10 +3510,12 @@ export const scenarios: Record<string, Scenario> = {
       },
     },
     after: async (root) => {
-      const btn = root.querySelector<HTMLButtonElement>(
-        '[data-kind="mode-switch"][data-mode="loop"]',
+      root.querySelector<HTMLButtonElement>('[data-page-open="loop"]')?.click();
+      await until(
+        () => root.querySelector('[data-slot="loop-project-open"]') !== null,
+        "loop overview",
       );
-      btn?.click();
+      root.querySelector<HTMLButtonElement>('[data-slot="loop-project-open"]')?.click();
       await until(() => root.querySelector('[data-kind="loop-board"]') !== null, "loop board");
       await frames(4);
     },
@@ -3615,7 +3617,12 @@ export const scenarios: Record<string, Scenario> = {
       },
     },
     after: async (root) => {
-      root.querySelector<HTMLButtonElement>('[data-kind="mode-switch"][data-mode="loop"]')?.click();
+      root.querySelector<HTMLButtonElement>('[data-page-open="loop"]')?.click();
+      await until(
+        () => root.querySelector('[data-slot="loop-project-open"]') !== null,
+        "loop overview",
+      );
+      root.querySelector<HTMLButtonElement>('[data-slot="loop-project-open"]')?.click();
       await until(
         () => root.querySelector('[data-slot="loop-ticket-title"]') !== null,
         "ticket card",
@@ -3778,7 +3785,7 @@ export const scenarios: Record<string, Scenario> = {
       },
     },
     after: async (root) => {
-      root.querySelector<HTMLButtonElement>('[data-kind="mode-switch"][data-mode="loop"]')?.click();
+      root.querySelector<HTMLButtonElement>('[data-page-open="loop"]')?.click();
       await until(
         () => root.querySelector('[data-slot="loop-notice"]') !== null,
         "overview notices",
