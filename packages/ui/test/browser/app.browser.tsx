@@ -1911,7 +1911,7 @@ test("empty state offers Start a new session and high-risk mode chip carries dat
   expect(screen.getByRole("button", { name: "Hide sidebar" })).toBeTruthy();
 });
 
-const toolsAt400 = async (modelTitle: string) => {
+const toolsAt400 = async (modelTitle: string, modeTitle = "Auto") => {
   const { user, emit } = await mount({
     configure: (script) => {
       const session = { ...summary("s1"), config: { mode: "auto", model: "m", effort: "high" } };
@@ -1938,7 +1938,7 @@ const toolsAt400 = async (modelTitle: string) => {
               mode: {
                 type: "string",
                 title: "Permission mode",
-                oneOf: [{ const: "auto", title: "Auto" }],
+                oneOf: [{ const: "auto", title: modeTitle }],
               },
               model: { type: "string", title: "Model", oneOf: [{ const: "m", title: modelTitle }] },
               effort: {
@@ -1977,7 +1977,10 @@ const toolsAt400 = async (modelTitle: string) => {
   return { box, tools };
 };
 
-const expectToolsFit = ({ box, tools }: { box: HTMLElement; tools: HTMLElement }) => {
+const expectToolsFit = (
+  { box, tools }: { box: HTMLElement; tools: HTMLElement },
+  shrunk = false,
+) => {
   const edge = box.getBoundingClientRect();
   // The bar hangs out of the box by a chip's clear border and padding (composer.css), so the words' own edge is the box's.
   const controls = [
@@ -1995,7 +1998,9 @@ const expectToolsFit = ({ box, tools }: { box: HTMLElement; tools: HTMLElement }
     // Not cropped: the words are all there, but a model's name too long for the line, which fades at its end and
     // keeps enough to read.
     const words = c.querySelector<HTMLElement>('[data-slot="setting-value"]');
-    if (words && c.getAttribute("data-setting") !== "model")
+    // The overflowing text fades; it never ends in an ellipsis.
+    if (words) expect(getComputedStyle(words).textOverflow).not.toBe("ellipsis");
+    if (words && c.getAttribute("data-setting") !== "model" && !shrunk)
       expect(words.scrollWidth).toBeLessThanOrEqual(words.clientWidth);
     if (words && c.getAttribute("data-setting") === "model")
       if (words.scrollWidth > words.clientWidth)
@@ -2012,6 +2017,13 @@ const expectToolsFit = ({ box, tools }: { box: HTMLElement; tools: HTMLElement }
 
 test("the bar under the box keeps one line in a 400px conversation", async () => {
   expectToolsFit(await toolsAt400("Opus"));
+});
+
+test("a long permission name with a long model name keeps the bar to one line in a 400px conversation", async () => {
+  expectToolsFit(
+    await toolsAt400("Claude Opus 4.5 with extended context", "Bypass all permission prompts"),
+    true,
+  );
 });
 
 test("a long model name keeps the bar to one line in a 400px conversation", async () => {
