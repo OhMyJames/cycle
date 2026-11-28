@@ -143,7 +143,14 @@ export const devFlow = (host: FlowHost): Flow => {
       await resetBlockedNodeOnResume(host, current);
       return {
         ...current,
-        dev: { ...current.dev, ciRound: 0, conflictRound: 0, conflict: null, resolvedFiles: [] },
+        dev: {
+          ...current.dev,
+          ciRound: 0,
+          ciWait: null,
+          conflictRound: 0,
+          conflict: null,
+          resolvedFiles: [],
+        },
       };
     },
 

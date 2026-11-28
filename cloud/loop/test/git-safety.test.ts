@@ -204,6 +204,7 @@ test("when a worktree tampers with shared .git/config, loop runs zero credential
       prUrl: null,
       ciRound: 0,
       ciFailedSha: null,
+      ciWait: null,
       nodeModulesReleased: false,
       conflictRound: 0,
       conflict: null,
