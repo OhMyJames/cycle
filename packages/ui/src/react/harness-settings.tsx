@@ -279,16 +279,7 @@ function HarnessLocationBody({
         if (mountedRef.current) setRuntimeBusyKey(undefined);
       }
     },
-    [
-      snapshot,
-      runtimeBusyKey,
-      store,
-      location.id,
-      agentId,
-      supersede,
-      setSnapshot,
-      mountedRef.current,
-    ],
+    [snapshot, runtimeBusyKey, store, location.id, agentId, supersede, setSnapshot, mountedRef],
   );
 
   const describeRuntime = useCallback(

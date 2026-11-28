@@ -19,15 +19,10 @@ import { Field, FieldLabel } from "@ui-sdk/react/field";
 import { Input } from "@ui-sdk/react/input";
 import { type ReactNode, useEffect, useState } from "react";
 import type { LocationConfig } from "../api.ts";
+import { messageOf } from "../store/core.ts";
 import { useI18n } from "./i18n.tsx";
 
 type OpenProps = { open: boolean; onOpenChange: (open: boolean) => void };
-
-const messageOf = (error: unknown): string =>
-  (error instanceof Error ? error.message : String(error)).replace(
-    /^Error invoking remote method '[^']*': (Error: )?/,
-    "",
-  );
 
 export function ConfirmDialog({
   open,

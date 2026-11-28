@@ -8,7 +8,8 @@ export type SetupRead = { forceRefresh?: boolean; refreshUsage?: boolean; silent
 
 /**
  * One agent's setup on one location. `readable`: the daemon can say it and the agent is listed; otherwise nothing is
- * read. `onApplied` is told each time a read's answer is kept.
+ * read. `onApplied` is told each time a read's answer is kept. What it holds is that agent's: a caller that shows
+ * another keys its component by location and agent, so it starts over.
  */
 export function useAgentSetup(
   locationId: string,

@@ -143,7 +143,7 @@ function SubscriptionGroup({
       ...(answer.host !== undefined ? { host: answer.host } : {}),
       ...(answer.userCode !== undefined ? { userCode: answer.userCode } : {}),
     });
-  }, [store, location.id, agentId, mountedRef.current]);
+  }, [store, location.id, agentId, mountedRef]);
 
   const activeFlowId = signInDialog?.kind === "active" ? signInDialog.flowId : undefined;
   const flowCompletion = useAppState((s) =>
