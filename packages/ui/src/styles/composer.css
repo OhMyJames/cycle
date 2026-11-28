@@ -389,6 +389,39 @@
   overflow: hidden;
 }
 
+/* In a narrow conversation (720x480 leaves it 400px) the bar stays on one line. The model's name, the longest word,
+   gives way first (a far higher shrink); a long permission title gives way after it; the effort's level is short. Text that gives way fades at its
+   end (layout.css), never an ellipsis; the chip's title has the full name. The ring keeps its size. */
+[data-kind="context-meter"] {
+  flex: none;
+}
+
+[data-slot="composer-tools-start"] {
+  flex: 0 1 auto;
+}
+
+/* The right group gives way first (the model chip in it takes what it must), down to the least that keeps the model at
+   4rem beside the effort and the ring; past that the permission chip gives way. */
+[data-slot="composer-tools-end"] {
+  flex: 0 100 auto;
+  min-width: 10.5rem;
+}
+
+[data-slot="menu-trigger"][data-variant="ghost"][data-kind="setting-chip"]:not(
+  [data-setting="mode"]
+) {
+  flex: none;
+}
+
+[data-slot="menu-trigger"][data-variant="ghost"][data-kind="setting-chip"][data-setting="mode"] {
+  flex: 0 1 auto;
+}
+
+[data-slot="menu-trigger"][data-variant="ghost"][data-kind="setting-chip"][data-setting="model"] {
+  flex-shrink: 100;
+  min-width: 4rem;
+}
+
 /* A picker's menu: as wide as its longest name, and scrolled inside when the window is short. */
 [data-slot="menu-content"][data-kind="setting"] {
   min-width: 13.5rem;

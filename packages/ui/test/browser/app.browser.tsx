@@ -1882,6 +1882,125 @@ test("empty state offers Start a new session and high-risk mode chip carries dat
   expect(screen.getByRole("button", { name: "Hide sidebar" })).toBeTruthy();
 });
 
+const toolsAt400 = async (modelTitle: string, modeTitle = "Auto") => {
+  const { user, emit } = await mount({
+    configure: (script) => {
+      const session = { ...summary("s1"), config: { mode: "auto", model: "m", effort: "high" } };
+      script.bridge.locations = async () => ({
+        locations: [{ id: "local", name: "Local", kind: "local" }],
+        status: [
+          {
+            locationId: "local",
+            state: "connected",
+            capabilities: { queue: true, files: false, folders: false },
+          },
+        ],
+        sessions: { local: [session] },
+      });
+      script.bridge.agents = async () => [
+        {
+          id: "fake",
+          name: "Fake",
+          available: true,
+          promptCapabilities: { image: {} },
+          configSchema: {
+            type: "object",
+            properties: {
+              mode: {
+                type: "string",
+                title: "Permission mode",
+                oneOf: [{ const: "auto", title: modeTitle }],
+              },
+              model: { type: "string", title: "Model", oneOf: [{ const: "m", title: modelTitle }] },
+              effort: {
+                type: "string",
+                title: "Effort",
+                oneOf: [
+                  { const: "default", title: "Default" },
+                  { const: "high", title: "High" },
+                ],
+              },
+            },
+          },
+        },
+      ];
+      script.bridge.sessions = async () => [session];
+    },
+  });
+  await openFirstSession(user);
+  await screen.findByRole("textbox", { name: "Message" });
+  emit({
+    type: "update",
+    locationId: "local",
+    sessionId: "s1",
+    version: 1,
+    update: { sessionUpdate: "usage_update", used: 12_000, size: 200_000 } as never,
+  });
+  await screen.findByRole("button", { name: /Context 6% full/ });
+  // 720x480 leaves the conversation 400px at least: the box is held to that width.
+  const composer = document.querySelector<HTMLElement>('[data-slot="composer"]');
+  const box = document.querySelector<HTMLElement>('[data-slot="composer-box"]');
+  const tools = document.querySelector<HTMLElement>('[data-slot="composer-tools"]');
+  if (!composer || !box || !tools) throw new Error("no composer");
+  composer.style.width = "400px";
+  composer.style.maxWidth = "400px";
+  await new Promise((r) => requestAnimationFrame(() => r(null)));
+  return { box, tools };
+};
+
+const expectToolsFit = (
+  { box, tools }: { box: HTMLElement; tools: HTMLElement },
+  shrunk = false,
+) => {
+  const edge = box.getBoundingClientRect();
+  // The bar hangs out of the box by a chip's clear border and padding (composer.css), so the words' own edge is the box's.
+  const controls = [
+    ...tools.querySelectorAll<HTMLElement>(
+      '[data-kind="setting-chip"], [data-kind="context-meter"]',
+    ),
+  ];
+  expect(controls.length).toBe(4);
+  const tops = controls.map((c) => Math.round(c.getBoundingClientRect().top));
+  expect(new Set(tops).size).toBe(1);
+  for (const c of controls) {
+    const r = c.getBoundingClientRect();
+    expect(r.left).toBeGreaterThanOrEqual(edge.left - 7.5);
+    expect(r.right).toBeLessThanOrEqual(edge.right + 7.5);
+    // Not cropped: the words are all there, but a model's name too long for the line, which fades at its end and
+    // keeps enough to read.
+    const words = c.querySelector<HTMLElement>('[data-slot="setting-value"]');
+    // The overflowing text fades; it never ends in an ellipsis.
+    if (words) expect(getComputedStyle(words).textOverflow).not.toBe("ellipsis");
+    if (words && c.getAttribute("data-setting") !== "model" && !shrunk)
+      expect(words.scrollWidth).toBeLessThanOrEqual(words.clientWidth);
+    if (words && c.getAttribute("data-setting") === "model")
+      if (words.scrollWidth > words.clientWidth)
+        expect(words.clientWidth).toBeGreaterThanOrEqual(48);
+  }
+  // No chip is squeezed on top of the next.
+  const rects = controls.map((c) => c.getBoundingClientRect()).sort((a, b) => a.left - b.left);
+  rects.forEach((r, i) => {
+    const before = rects[i - 1];
+    if (before) expect(r.left).toBeGreaterThanOrEqual(before.right - 1);
+  });
+  expect(tools.scrollWidth).toBeLessThanOrEqual(tools.clientWidth + 1);
+};
+
+test("the bar under the box keeps one line in a 400px conversation", async () => {
+  expectToolsFit(await toolsAt400("Opus"));
+});
+
+test("a long permission name with a long model name keeps the bar to one line in a 400px conversation", async () => {
+  expectToolsFit(
+    await toolsAt400("Claude Opus 4.5 with extended context", "Bypass all permission prompts"),
+    true,
+  );
+});
+
+test("a long model name keeps the bar to one line in a 400px conversation", async () => {
+  expectToolsFit(await toolsAt400("Claude Opus 4.5 with extended context"));
+});
+
 test("composer uses a single-line box by default, stays one line with several buttons, and docks extensions above", async () => {
   const { user, emit } = await mount({
     configure: (script) => {
