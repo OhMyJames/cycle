@@ -52,6 +52,17 @@ describe("importsOf", () => {
     expect(importsOf("const s = \"call require('fs')\";")).toEqual([]);
   });
 
+  test("reads imports after a regex or JSX text and inside a template substitution", () => {
+    const source = [
+      "const tick = /`/;",
+      "const page = <p>It's ready</p>;",
+      'type Model = import("model").Model;',
+      `const label = \`value \${require("formatter")}\`;`,
+      'const library = import("ui");',
+    ].join("\n");
+    expect(importsOf(source, "page.tsx")).toEqual(["model", "formatter", "ui"]);
+  });
+
   test("takes time in proportion to the text, with or without semicolons", () => {
     const started = performance.now();
     importsOf("export const a = 1\n".repeat(200_000));

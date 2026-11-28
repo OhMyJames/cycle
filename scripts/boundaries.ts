@@ -12,6 +12,7 @@
 
 import { builtinModules } from "node:module";
 import { posix } from "node:path";
+import { type Argument, parseSync, Visitor } from "oxc-parser";
 
 export type Zone = "model" | "renderer" | "preload" | "app" | "loop-engine";
 
@@ -28,121 +29,30 @@ export const zoneOf = (file: string): Zone[] => {
   return zones;
 };
 
-type Token = { kind: "word" | "string" | "dynamic" | "punct"; text: string };
-
-/**
- * A file as words, strings and punctuation, one pass: comments are skipped, a string ends at its quote or at the
- * end of its line (so one quote that is really in a regular expression spoils only its line), a template literal
- * with ${} in it is "dynamic" (its module cannot be known).
- */
-const tokenize = (text: string): Token[] => {
-  const tokens: Token[] = [];
-  const n = text.length;
-  let i = 0;
-  while (i < n) {
-    const c = text[i] as string;
-    if (c === " " || c === "\t" || c === "\n" || c === "\r") {
-      i++;
-    } else if (c === "/" && text[i + 1] === "/") {
-      const eol = text.indexOf("\n", i);
-      i = eol === -1 ? n : eol;
-    } else if (c === "/" && text[i + 1] === "*") {
-      const close = text.indexOf("*/", i + 2);
-      i = close === -1 ? n : close + 2;
-    } else if (c === '"' || c === "'") {
-      let j = i + 1;
-      while (j < n && text[j] !== c && text[j] !== "\n") j += text[j] === "\\" ? 2 : 1;
-      tokens.push({ kind: "string", text: text.slice(i + 1, j) });
-      i = j + 1;
-    } else if (c === "`") {
-      let j = i + 1;
-      let depth = 0;
-      let dynamic = false;
-      while (j < n && !(text[j] === "`" && depth === 0)) {
-        if (text[j] === "\\") j += 2;
-        else if (text[j] === "$" && text[j + 1] === "{") {
-          dynamic = true;
-          depth++;
-          j += 2;
-        } else {
-          if (depth > 0 && text[j] === "}") depth--;
-          j++;
-        }
-      }
-      tokens.push({ kind: dynamic ? "dynamic" : "string", text: text.slice(i + 1, j) });
-      i = j + 1;
-    } else if (/[A-Za-z_$]/.test(c)) {
-      let j = i + 1;
-      while (j < n && /[\w$]/.test(text[j] as string)) j++;
-      tokens.push({ kind: "word", text: text.slice(i, j) });
-      i = j;
-    } else {
-      tokens.push({ kind: "punct", text: c });
-      i++;
+/** Literal module references, including types checked at the model and bridge boundaries. */
+export const importsOf = (text: string, file = "source.ts"): string[] => {
+  const names: string[] = [];
+  const collect = (source: Argument | null | undefined) => {
+    if (source?.type === "Literal" && typeof source.value === "string") names.push(source.value);
+    if (source?.type === "TemplateLiteral" && source.expressions.length === 0) {
+      const value = source.quasis[0]?.value.cooked;
+      if (typeof value === "string") names.push(value);
     }
-  }
-  return tokens;
-};
-
-/**
- * The module names a file imports: static, side-effect, re-export, dynamic and require. Read from the tokens, so a
- * comment or a string that looks like an import is not one, and several imports on a line are all found.
- * What it does not see: an import behind a template literal that has ${} in it. It does not parse regular expressions or
- * JSX text, so a regular expression with a backtick or "/*" in it (or JSX text with an apostrophe, on that line) can hide
- * what follows: to the next backtick, to the next "*" + "/", or to the end of the line. Imports are at the top of a file, and
- * the type environments (tsconfig.model.json, tsconfig.renderer.json) do not depend on this reader.
- */
-export const importsOf = (text: string): string[] => {
-  const t = tokenize(text);
-  const found: string[] = [];
-  const is = (k: number, kind: Token["kind"], value?: string) =>
-    t[k]?.kind === kind && (value === undefined || t[k]?.text === value);
-  // Where each "{" closes, found once for the whole file (looking forward from each would be quadratic on a file
-  // of unclosed braces). One that never closes goes to the end.
-  const closes = new Map<number, number>();
-  const open: number[] = [];
-  for (let j = 0; j < t.length; j++) {
-    if (is(j, "punct", "{")) open.push(j);
-    else if (is(j, "punct", "}")) {
-      const at = open.pop();
-      if (at !== undefined) closes.set(at, j);
-    }
-  }
-  // Past the "}" that closes the "{" at k.
-  const afterBraces = (k: number): number => (closes.get(k) ?? t.length - 1) + 1;
-  // "from" and then the module, if that is what is at k.
-  const fromModule = (k: number) => {
-    if (is(k, "word", "from") && is(k + 1, "string")) found.push((t[k + 1] as Token).text);
   };
-  for (let k = 0; k < t.length; k++) {
-    if (!is(k, "word") || is(k - 1, "punct", ".")) continue;
-    const word = (t[k] as Token).text;
-    if (word === "require" || (word === "import" && is(k + 1, "punct", "("))) {
-      if (is(k + 1, "punct", "(") && is(k + 2, "string")) found.push((t[k + 2] as Token).text);
-    } else if (word === "import") {
-      if (is(k + 1, "string")) found.push((t[k + 1] as Token).text);
-      else if (!is(k + 1, "punct", ".")) {
-        let j = k + 1;
-        if (is(j, "word", "type") && !is(j + 1, "word", "from")) j++;
-        // The clause: a default name, then "* as name" or "{ ... }", each optional.
-        if (is(j, "word") && !is(j, "word", "from")) j++;
-        if (is(j, "punct", ",")) j++;
-        if (is(j, "punct", "*")) j += is(j + 1, "word", "as") ? 3 : 1;
-        else if (is(j, "punct", "{")) j = afterBraces(j);
-        fromModule(j);
+  new Visitor({
+    ImportDeclaration: (node) => collect(node.source),
+    ExportNamedDeclaration: (node) => collect(node.source),
+    ExportAllDeclaration: (node) => collect(node.source),
+    ImportExpression: (node) => collect(node.source),
+    TSImportType: (node) => collect(node.source),
+    TSExternalModuleReference: (node) => collect(node.expression),
+    CallExpression: (node) => {
+      if (node.callee.type === "Identifier" && node.callee.name === "require") {
+        collect(node.arguments[0]);
       }
-    } else if (word === "export") {
-      let j = k + 1;
-      if (is(j, "word", "type")) j++;
-      if (is(j, "punct", "*")) {
-        j++;
-        if (is(j, "word", "as") && is(j + 1, "word")) j += 2;
-      } else if (is(j, "punct", "{")) j = afterBraces(j);
-      else continue;
-      fromModule(j);
-    }
-  }
-  return found;
+    },
+  }).visit(parseSync(file, text).program);
+  return names;
 };
 
 const NODE = /^(?:node:|bun(?::|$)|electron(?:\/|$))/;
@@ -217,7 +127,7 @@ export const violations = (file: string, text: string): string[] => {
   const zones = zoneOf(file);
   const out: string[] = [];
   if (zones.length > 0) {
-    const names = importsOf(text);
+    const names = importsOf(text, file);
     for (const zone of zones)
       for (const name of names) {
         const why = forbidden[zone](name, file);

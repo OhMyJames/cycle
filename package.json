@@ -36,6 +36,7 @@
     "@types/bun": "^1.4.4",
     "@types/node": "^26.6.6",
     "knip": "6.49.0",
+    "oxc-parser": "0.160.0",
     "typescript": "^7.0.2"
   },
   "trustedDependencies": [
