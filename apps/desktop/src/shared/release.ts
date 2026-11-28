@@ -153,7 +153,8 @@ export const plistVersions = (
  *
  * Raise it in the release that needs a newer daemon: the app relies on something (a field, a method, a behaviour) that
  * the older one does not have and that cannot be left off the way a `capabilities` flag can. A feature that can be left
- * off asks for its flag instead and does not move this. See docs/desktop.md "远端 daemon 的升级".
+ * off asks for its flag instead and does not move this. See docs/desktop.md "远端 daemon 的升级". It is a daemon's version,
+ * `<major>.<minor>.<commits>` (CYC-538), not the app's: the daemon of the commit that brings what the app needs.
  */
 export const MIN_DAEMON_VERSION = "0.2.1";
 

@@ -1197,7 +1197,8 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "update.tryAgain": "重试",
   "update.install": "更新并重启",
   "update.confirmTitle": "更新到 {version}？",
-  "update.confirmDescription": "Cycle 会关闭，再以新版本打开。会话在这期间照常工作。",
+  "update.confirmDescription":
+    "Cycle 会关闭，再以新版本打开。本机上正在工作的会话会被中断；其他工作位置上的会话照常进行。",
   "update.current": "Cycle {version}",
   "interface.ready": "有更新的界面可用",
   "interface.reload": "重新加载",
