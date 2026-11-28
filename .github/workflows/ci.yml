@@ -3,7 +3,8 @@
 # would not is split, not given more time: 2 minutes is the aim and timeout-minutes (5) the line (scripts/ci-budget.test.ts holds it there).
 # Measured in a container of 2 CPUs and 4 GB on 2026-11-27: all the browser tests in one job 111 s; in three, 38 to 42 s.
 #
-#  changes      what the pull request touches: only documents (*.md, docs/, .agents/) skip browser and integration.
+#  changes      what the pull request touches: only documents (*.md at the top, docs/, .agents/) skip browser and integration.
+#               Not every .md: prompts and skills under the packages are read by the code.
 #  check        every pull request. The same `bun run check` as the pre-commit hook. Never skipped: tests read the documents.
 #  browser      the interface's tests in headless Chromium (`bun run test:browser`), in three parts that take
 #               about the same time (packages/ui/test/shard.ts). `browser` itself is only the verdict of the parts,
@@ -57,7 +58,7 @@ jobs:
           fetch-depth: 2
       - id: diff
         run: |
-          if [ "$GITHUB_EVENT_NAME" = pull_request ] && ! git diff --name-only HEAD^1 HEAD | grep -qvE '(\.md$|^docs/|^\.agents/)'; then
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && ! git diff --name-only HEAD^1 HEAD | grep -qvE '(^[^/]+\.md$|^docs/|^\.agents/)'; then
             echo "code=false" >> "$GITHUB_OUTPUT"
             echo "::notice::Only documents changed: the browser and integration tests are skipped."
           else
@@ -104,7 +105,7 @@ jobs:
     timeout-minutes: 2
     steps:
       - run: |
-          test "${{ needs.browser-part.result }}" = success || { test "${{ needs.changes.result }}" = success && test "${{ needs.browser-part.result }}" = skipped; }
+          test "${{ needs.browser-part.result }}" = success || { test "${{ needs.changes.outputs.code }}" = false && test "${{ needs.browser-part.result }}" = skipped; }
 
   integration-part:
     needs: changes
@@ -152,4 +153,4 @@ jobs:
     timeout-minutes: 2
     steps:
       - run: |
-          test "${{ needs.integration-part.result }}" = success || { test "${{ needs.changes.result }}" = success && test "${{ needs.integration-part.result }}" = skipped; }
+          test "${{ needs.integration-part.result }}" = success || { test "${{ needs.changes.outputs.code }}" = false && test "${{ needs.integration-part.result }}" = skipped; }

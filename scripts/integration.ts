@@ -38,7 +38,9 @@ const unknown = args.find(
     a.startsWith("--") && a !== "--strict" && a !== "--summary" && a !== "--group" && !isValue(i),
 );
 if (unknown !== undefined) {
-  console.error(`unknown option ${unknown}: the options are --strict and --summary <file>`);
+  console.error(
+    `unknown option ${unknown}: the options are --strict, --summary <file> and --group <name>`,
+  );
   process.exit(2);
 }
 const only = args.find((a, i) => !a.startsWith("--") && !isValue(i));
@@ -47,7 +49,10 @@ const chosen = suites.filter(
     (only === undefined || s.name.includes(only)) && (group === undefined || s.group === group),
 );
 if (chosen.length === 0) {
-  console.error(`no suite matches "${only}"; they are: ${suites.map((s) => s.name).join(", ")}`);
+  const among = suites.filter((s) => group === undefined || s.group === group);
+  console.error(
+    `no suite matches "${only}"${group === undefined ? "" : ` in the group ${group}`}; they are: ${among.map((s) => s.name).join(", ")}`,
+  );
   process.exit(2);
 }
 
