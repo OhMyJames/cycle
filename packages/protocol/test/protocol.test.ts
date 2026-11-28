@@ -186,6 +186,15 @@ test("a command's result says only how it ended", () => {
   expect(ToolResultSchema.safeParse({ run: { interrupted: false } }).success).toBe(false);
 });
 
+test("a command's result may carry how long it ran, and old results without it still pass", () => {
+  expect(ToolResultSchema.safeParse({ run: { durationMs: 12000 } }).success).toBe(true);
+  expect(ToolResultSchema.safeParse({ run: { exitCode: 1, durationMs: 0 } }).success).toBe(true);
+  expect(ToolResultSchema.safeParse({ run: { exitCode: 1 } }).success).toBe(true);
+  for (const bad of [-1, 1.5, "12"]) {
+    expect(ToolResultSchema.safeParse({ run: { durationMs: bad } }).success).toBe(false);
+  }
+});
+
 test("a page fetched says only its status and size", () => {
   expect(ToolResultSchema.safeParse({ fetch: { status: 200, bytes: 10 } }).success).toBe(true);
   expect(ToolResultSchema.safeParse({ fetch: { status: 99 } }).success).toBe(false);

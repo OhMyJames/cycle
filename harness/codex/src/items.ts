@@ -172,7 +172,20 @@ export function itemUpdate(
           typeof item.exitCode === "number" && Number.isInteger(item.exitCode) && item.exitCode > 0
             ? item.exitCode
             : undefined;
-        meta = { [META.toolResult]: { run: exitCode !== undefined ? { exitCode } : {} } };
+        const durationMs =
+          typeof item.durationMs === "number" &&
+          Number.isInteger(item.durationMs) &&
+          item.durationMs >= 0
+            ? item.durationMs
+            : undefined;
+        meta = {
+          [META.toolResult]: {
+            run: {
+              ...(exitCode !== undefined ? { exitCode } : {}),
+              ...(durationMs !== undefined ? { durationMs } : {}),
+            },
+          },
+        };
       }
       break;
     }

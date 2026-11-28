@@ -299,6 +299,7 @@ export const ToolResultSchema = z.union([
       timedOutMs: count.optional(),
       background: z.literal(true).optional(),
       exitCode: count.optional(),
+      durationMs: count.optional(),
     }),
   }),
   z.object({

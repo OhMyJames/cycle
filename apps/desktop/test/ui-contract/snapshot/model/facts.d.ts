@@ -38,6 +38,7 @@ export type ToolFacts = {
         timedOutMs?: number;
         background: boolean;
         exitCode?: number;
+        durationMs?: number;
     };
     images: {
         key: string;

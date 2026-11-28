@@ -241,3 +241,27 @@ test("command, MCP, fileChange and webSearch items carry structured rawInput, lo
     rawInput: { query: "cycle protocol" },
   });
 });
+
+test("a completed command's native durationMs goes into toolResult.run, and is left out when missing or invalid", () => {
+  const run = (extra: object) =>
+    (
+      itemUpdate(
+        { ...(command("x") as object), ...extra } as ThreadItem,
+        true,
+        false,
+      ) as unknown as {
+        _meta: { "cycle/toolResult": { run: unknown } };
+      }
+    )._meta["cycle/toolResult"].run;
+  expect(run({ durationMs: 12500 })).toEqual({ durationMs: 12500 });
+  expect(run({ durationMs: 0 })).toEqual({ durationMs: 0 });
+  expect(run({ durationMs: 3000, status: "failed", exitCode: 2 })).toEqual({
+    exitCode: 2,
+    durationMs: 3000,
+  });
+  expect(run({ durationMs: null })).toEqual({});
+  expect(run({ durationMs: undefined })).toEqual({});
+  expect(run({ durationMs: -5 })).toEqual({});
+  expect(run({ durationMs: "9" })).toEqual({});
+  expect(run({ durationMs: 1.5 })).toEqual({});
+});

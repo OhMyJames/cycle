@@ -445,6 +445,7 @@ export const enUS = {
   "tool.facts.exitCode": "exited with code {code}",
   "tool.facts.timedOut": "ran past {duration}, now in the background",
   "tool.facts.background": "in the background",
+  "tool.facts.took": "took {duration}",
   "session.dismissBackground": {
     one: "Mark 1 unconfirmed background task as ended",
     other: "Mark {count} unconfirmed background tasks as ended",
