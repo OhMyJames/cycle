@@ -185,6 +185,7 @@ test("AC > 3 runs the read-only planner and executes its nodes as source auto_pl
   expect(graph?.nodes.map((n) => [n.id, n.status])).toEqual([
     ["n1", "passed"],
     ["n2", "passed"],
+    ["qa-1", "passed"],
   ]);
   // The first node continues in the claim's Dev session; the second gets a fresh one.
   expect(s.sessions.titles.filter((t) => t.role === "dev")).toHaveLength(2);

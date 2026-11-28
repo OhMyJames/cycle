@@ -159,14 +159,29 @@ test("mergeAt squashes pinned to the reviewed commit and never uses auto-merge",
   ).toBe(false);
 });
 
-test("prHead reads the head commit and state", async () => {
-  const r = scripted(JSON.stringify({ headRefOid: SHA, state: "OPEN" }));
+test("prHead reads the head commit, state, draft flag and base branch", async () => {
+  const r = scripted(
+    JSON.stringify({ headRefOid: SHA, state: "OPEN", isDraft: true, baseRefName: "release" }),
+  );
   const forge = githubForge({ exec: r.exec, env: {} });
   expect(await forge.prHead({ cwd: "/wt", timeoutMs: 5 }, "7")).toEqual({
     ok: true,
     sha: SHA,
     state: "OPEN",
+    isDraft: true,
+    baseBranch: "release",
   });
+  const json = r.calls[0]?.argv[r.calls[0].argv.indexOf("--json") + 1];
+  expect(json).toBe("headRefOid,state,isDraft,baseRefName");
+});
+
+test("prHead fails when the PR cannot be read or lacks the new fields", async () => {
+  const at = { cwd: "/wt", timeoutMs: 5 };
+  expect((await githubForge({ exec: scripted("boom", 1).exec, env: {} }).prHead(at, "7")).ok).toBe(
+    false,
+  );
+  const old = scripted(JSON.stringify({ headRefOid: SHA, state: "OPEN" }));
+  expect((await githubForge({ exec: old.exec, env: {} }).prHead(at, "7")).ok).toBe(false);
 });
 
 test("isCleanStatusError recognises only GitHub refusing auto-merge on a clean PR", () => {

@@ -15,6 +15,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "search.open": "搜索会话",
 
   "session.away": "{location} · {state}",
+  "session.hasDraft": "有未发送的草稿",
   "notice.connecting": "正在连接 {location}…",
   "notice.draftKept": "草稿会保留。",
   "session.awayIncompatible":
@@ -792,6 +793,10 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "loop.graph.collapse": "收起节点 {title}",
   "loop.graph.goal": "目标",
   "loop.graph.fix": "修复",
+  "loop.graph.qaSession": "QA 会话",
+  "loop.graph.verdict.pass": "通过",
+  "loop.graph.verdict.fail": "未通过",
+  "loop.graph.report": "QA 报告",
   "loop.graph.dependsOn": "依赖节点",
   "loop.graph.filesHint": "涉及文件",
   "loop.graph.commit": "提交",

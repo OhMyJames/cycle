@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   appendFixNode,
+  appendQaNode,
   buildGraph,
   formatGraphTable,
   isGraphComplete,
@@ -219,4 +220,66 @@ test("buildGraph, nextReadyNode, updateGraphNode, isGraphComplete and appendFixN
     nowIso: NOW,
   });
   expect(over.ok).toBe(false);
+});
+
+test("validateGraphSpecs rejects the reserved qa- prefix", () => {
+  const r = validateGraphSpecs([{ id: "qa-1", title: "A", goal: "a", verify: ["bun run check"] }]);
+  expect(r.ok).toBe(false);
+  if (!r.ok) expect(r.reasons.join(" ")).toContain("qa-");
+});
+
+test("appendQaNode follows the last Dev node, and QA nodes do not count toward the node cap", () => {
+  const valid = validateGraphSpecs([
+    { id: "n1", title: "A", goal: "a", verify: ["bun run check"] },
+  ]);
+  if (!valid.ok) throw new Error("expected valid");
+  let graph = buildGraph("CYC-542", "plan_doc", valid.specs, NOW);
+  expect(graph.nodes[0]?.role).toBe("dev");
+  expect(graph.nodes[0]?.verdict).toBeNull();
+  graph = updateGraphNode(graph, "n1", { status: "passed" }, NOW, null);
+
+  const qa1 = appendQaNode(graph, {
+    commitSha: "0123456789abcdef0123",
+    verify: ["bun run check"],
+    nowIso: NOW,
+  });
+  expect(qa1.node).toMatchObject({
+    id: "qa-1",
+    role: "qa",
+    origin: "planned",
+    dependsOn: ["n1"],
+    filesHint: [],
+    status: "pending",
+    verdict: null,
+    report: null,
+  });
+  expect(qa1.node.goal).toContain("0123456789ab");
+  expect(nextReadyNode(qa1.graph)?.id).toBe("qa-1");
+
+  // QA fails -> fix-1 -> qa-2 follows the fix (origin fix).
+  let g = updateGraphNode(
+    qa1.graph,
+    "qa-1",
+    { status: "passed", verdict: "fail", report: "bad" },
+    NOW,
+    null,
+  );
+  const fix = appendFixNode(g, { title: "Fix", goal: "g", verify: ["bun run check"], nowIso: NOW });
+  if (!fix.ok) throw new Error("expected fix");
+  g = updateGraphNode(fix.graph, "fix-1", { status: "passed" }, NOW, null);
+  const qa2 = appendQaNode(g, { commitSha: "abc", verify: [], nowIso: NOW });
+  expect(qa2.node).toMatchObject({ id: "qa-2", origin: "fix", dependsOn: ["fix-1"] });
+
+  // Fill Dev nodes to the cap with QA nodes present: QA nodes are not counted.
+  let capped = qa2.graph;
+  while (capped.nodes.filter((n) => n.role === "dev").length < MAX_TOTAL_NODES) {
+    const next = appendFixNode(capped, { title: "F", goal: "g", verify: [], nowIso: NOW });
+    expect(next.ok).toBe(true);
+    if (!next.ok) break;
+    capped = next.graph;
+  }
+  expect(capped.nodes.length).toBeGreaterThan(MAX_TOTAL_NODES);
+  expect(appendFixNode(capped, { title: "F", goal: "g", verify: [], nowIso: NOW }).ok).toBe(false);
+  // Appending a QA node never fails on the cap.
+  expect(() => appendQaNode(capped, { commitSha: "abc", verify: [], nowIso: NOW })).not.toThrow();
 });

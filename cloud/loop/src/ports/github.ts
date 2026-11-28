@@ -508,6 +508,8 @@ const OpenPrsSchema = z.array(
 const PrHeadSchema = z.object({
   headRefOid: z.string().min(1),
   state: z.enum(["OPEN", "CLOSED", "MERGED"]),
+  isDraft: z.boolean(),
+  baseRefName: z.string().min(1),
 });
 
 const LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\[bot\])?$/;
@@ -740,11 +742,24 @@ export const githubForge = (deps: {
         : { ok: true };
     },
     async prHead(at, pr) {
-      const done = await run(at, ["gh", "pr", "view", pr, "--json", "headRefOid,state"]);
+      const done = await run(at, [
+        "gh",
+        "pr",
+        "view",
+        pr,
+        "--json",
+        "headRefOid,state,isDraft,baseRefName",
+      ]);
       if (done.timedOut || done.code !== 0) return timedOutOrFailed("gh pr view", done);
       const parsed = parseJson(done.output, (v) => PrHeadSchema.parse(v), "gh pr view");
       if (!parsed.ok) return parsed;
-      return { ok: true, sha: parsed.value.headRefOid, state: parsed.value.state };
+      return {
+        ok: true,
+        sha: parsed.value.headRefOid,
+        state: parsed.value.state,
+        isDraft: parsed.value.isDraft,
+        baseBranch: parsed.value.baseRefName,
+      };
     },
   };
 };

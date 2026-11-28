@@ -69,7 +69,9 @@ export type OpenPr = {
 
 export type OpenPrsResult = { ok: true; prs: OpenPr[] } | Failed;
 
-export type PrHeadResult = { ok: true; sha: string; state: PrState } | Failed;
+export type PrHeadResult =
+  | { ok: true; sha: string; state: PrState; isDraft: boolean; baseBranch: string }
+  | Failed;
 
 export type AuthorPermissionResult = { ok: true; permission: string } | Failed;
 
@@ -113,6 +115,6 @@ export interface Forge {
   authorPermission(at: At, login: string): Promise<AuthorPermissionResult>;
   /** Squash-merges now (never auto-merge); GitHub refuses when the head is no longer `sha`. */
   mergeAt(at: At, pr: string, sha: string): Promise<{ ok: true } | Failed>;
-  /** The pull request's current head commit and state. */
+  /** The pull request's current head commit, state, draft flag and base branch. */
   prHead(at: At, pr: string): Promise<PrHeadResult>;
 }

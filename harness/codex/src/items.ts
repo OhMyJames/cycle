@@ -1,4 +1,4 @@
-import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
+import type { SessionUpdate, ToolCallContent } from "@agentclientprotocol/sdk/experimental/v2";
 import { META } from "@cycle/protocol";
 import type { FileUpdateChange, ThreadItem } from "./wire.generated.ts";
 
@@ -68,29 +68,94 @@ const mcpResult = (
   return { text: texts.join("\n"), images };
 };
 
-const changeWord = (change: FileUpdateChange): string =>
-  change.kind.type === "add" ? "added" : change.kind.type === "delete" ? "deleted" : "updated";
+const slash = (path: string): string => (path.startsWith("/") ? path : `/${path}`);
 
 /**
- * The files' diff, a file at a time while they fit in MAX_OUTPUT: a file whose diff does not is named, with nothing
- * of its content, and the small edits beside it are still shown. Past the limit, the files are only counted.
+ * One file's change as a git patch, with its +/- counts. Codex's diff is a unified diff with or without a file header,
+ * or, for a file added or deleted, only the file's lines: a header is added when there is none (never doubled), and
+ * bare lines are made the body of one hunk.
  */
-export const diffOf = (changes: readonly FileUpdateChange[]): string => {
-  const parts: string[] = [];
-  let left = MAX_OUTPUT;
-  for (const [i, change] of changes.entries()) {
-    const part =
-      change.diff.length <= left
-        ? change.diff
-        : `${changeWord(change)} ${change.path} (its diff is too long to show)`;
-    if (part.length > left) {
-      parts.push(`… and ${changes.length - i} more files`);
-      break;
-    }
-    parts.push(part);
-    left -= part.length + 1;
+const patchOf = (
+  change: FileUpdateChange,
+): { text: string; additions: number; deletions: number } | undefined => {
+  if (change.diff.trim() === "") return undefined;
+  const type = change.kind.type;
+  const from = slash(change.path);
+  const to = slash(
+    change.kind.type === "update" ? (change.kind.move_path ?? change.path) : change.path,
+  );
+  const lines = change.diff.replace(/\n$/, "").split("\n");
+  const hasHeader = lines[0]?.startsWith("diff --git ");
+  const hunkAt = lines.findIndex((line) => line.startsWith("@@"));
+  let body: string[];
+  if (hunkAt >= 0) body = lines.slice(hunkAt);
+  else if (hasHeader) body = [];
+  else {
+    // Only the file's lines: one hunk, the lines marked unless they already are.
+    const sign = type === "delete" ? "-" : "+";
+    const marked = lines.every((line) => line === "" || line.startsWith(sign));
+    const rows = marked ? lines : lines.map((line) => `${sign}${line}`);
+    body = [
+      type === "delete" ? `@@ -1,${rows.length} +0,0 @@` : `@@ -0,0 +1,${rows.length} @@`,
+      ...rows,
+    ];
   }
-  return parts.join("\n");
+  let additions = 0;
+  let deletions = 0;
+  for (const line of body) {
+    if (line.startsWith("+")) additions++;
+    else if (line.startsWith("-")) deletions++;
+  }
+  const head = hasHeader
+    ? lines.slice(0, hunkAt >= 0 ? hunkAt : lines.length)
+    : [
+        `diff --git a${from} b${to}`,
+        type === "add" ? "--- /dev/null" : `--- a${from}`,
+        type === "delete" ? "+++ /dev/null" : `+++ b${to}`,
+      ];
+  // A header Codex gave without its ---/+++ lines gets them.
+  if (hasHeader && !head.some((line) => line.startsWith("+++ ")))
+    head.push(
+      type === "add" ? "--- /dev/null" : `--- a${from}`,
+      type === "delete" ? "+++ /dev/null" : `+++ b${to}`,
+    );
+  return { text: `${[...head, ...body].join("\n")}\n`, additions, deletions };
+};
+
+/** The files' changes as one `diff` block, a file at a time: a file whose patch is too long keeps its path and counts. */
+const diffBlock = (changes: readonly FileUpdateChange[]) => {
+  let additions = 0;
+  let deletions = 0;
+  const entries = changes.map((change) => {
+    const patch = patchOf(change);
+    additions += patch?.additions ?? 0;
+    deletions += patch?.deletions ?? 0;
+    return {
+      path: change.path,
+      operation: change.kind.type,
+      patch:
+        patch && patch.text.length <= MAX_OUTPUT
+          ? { format: "git_patch" as const, text: patch.text }
+          : null,
+    };
+  });
+  return {
+    additions,
+    deletions,
+    blocks: entries.map(
+      (e): ToolCallContent => ({
+        type: "diff",
+        changes: [
+          e.operation === "add"
+            ? { operation: "add", path: e.path }
+            : e.operation === "delete"
+              ? { operation: "delete", path: e.path }
+              : { operation: "modify", path: e.path },
+        ],
+        patch: e.patch,
+      }),
+    ),
+  };
 };
 
 export function itemUpdate(
@@ -159,6 +224,7 @@ export function itemUpdate(
     [];
   let locations: { path: string }[] | undefined;
   let meta: Record<string, unknown> | undefined;
+  let diffs: ReturnType<typeof diffBlock>["blocks"] = [];
   switch (item.type) {
     case "commandExecution": {
       name = "exec_command";
@@ -207,7 +273,14 @@ export function itemUpdate(
       name = "Edit files";
       kind = "edit";
       if (item.changes.length > 0) locations = item.changes.map((c) => ({ path: c.path }));
-      output = diffOf(item.changes);
+      if (item.changes.length > 0) {
+        const diff = diffBlock(item.changes);
+        diffs = diff.blocks;
+        if (completed)
+          meta = {
+            [META.toolResult]: { edit: { additions: diff.additions, deletions: diff.deletions } },
+          };
+      }
       break;
     case "webSearch":
       name = "web_search";
@@ -228,12 +301,13 @@ export function itemUpdate(
     status: completed ? (failed ? "failed" : "completed") : "in_progress",
     ...(rawInput !== undefined ? { rawInput } : {}),
     ...(locations !== undefined ? { locations } : {}),
-    ...(output || images.length > 0
+    ...(output || images.length > 0 || diffs.length > 0
       ? {
           content: [
             ...(output
               ? [{ type: "content" as const, content: { type: "text" as const, text: output } }]
               : []),
+            ...diffs,
             ...images,
           ],
         }

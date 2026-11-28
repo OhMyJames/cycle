@@ -204,6 +204,19 @@ Loop 推进一张工单时，把当前阶段和进入时间写进工单的两个
 
 **stats** 的 `planning` 一节单独计：轮数、盘点停下的轮数、各归类张数、改优先级和提问的次数、加工、停下、放弃的张数、平均修复轮次，以及批准率：加工后等批准的各张里，后来被开发 run 领走（有 `claimed` 事件）的比例。只看事件：已批准但还没被领走的算作还没批准。
 
+## 执行图里的 QA 节点和返工（CYC-542）
+
+开发工单有执行图时，QA 和返工由图安排（决定见 `.agents/notes/2026-11-28-loop-runs-one-role-graph-per-requirement.md`，协议见 `docs/protocol.md` §17）：
+
+- **节点有角色**：`role` 是 `dev` 或 `qa`。Plan 里写的节点、旧库里的节点都是 `dev`；QA 节点只由 Loop 追加，id 为 `qa-<n>`（Plan 里不能用 `qa-` 开头的 id，和 `fix-` 一样是保留前缀）。
+- **完成与结论分开**：`status` 只表示「这次执行是否完成」，`verdict`（`pass` / `fail` / 空）才是 QA 的结论，`report` 是结论原文（未通过时含发现）。QA 给出可用结论就是 `passed`，不论通过还是未通过；QA 系统故障（重试用完仍没有可用结论）才是 `blocked`，工单转 Blocked。Dev 节点的 `verdict` 为空。
+- **何时追加 QA 节点**：Dev 节点全部完成、整单验证通过后，Loop 在图末尾追加 `qa-n`（依赖最后一个 Dev 节点，`origin` 随它：跟在规划节点后为 `planned`，跟在返工后为 `fix`），进入 `qa` 阶段并执行。每次执行都新开一个 QA 会话，会话 id 记在节点上；提示词带上上一个 QA 节点的报告，让它确认上一轮的问题是否解决，并写明命令已在工作区里运行、不要用 `cd`、管道、`&&` 等 shell 写法。QA 不通过或通过，节点都记下它验过的提交（`commitSha`）。
+- **返工**：结论 `fail` 时图追加 Dev 返工节点 `fix-<n>`（目标是 QA 报告），它完成并通过整单验证后再追加下一个 QA 节点，轮数计入 `maxFixRounds`，到上限转 Blocked。结论 `pass` 进入交付（开 PR、CI、评审）。整单验证、CI、评审打回追加的 `fix-<n>` 不变，完成后同样要经过一个新的 QA 节点。
+- **Dev 自测**：Dev 节点的局部验证失败时，仍在同一个节点、同一个会话里修，不追加节点。
+- **节点上限**：`MAX_TOTAL_NODES`（12）只数 Dev 节点（规划加返工），QA 节点不计入；修复轮数上限先于节点上限起作用。
+- **放回和升级**：Blocked 后放回，若当前节点是 `blocked` 的 QA 节点，重置后新开会话重跑。升级时停在 `qa` 阶段、图里还没有 QA 节点的工单，进入 `qa` 阶段时补一个再执行；没有执行图的旧工单照旧走单会话流程（同样每轮新开 QA 会话）。
+- **存储**：`graph_nodes` 只加列（`role`、`verdict`、`report`），旧版本代码能打开新库。桌面端执行图里 QA 节点显示为「QA 会话」，并显示通过 / 未通过。
+
 ## 审阅任务与人开的 PR（CYC-540）
 
 评审从开发流程里拆成一个可单独启动的**审阅任务**（`src/flows/review/`）：输入是仓库、PR 编号、待审提交（head SHA）和审阅上下文，交付绑定这个提交的结论（`merge` / `reject` / `escalate` / 系统故障）、发现和每次尝试的会话 id。决定见 `.agents/notes/2026-11-28-loop-runs-one-role-graph-per-requirement.md` 与 `.agents/notes/2026-11-28-loop-on-a-host-takes-webhooks-and-merges-any-pr.md`。
@@ -234,9 +247,9 @@ Loop 推进一张工单时，把当前阶段和进入时间写进工单的两个
 
 CI 没跑完时，流程登记等待并结束这一步，**不占 worker**：`waits` 记「谁（`pr:<仓库>#<编号>`）在等什么主题（`ci:<仓库>@<sha>`）」和复查时间（`tuning.ciPollIntervalSeconds` 之后）。信号（`signals`，来源现在只有 `poll`，以后有 `webhook`）写入和唤醒等待在同一个事务里，按 `dedupe` 去重，重复信号只算一次。轮询读到 CI 不再是 `pending` 就发信号；没有信号时到复查时间也会再检查。唤醒只表示「可以重新检查」，动作前一律从 GitHub 重读。登记等待的工作写 `deadline: null` 的心跳，守护者不把它当作卡住。
 
-事件写在 `pr:<仓库>#<编号>` 下：`pr_review_started`、`pr_waiting_ci`、`pr_merged`、`pr_merge_refused` 等；`stats` 不变。
+事件写在 `pr:<仓库>#<编号>` 下：`pr_review_started`、`pr_waiting_ci`、`pr_merged`、`pr_merge_refused`、`pr_merge_changed` 等；`stats` 不变。
 
-SQLite 只加表（`review_tasks`、`waits`、`signals`、`pr_reviews`），旧版本代码能打开新库。本期不做：webhook 和迁主机（CYC-543）、QA 和返工进流程图（CYC-542）、开发流程 `ci` 阶段改成登记等待、处理人开 PR 的合并冲突或改它的代码。
+SQLite 只加表（`review_tasks`、`waits`、`signals`、`pr_reviews`），旧版本代码能打开新库。本期不做：webhook 和迁主机（CYC-543）、开发流程 `ci` 阶段改成登记等待、处理人开 PR 的合并冲突或改它的代码。
 
 ## 网络错误（CYC-444）
 

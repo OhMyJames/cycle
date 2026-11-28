@@ -541,6 +541,8 @@ export const EVENTS = {
   prompt_suggestion_accepted: o({ key: z.enum(["arrow", "tab"]) }),
   /** Something was picked from the @ menu: what kind of thing, never which. */
   mention_picked: o({ kind: z.enum(["file", "folder", "session"]) }),
+  /** A session @ mention chip in a user message was clicked to jump to that session. Never which session or its title. */
+  session_opened_from_mention: o({}),
   /**
    * A file was attached in the input box. `kind`: what it is sent as (image, text file, PDF), never its name, path or
    * type; `via`: the attach button, a paste, or a drop.
@@ -618,6 +620,7 @@ export const UI_EVENTS = [
   "slash_command_used",
   "prompt_suggestion_accepted",
   "mention_picked",
+  "session_opened_from_mention",
   "attachment_added",
   "attachment_refused",
   "tool_copied",

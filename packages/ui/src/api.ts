@@ -1482,6 +1482,8 @@ export type LoopGraphNode = {
   /** Topological order, from 0. */
   position: number;
   origin: "planned" | "fix";
+  /** Absent (older servers) means `dev`. */
+  role?: "dev" | "qa" | undefined;
   title: string;
   goal: string;
   dependsOn: string[];
@@ -1493,6 +1495,9 @@ export type LoopGraphNode = {
   rounds: number;
   lastError: string | null;
   summary: string | null;
+  /** QA's conclusion; `status` says whether the run finished. */
+  verdict?: "pass" | "fail" | null | undefined;
+  report?: string | null | undefined;
   startedAt: string | null;
   finishedAt: string | null;
 };

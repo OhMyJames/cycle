@@ -9,7 +9,7 @@ import { App, StoreProvider } from "../../src/react/index.ts";
 import { reveal } from "../../src/reveal.ts";
 import { startedAt } from "../../src/started.ts";
 import { AppStore } from "../../src/store/index.ts";
-import { fakeBridge } from "../fake-bridge.ts";
+import { fakeBridge, summary } from "../fake-bridge.ts";
 import { LONG_CODE_LINES, READING } from "../markdown-samples.ts";
 import { openSettings } from "./account-menu.ts";
 import { findAlert } from "./alert.ts";
@@ -171,7 +171,7 @@ test("a call with a description reads as it alone, what it ran only in its toolt
 });
 
 test("a session named with @ is a chip in the sent message, and the record the agent was given is not shown", async () => {
-  const { log } = await open(
+  const { user, log } = await open(
     u({
       sessionUpdate: "user_message",
       messageId: "u1",
@@ -194,17 +194,144 @@ test("a session named with @ is a chip in the sent message, and the record the a
     state({ state: "idle", stopReason: "end_turn" }),
   );
   const chips = await waitFor(() => {
-    const found = [...log.querySelectorAll('[data-slot="mention-chip"]')];
+    const found = [...log.querySelectorAll<HTMLElement>('[data-slot="mention-chip"]')];
     expect(found).toHaveLength(2);
     return found;
   });
-  expect(chips.map((c) => [c.textContent, c.getAttribute("title")])).toEqual([
-    ["Fix the login bug", "Fix the login bug"],
+  expect(chips.map((c) => c.textContent)).toEqual([
+    "Fix the login bug",
     // One the words no longer say is still shown.
-    ["Unsaid", "Unsaid"],
+    "Unsaid",
   ]);
+  // Sessions absent from this location are non-interactive spans, with no duplicate title or invalid button/ARIA attrs.
+  expect(chips.map((c) => c.tagName)).toEqual(["SPAN", "SPAN"]);
+  expect(chips.every((c) => !c.hasAttribute("title"))).toBe(true);
+  expect(chips.every((c) => !c.hasAttribute("type") && !c.hasAttribute("aria-labelledby"))).toBe(
+    true,
+  );
   const message = chips[0]?.closest('[data-slot="message"]');
   expect(message?.textContent).toBe("Go on from Fix the login bug, then @GoneUnsaid");
+  // Hovering shows the tooltip with the full session name.
+  await user.hover(chips[0] as HTMLElement);
+  const tip = await screen.findByRole("tooltip");
+  expect(tip.textContent).toBe("Fix the login bug");
+});
+
+test("a long @ session chip truncates to 20 chars with ..., stays inside the bubble, shows full name on hover, and opens that session on click", async () => {
+  const fullName =
+    "帮我看一下 咱们现在 itsaplan 里面，有哪些 workitem 过期了或者 现在状态已经不对了的 workitem";
+  const said =
+    "帮我看一下 咱们现在 itsaplan 里面，有哪些 workitem 过期了或者 现在状态已经不对了的 workit";
+  const s1History: SessionSnapshot = {
+    conversation: [
+      u({
+        sessionUpdate: "user_message",
+        messageId: "u1",
+        content: [
+          { type: "text", text: `看一下咱们 session\n@${said}\n为什么一直在 writing\n@alpha` },
+          {
+            type: "resource_link",
+            name: fullName,
+            uri: "cycle://session/s2",
+            _meta: { "cycle/mention": said },
+          },
+          {
+            type: "resource_link",
+            name: "alpha",
+            uri: "cycle://session/s1",
+            _meta: { "cycle/mention": "alpha" },
+          },
+        ],
+      }),
+      state({ state: "idle", stopReason: "end_turn" }),
+    ].reduce((c, item) => applyUpdate(c, item), emptyConversation()),
+    permissions: [],
+    version: 2,
+  };
+  const s2History: SessionSnapshot = {
+    conversation: [
+      u({
+        sessionUpdate: "user_message",
+        messageId: "u2",
+        content: [{ type: "text", text: "Target session content" }],
+      }),
+      state({ state: "idle", stopReason: "end_turn" }),
+    ].reduce((c, item) => applyUpdate(c, item), emptyConversation()),
+    permissions: [],
+    version: 2,
+  };
+  const script = fakeBridge({ connected: true });
+  script.bridge.openSession = async (_locationId, sessionId) =>
+    sessionId === "s2" ? s2History : s1History;
+  script.bridge.sessions = async () => [
+    { ...summary("s1"), title: "alpha", lastSeq: 2 },
+    { ...summary("s2"), title: fullName, lastSeq: 1, archived: true },
+  ];
+  await renderApp(script.bridge);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("option", { name: /alpha/ }));
+  const log = await screen.findByRole("log", { name: "Conversation" });
+  // A self-mention stays a non-interactive span, never a dead button.
+  const allChips = [...log.querySelectorAll<HTMLElement>('[data-slot="mention-chip"]')];
+  expect(allChips.map((c) => [c.tagName, c.textContent])).toEqual([
+    ["BUTTON", "帮我看一下 咱们现在 itsaplan..."],
+    ["SPAN", "alpha"],
+  ]);
+  const chip = await within(log).findByRole("button", { name: fullName });
+  expect(chip.getAttribute("data-slot")).toBe("mention-chip");
+  expect(chip.getAttribute("data-kind")).toBe("session");
+  // The chip never overflows its user message bubble, even in a narrow conversation column.
+  const bubble = chip.closest<HTMLElement>('[data-slot="message"]') as HTMLElement;
+  expect(chip.getBoundingClientRect().right).toBeLessThanOrEqual(
+    bubble.getBoundingClientRect().right + 1,
+  );
+  log.style.width = "320px";
+  expect(chip.getBoundingClientRect().right).toBeLessThanOrEqual(
+    bubble.getBoundingClientRect().right + 1,
+  );
+  log.style.width = "";
+  // Hovering shows the full session name in the tooltip.
+  await user.hover(chip);
+  const tip = await screen.findByRole("tooltip");
+  expect(tip.textContent).toBe(fullName);
+  // While the location is away and the target is not cached, clicking does not switch or fire analytics.
+  act(() =>
+    script.emit({
+      type: "location-status",
+      locationId: "local",
+      state: "closed",
+    }),
+  );
+  await user.click(chip);
+  expect(
+    script.calls.filter(
+      ([name, event]) => name === "track" && event === "session_opened_from_mention",
+    ),
+  ).toEqual([]);
+  // Reconnected: keyboard Enter opens the referenced archived session, reveals archived rows in the sidebar, and tracks once.
+  act(() =>
+    script.emit({
+      type: "location-status",
+      locationId: "local",
+      state: "connected",
+    }),
+  );
+  chip.focus();
+  await user.keyboard("{Enter}");
+  await waitFor(() =>
+    expect(screen.getByRole("log", { name: "Conversation" }).textContent).toContain(
+      "Target session content",
+    ),
+  );
+  // The archived session is now shown and selected in the sidebar.
+  await waitFor(() =>
+    expect(screen.getByRole("option", { name: new RegExp(fullName.slice(0, 12)) })).toBeDefined(),
+  );
+  expect(
+    script.calls.filter(
+      ([name, event]) => name === "track" && event === "session_opened_from_mention",
+    ),
+  ).toEqual([["track", "session_opened_from_mention", {}]]);
 });
 
 test("a sent @ is the box's block for a session and for a file or folder inside the session's folder; one outside stays words", async () => {

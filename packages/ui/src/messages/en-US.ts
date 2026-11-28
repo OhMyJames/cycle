@@ -16,6 +16,8 @@ export const enUS = {
 
   // Locations that are away, and starting a session on one of several
   "session.away": "{location} · {state}",
+  // Read by a screen reader on a session row that has an unsent draft
+  "session.hasDraft": "Unsent draft",
   "notice.connecting": "Connecting to {location}…",
   // Ends every line about a location that is not connected, on a page with a box: the box does not say it
   "notice.draftKept": "Your draft is kept.",
@@ -879,6 +881,10 @@ export const enUS = {
   "loop.graph.collapse": "Collapse node {title}",
   "loop.graph.goal": "Goal",
   "loop.graph.fix": "Fix",
+  "loop.graph.qaSession": "QA session",
+  "loop.graph.verdict.pass": "Approved",
+  "loop.graph.verdict.fail": "Rejected",
+  "loop.graph.report": "QA report",
   "loop.graph.dependsOn": "Depends on",
   "loop.graph.filesHint": "Files",
   "loop.graph.commit": "Commit",
