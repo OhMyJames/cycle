@@ -306,3 +306,58 @@ test.skipIf(!built)(
   },
   90_000,
 );
+
+test.skipIf(!built)(
+  "on an older app of the same contract major, without the methods added since, the page starts and works (CYC-539)",
+  async () => {
+    const base = join(root, "older-app");
+    const data = join(base, "data");
+    ensureHomeKeychain(join(base, "home"));
+    // What an app from before Loop, the project timeline and the workspace view would not have.
+    const withoutMethods = [
+      "loopAct",
+      "loopActMany",
+      "loopBoard",
+      "loopNotices",
+      "loopProjects",
+      "loopRuns",
+      "loopTimeline",
+      "workspaceRepo",
+      "workspaceStatus",
+      "interfaceBooted",
+    ];
+    const app = await startWebApp({
+      root: base,
+      daemon: ["bun", daemonMain],
+      data,
+      socket: join(base, "d.sock"),
+      env: { PATH: process.env.PATH ?? "", HOME: join(base, "home") },
+      withoutMethods,
+    });
+    try {
+      const newSession = app.page.getByRole("button", { name: "New session" }).first();
+      await until(
+        () => newSession.isEnabled(),
+        (v) => v === true,
+        30_000,
+      );
+      // The page was given the methods back, as refusals: a call is a failed call, not a TypeError.
+      expect(
+        await app.page.evaluate(
+          () =>
+            typeof (window as unknown as { cycle: Record<string, unknown> }).cycle.workspaceRepo,
+        ),
+      ).toBe("undefined");
+      expect(app.pageErrors).toEqual([]);
+    } finally {
+      await app.close();
+      const pid = Number((await readFile(join(data, "daemon.pid"), "utf8").catch(() => "")).trim());
+      if (pid > 0) {
+        try {
+          process.kill(pid, "SIGTERM");
+        } catch {}
+      }
+    }
+  },
+  60_000,
+);

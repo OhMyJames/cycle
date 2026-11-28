@@ -3,6 +3,7 @@ import { generateKeyPairSync, sign } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { sha256Hex, verifySignature } from "../src/main/ui-crypto.ts";
+import { CONTRACT_MAJOR } from "../src/shared/contract.ts";
 
 export const testKey = generateKeyPairSync("ed25519");
 export const testKeys = {
@@ -16,6 +17,7 @@ export const makeBundle = async (
   parent: string,
   uiVersion: number,
   files: Record<string, string> = {},
+  contract = CONTRACT_MAJOR,
 ) => {
   const all = { "index.html": `<p>${uiVersion}</p>`, "chunks/a.js": `a${uiVersion}`, ...files };
   const staging = join(parent, `stage-${uiVersion}-${Math.random().toString(36).slice(2)}`);
@@ -25,8 +27,8 @@ export const makeBundle = async (
   }
   const manifest = Buffer.from(
     JSON.stringify({
-      v: 1,
-      shell: "0".repeat(32),
+      v: 2,
+      contract,
       uiVersion,
       keyId: "k1",
       file: `ui-${uiVersion}.zip`,

@@ -29,8 +29,11 @@
         "test/**/*.integration.ts"
       ],
       "project": ["src/**/*.{ts,tsx}", "scripts/**/*.ts", "test/**/*.ts"],
-      // scripts/build.ts finds its headers with Bun.resolveSync.
-      "ignoreDependencies": ["node-api-headers"]
+      // The API's declarations as the last commit had them, generated (scripts/ui-contract.ts): read by the type check
+      // in test/ui-contract/compat.ts, which is where the protocol SDK's types are resolved from.
+      "ignore": ["test/ui-contract/snapshot/**"],
+      // scripts/build.ts finds its headers with Bun.resolveSync; the snapshot imports the SDK's types.
+      "ignoreDependencies": ["node-api-headers", "@agentclientprotocol/sdk"]
     },
     "packages/ui": {
       "entry": [

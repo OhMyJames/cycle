@@ -31,7 +31,7 @@ import {
   MAC_BUNDLE,
   MAIN,
 } from "../src/main/layout.ts";
-import { shellOfBuild } from "../src/main/ui-crypto.ts";
+import { CONTRACT_MAJOR } from "../src/shared/contract.ts";
 import { POSTHOG_HOST, POSTHOG_KEY } from "../src/shared/posthog.ts";
 import { plistVersions } from "../src/shared/release.ts";
 import { removePlistDict, setPlistString } from "./plist.ts";
@@ -98,7 +98,7 @@ export const packageApp = (outDir = BUILD_DIR): Packaged => {
   const commit = git("rev-parse", "--short", "HEAD");
   const subject = git("log", "-1", "--format=%s");
   const electron = electronDist();
-  // Which interface bundles this app can take (shared/ui-bundle.ts): bundles are for the shell they were built with.
+  // Which interface bundles this app can take (shared/ui-bundle.ts): newer than its own page, of its contract major.
   const uiVersion = Number(git("rev-list", "--count", "HEAD")) || 0;
   // The version of the daemon the app carries, to put in `<CYCLE_HOME>/daemon/bin` when the one there is older (CYC-538).
   const daemonVersion = daemonVersionOf();
@@ -113,7 +113,6 @@ export const packageApp = (outDir = BUILD_DIR): Packaged => {
   rmSync(staging, { recursive: true, force: true });
   mkdirSync(join(staging, dirname(DAEMON_BIN)), { recursive: true });
   cpSync(join(DESKTOP, "dist"), join(staging, DIST_DIR), { recursive: true });
-  const shell = shellOfBuild(join(DESKTOP, "dist"));
   cpSync(join(daemonDir, "cycle"), join(staging, DAEMON_BIN));
   chmodSync(join(staging, DAEMON_BIN), 0o755);
   for (const bin of AGENT_BINS) {
@@ -133,7 +132,7 @@ export const packageApp = (outDir = BUILD_DIR): Packaged => {
   );
   writeFileSync(
     join(staging, BUILD_FILE),
-    `${JSON.stringify({ name: APP_NAME, identifier: BUNDLE_ID, version, ...(commit ? { commit } : {}), ...(subject ? { subject } : {}), platform, arch, electron: electron.version, shell, uiVersion, daemonVersion, ...posthogProject() }, null, 2)}\n`,
+    `${JSON.stringify({ name: APP_NAME, identifier: BUNDLE_ID, version, ...(commit ? { commit } : {}), ...(subject ? { subject } : {}), platform, arch, electron: electron.version, contract: CONTRACT_MAJOR, uiVersion, daemonVersion, ...posthogProject() }, null, 2)}\n`,
   );
 
   const app = join(outDir, platform === "darwin" ? MAC_BUNDLE : "Cycle");

@@ -1,7 +1,17 @@
 /**
- * Raise this by one when the main process changes, in a way the page can tell, what it answers or does for an API
- * method or event whose types did not change (the meaning of a value, an order, a side effect the page counts on). Apps
- * built before the change then take no interface bundle built after it, and the other way round. Changes to the API's
- * types, and to the preload, change the shell without this (shared/ui-bundle.ts, `shellInput`).
+ * The major version of what the page may rely on the app (main and preload) for (docs/desktop.md "界面更新"): an
+ * interface bundle is taken by every app of the same major, whichever of them it was built after. Within one major a
+ * change may only add: a method, an event, an optional field the page sends, a field or a variant of a union the page is
+ * sent... (test/ui-contract/compat.ts checks the API's types against the last snapshot of them, in `bun run check`).
+ * Removing a method is a break too. A field removed may not come back with another type within a major: the check
+ * compares with the last commit only and cannot see it; give it a new name. A field the page adds to what it sends is
+ * not read by an older app, required or not: the page must not rely on an older app honouring it.
+ *
+ * Raise this by one, and take a new snapshot (`bun run --cwd apps/desktop ui-contract`), when:
+ *  - the API's types change in a way an older app could not serve (the check says which methods);
+ *  - the main process changes, in a way the page can tell, what it answers or does for a method or event whose types did
+ *    not change (the meaning of a value, an order, a side effect the page counts on): no check can see that;
+ *  - the preload changes how the page reaches the app.
+ * Apps of the major before then take no bundle built after it: they get the new page with the next app update.
  */
-export const CONTRACT_REV = 1;
+export const CONTRACT_MAJOR = 2;

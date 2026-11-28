@@ -47,6 +47,7 @@
         "react-dom": "19.3.1",
       },
       "devDependencies": {
+        "@agentclientprotocol/sdk": "catalog:",
         "@cycle/daemon": "workspace:*",
         "@electron/notarize": "3.1.2",
         "@electron/osx-sign": "2.7.2",

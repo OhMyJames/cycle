@@ -21,6 +21,7 @@ const setup = (options: { failLoad?: (url: string) => boolean; bundledVersion?: 
     root: join(dir, "ui"),
     verify: verifyTest,
     bundledVersion: options.bundledVersion ?? 0,
+    contract: 2,
   });
   const loads: string[] = [];
   const emitted: InterfaceState[] = [];

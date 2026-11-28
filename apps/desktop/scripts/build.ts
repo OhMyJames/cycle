@@ -1,9 +1,7 @@
 // Builds the app into dist/: main (node, esm), the preload (cjs: a sandboxed preload cannot be esm),
 // and the page (a browser bundle, its html, and the css Tailwind builds).
-import { cp, mkdir, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
-
-import { CONTRACT_FILE, contractDigest } from "./contract.ts";
 
 const root = new URL("..", import.meta.url).pathname;
 const dist = join(root, "dist");
@@ -78,5 +76,3 @@ const css = Bun.spawn(
 );
 if ((await css.exited) !== 0) process.exit(1);
 console.log("built", dist);
-
-await writeFile(join(dist, CONTRACT_FILE), `${contractDigest()}\n`);

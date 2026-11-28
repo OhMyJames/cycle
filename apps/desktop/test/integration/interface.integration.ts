@@ -8,7 +8,8 @@ import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeUiBundle } from "../../scripts/ui-package.ts";
-import { shellOfBuild } from "../../src/main/ui-crypto.ts";
+import { CONTRACT_MAJOR } from "../../src/shared/contract.ts";
+import { uiManifestName, uiSignatureName } from "../../src/shared/ui-bundle.ts";
 import { evaluate } from "./cdp.ts";
 import { signedIn } from "./signed-in.ts";
 
@@ -21,7 +22,6 @@ const MARK = "interface-marker";
 let root: string;
 let released: Map<string, Uint8Array | string>;
 let server: ReturnType<typeof Bun.serve>;
-let shell = "";
 beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), "cv1-interface-"));
   released = new Map();
@@ -53,7 +53,7 @@ const publish = async (uiVersion: number, options: { draws: boolean }) => {
   if (!options.draws) await writeFile(join(page, "renderer.js"), "// draws nothing\n");
   const made = await makeUiBundle({
     rendererDir: page,
-    shell,
+    contract: CONTRACT_MAJOR,
     uiVersion,
     keyId: "k1",
     outDir: join(root, `out-${uiVersion}`),
@@ -71,8 +71,11 @@ const publish = async (uiVersion: number, options: { draws: boolean }) => {
     },
     signingKey: key.privateKey,
   });
-  released.set(`ui-${shell}.json`, await readFile(made.manifestFile));
-  released.set(`ui-${shell}.json.sig`, await readFile(made.signatureFile as string, "utf8"));
+  released.set(uiManifestName(CONTRACT_MAJOR), await readFile(made.manifestFile));
+  released.set(
+    uiSignatureName(CONTRACT_MAJOR),
+    await readFile(made.signatureFile as string, "utf8"),
+  );
   released.set(made.manifest.file, await readFile(made.archive));
 };
 
@@ -134,7 +137,6 @@ test.skipIf(!ready)(
   async () => {
     const build = Bun.spawnSync([process.execPath, "scripts/build.ts"], { cwd: DESKTOP });
     if (!build.success) throw new Error(build.stderr.toString());
-    shell = shellOfBuild(join(DESKTOP, "dist"));
     await publish(100_000, { draws: true });
 
     // 1. Taken in the background; the page showing does not change; Reload shows it, and what the person had stays.

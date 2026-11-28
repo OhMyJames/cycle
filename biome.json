@@ -15,7 +15,8 @@
       "!.agents/plugins",
       "!.claude/worktrees",
       "!**/skills-lock.json",
-      "!**/built.css"
+      "!**/built.css",
+      "!apps/desktop/test/ui-contract/snapshot"
     ]
   },
   "formatter": {

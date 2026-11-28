@@ -342,8 +342,9 @@ export const startApp = async (options: AppOptions) => {
           ...options.interface.updater,
           store: options.interface.store,
           bundledVersion,
-          // A whole-app update carries the newest page itself.
-          holdOff: () => ["available", "downloading", "installing"].includes(updater.state.kind),
+          // Only while the app is being replaced (the person chose to): the new app carries its own page. An update that
+          // is only available may wait for days, and the page of this app's contract keeps coming meanwhile.
+          holdOff: () => ["downloading", "installing"].includes(updater.state.kind),
           emit: () => pages.refresh(),
         })
       : undefined;

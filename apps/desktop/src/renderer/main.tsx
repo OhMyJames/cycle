@@ -3,12 +3,17 @@ import { App, StoreProvider } from "@cycle/ui/react";
 import { AppStore } from "@cycle/ui/store";
 import { useEffect } from "react";
 import { createRoot } from "react-dom/client";
+import { completeBridge } from "./bridge.ts";
 
 declare global {
   interface Window {
     cycle: CycleBridge;
   }
 }
+
+// The app may be older than this page: what it lacks is filled in (bridge.ts).
+const { bridge, missing } = completeBridge(window.cycle);
+if (missing.length > 0) console.info(`[interface] this app lacks ${missing.join(", ")}`);
 
 // The page cannot ask Node for the platform; the user agent says it (the style of the title bar depends on it).
 document.documentElement.dataset.platform = /Mac/.test(navigator.userAgent) ? "darwin" : "other";
@@ -19,12 +24,12 @@ document.documentElement.dataset.platform = /Mac/.test(navigator.userAgent) ? "d
  */
 function Booted() {
   useEffect(() => {
-    void window.cycle.interfaceBooted().catch(() => undefined);
+    void bridge.interfaceBooted().catch(() => undefined);
   }, []);
   return null;
 }
 
-const store = new AppStore(window.cycle);
+const store = new AppStore(bridge);
 const root = document.getElementById("root");
 if (root === null) throw new Error("no #root");
 createRoot(root).render(

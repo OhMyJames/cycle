@@ -33,8 +33,8 @@ export type UiStoreDeps = {
   verify: (bytes: Uint8Array, signature: string, keyId: string) => boolean;
   /** The version of the page the app was built with: nothing at or below it is taken. */
   bundledVersion: number;
-  /** The shell of this app: a bundle made for another shell (an older app's) is not used. Unset: not checked. */
-  shell?: string;
+  /** This app's contract major: a bundle made for another major is not used (shared/contract.ts). */
+  contract: number;
   now?: () => number;
   log?: (message: string) => void;
 };
@@ -143,8 +143,8 @@ export const createUiStore = (deps: UiStoreDeps) => {
       const reason =
         "reason" in checked
           ? checked.reason
-          : deps.shell !== undefined && checked.manifest.shell !== deps.shell
-            ? "it is for another shell than this app's"
+          : checked.manifest.contract !== deps.contract
+            ? "it is for another contract major than this app's"
             : checked.manifest.uiVersion <= deps.bundledVersion
               ? "the app came with a newer page"
               : undefined;
@@ -170,6 +170,8 @@ export const createUiStore = (deps: UiStoreDeps) => {
       await writeFile(join(staging, SIGNATURE_FILE), signature);
       const checked = await verifyDir(staging);
       if ("reason" in checked) return { ok: false, reason: checked.reason };
+      if (checked.manifest.contract !== deps.contract)
+        return { ok: false, reason: "it is for another contract major than this app's" };
       const { uiVersion } = checked.manifest;
       const state = await readState();
       if (uiVersion <= Math.max(state.floor, deps.bundledVersion))

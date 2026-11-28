@@ -7,7 +7,7 @@ import { sha256Hex, verifySignature } from "../src/main/ui-crypto.ts";
 import { createUiStore } from "../src/main/ui-store.ts";
 import { UiUpdater, type UiUpdateState } from "../src/main/ui-updater.ts";
 
-const SHELL = "1".repeat(32);
+const CONTRACT = 2;
 const BASE = "https://example.test/ui-latest/";
 const key = generateKeyPairSync("ed25519");
 const other = generateKeyPairSync("ed25519");
@@ -47,7 +47,7 @@ const fetchFake = (async (url: string, init?: RequestInit) => {
 const publish = (
   uiVersion: number,
   options: {
-    shell?: string;
+    contract?: number;
     signer?: typeof key;
     archive?: string;
     files?: Record<string, string>;
@@ -55,7 +55,7 @@ const publish = (
     etag?: string;
   } = {},
 ) => {
-  const shell = options.shell ?? SHELL;
+  const contract = options.contract ?? CONTRACT;
   const files = options.files ?? {
     "index.html": `<p>${uiVersion}</p>`,
     "renderer.js": `r${uiVersion}`,
@@ -63,11 +63,11 @@ const publish = (
   const archive = Buffer.from(options.archive ?? `zip-${uiVersion}`);
   const manifest = Buffer.from(
     JSON.stringify({
-      v: 1,
-      shell,
+      v: 2,
+      contract,
       uiVersion,
       keyId: "k1",
-      file: `ui-${shell}-${uiVersion}.zip`,
+      file: `ui-c${contract}-${uiVersion}.zip`,
       size: archive.length,
       sha256: sha256Hex(archive),
       files: Object.fromEntries(
@@ -75,30 +75,30 @@ const publish = (
       ),
     }),
   );
-  released.set(`${BASE}ui-${SHELL}.json`, {
+  released.set(`${BASE}ui-c${CONTRACT}.json`, {
     body: manifest,
     ...(options.etag ? { etag: options.etag } : {}),
   });
-  released.set(`${BASE}ui-${SHELL}.json.sig`, {
+  released.set(`${BASE}ui-c${CONTRACT}.json.sig`, {
     body: sign(null, manifest, (options.signer ?? key).privateKey).toString("base64"),
   });
-  released.set(`${BASE}ui-${shell}-${uiVersion}.zip`, { body: archive });
+  released.set(`${BASE}ui-c${contract}-${uiVersion}.zip`, { body: archive });
   unpacked = options.unzip ?? files;
 };
 
 const make = (
-  over: {
-    shell?: string | undefined;
-    hasKeys?: boolean;
-    bundledVersion?: number;
-    holdOff?: () => boolean;
-  } = {},
+  over: { hasKeys?: boolean; bundledVersion?: number; holdOff?: () => boolean } = {},
 ) => {
   const root = join(dir, "ui");
-  const store = createUiStore({ root, verify, bundledVersion: over.bundledVersion ?? 0 });
+  const store = createUiStore({
+    root,
+    verify,
+    bundledVersion: over.bundledVersion ?? 0,
+    contract: 2,
+  });
   const updater = new UiUpdater({
     store,
-    shell: "shell" in over ? over.shell : SHELL,
+    contract: CONTRACT,
     hasKeys: over.hasKeys ?? true,
     verify,
     repo: "o/r",
@@ -121,7 +121,7 @@ test("with no bundle published, nothing happens", async () => {
   const { updater, store } = make();
   expect(await updater.check()).toEqual({});
   expect(await store.selectPage()).toEqual({ kind: "bundled" });
-  expect(requests.map((r) => r.url)).toEqual([`${BASE}ui-${SHELL}.json`]);
+  expect(requests.map((r) => r.url)).toEqual([`${BASE}ui-c${CONTRACT}.json`]);
 });
 
 test("a bundle that checks out is installed, and said to be", async () => {
@@ -138,14 +138,14 @@ test("the manifest is asked for again with its tag, and a 304 changes nothing", 
   await updater.check();
   const n = requests.length;
   expect(await updater.check()).toEqual({ installed: 12 });
-  expect(requests.slice(n)).toEqual([{ url: `${BASE}ui-${SHELL}.json`, ifNoneMatch: '"a"' }]);
+  expect(requests.slice(n)).toEqual([{ url: `${BASE}ui-c${CONTRACT}.json`, ifNoneMatch: '"a"' }]);
 });
 
-test("a bundle with another key's signature, for another shell, or not newer is not installed", async () => {
+test("a bundle with another key's signature, for another contract major, or not newer is not installed", async () => {
   const { updater, store } = make({ bundledVersion: 10 });
   publish(12, { signer: other });
   expect((await updater.check()).installed).toBeUndefined();
-  publish(12, { shell: "2".repeat(32) });
+  publish(12, { contract: 3 });
   expect((await updater.check()).installed).toBeUndefined();
   publish(10);
   expect((await updater.check()).installed).toBeUndefined();
@@ -155,12 +155,12 @@ test("a bundle with another key's signature, for another shell, or not newer is 
 
 test("an archive that is not the size or hash the manifest says is not installed, and the next check tries again", async () => {
   publish(12);
-  released.set(`${BASE}ui-${SHELL}-12.zip`, { body: "other bytes" });
+  released.set(`${BASE}ui-c${CONTRACT}-12.zip`, { body: "other bytes" });
   const { updater, store } = make();
   const state = await updater.check();
   expect(state.installed).toBeUndefined();
   expect(state.error).toContain("archive");
-  released.set(`${BASE}ui-${SHELL}-12.zip`, { body: "zip-12" });
+  released.set(`${BASE}ui-c${CONTRACT}-12.zip`, { body: "zip-12" });
   expect(await updater.check()).toEqual({ installed: 12 });
   expect(await store.selectPage()).toMatchObject({ uiVersion: 12 });
 });
@@ -176,16 +176,16 @@ test("an archive whose files are not the ones listed is refused and leaves nothi
 
 test("a manifest that points at an archive not yet uploaded installs nothing and is tried again", async () => {
   publish(12);
-  released.delete(`${BASE}ui-${SHELL}-12.zip`);
+  released.delete(`${BASE}ui-c${CONTRACT}-12.zip`);
   const { updater } = make();
   expect((await updater.check()).error).toContain("404");
-  released.set(`${BASE}ui-${SHELL}-12.zip`, { body: "zip-12" });
+  released.set(`${BASE}ui-c${CONTRACT}-12.zip`, { body: "zip-12" });
   expect(await updater.check()).toEqual({ installed: 12 });
 });
 
-test("without a key or without a shell, nothing is asked for", async () => {
+test("without a key, nothing is asked for", async () => {
   publish(12);
-  for (const over of [{ hasKeys: false }, { shell: undefined }]) {
+  for (const over of [{ hasKeys: false }]) {
     const { updater } = make(over);
     expect((await updater.check()).disabled).toBeString();
     updater.start();
@@ -194,7 +194,7 @@ test("without a key or without a shell, nothing is asked for", async () => {
   expect(requests).toEqual([]);
 });
 
-test("while a whole-app update waits, no bundle is taken", async () => {
+test("while the app is being replaced, no bundle is taken", async () => {
   publish(12);
   const { updater } = make({ holdOff: () => true });
   expect(await updater.check()).toEqual({});
@@ -205,7 +205,7 @@ test("a network that is down is an error in words, and nothing else", async () =
   const { store } = make();
   const failing = new UiUpdater({
     store,
-    shell: SHELL,
+    contract: CONTRACT,
     hasKeys: true,
     verify,
     repo: "o/r",

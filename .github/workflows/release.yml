@@ -196,17 +196,17 @@ jobs:
           path: assets
           merge-multiple: true
       - run: ls -l assets
-      # Not a stop: an app of this release takes interface updates only if a bundle for its shell is on `ui-latest`
-      # (ui-release.yml makes one for each commit on main; the one for this commit may still be on its way).
-      - name: A bundle for this release's shell exists
+      # Not a stop: an app of this release takes interface updates only once a bundle for its contract major is on
+      # `ui-latest` (ui-release.yml makes one for each commit on main; the first of a new major may still be on its way).
+      - name: A bundle for this release's contract major exists
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          shell=$(jq -r '.shell // empty' assets/latest-darwin-arm64.json)
-          if [ -z "$shell" ]; then
-            echo "::warning::This release's manifest names no shell: its app will take no interface updates."
-          elif ! gh release download ui-latest --repo "$GITHUB_REPOSITORY" -p "ui-$shell.json" -O /dev/null 2>/dev/null; then
-            echo "::warning::No interface bundle for shell $shell is on ui-latest yet: the app of this release takes no interface update until ui-release has published one."
+          contract=$(jq -r '.contract // empty' assets/latest-darwin-arm64.json)
+          if [ -z "$contract" ]; then
+            echo "::warning::This release's manifest names no contract major: its app will take no interface updates."
+          elif ! gh release download ui-latest --repo "$GITHUB_REPOSITORY" -p "ui-c$contract.json" -O /dev/null 2>/dev/null; then
+            echo "::warning::No interface bundle for contract $contract is on ui-latest yet: the app of this release takes no interface update until ui-release has published one."
           fi
       - name: Publish
         env:

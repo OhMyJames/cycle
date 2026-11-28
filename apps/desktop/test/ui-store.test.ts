@@ -29,14 +29,15 @@ beforeEach(async () => {
 });
 afterEach(() => rm(dir, { recursive: true, force: true }));
 
-const store = (bundledVersion = 0) =>
-  createUiStore({ root, verify, bundledVersion, now: () => clock });
+const store = (bundledVersion = 0, contract = 2) =>
+  createUiStore({ root, verify, bundledVersion, contract, now: () => clock });
 
 /** What the updater would hand over: an unpacked folder, and the manifest and signature that go with it. */
 const bundle = async (
   uiVersion: number,
   files: Record<string, string> = {},
   tamper?: { sig?: boolean },
+  contract = 2,
 ) => {
   const all = { "index.html": `<p>${uiVersion}</p>`, "chunks/a.js": `a${uiVersion}`, ...files };
   const staging = join(dir, `stage-${uiVersion}-${Math.random()}`);
@@ -46,8 +47,8 @@ const bundle = async (
   }
   const manifest = Buffer.from(
     JSON.stringify({
-      v: 1,
-      shell: "0".repeat(32),
+      v: 2,
+      contract,
       uiVersion,
       keyId: "k1",
       file: `ui-${uiVersion}.zip`,
@@ -181,19 +182,26 @@ test("installing the same version again is harmless", async () => {
   expect(await readFile(join(root, "5", "index.html"), "utf8")).toBe("<p>5</p>");
 });
 
-test("a bundle left by an older app, for another shell or older than the page the app came with, is not used", async () => {
-  const old = store();
-  await take(old, 5);
-  const other = createUiStore({ root, verify, bundledVersion: 0, shell: "1".repeat(32) });
-  expect(await other.selectPage()).toEqual({ kind: "bundled" });
+test("a bundle left by an app of another contract major, or older than the page the app came with, is not used", async () => {
+  await take(store(), 5);
+  expect(await store(0, 3).selectPage()).toEqual({ kind: "bundled" });
   expect((await readdir(root)).sort()).toEqual(["state.json"]);
 
   await take(store(), 8);
-  const newer = createUiStore({ root, verify, bundledVersion: 20, shell: "0".repeat(32) });
-  expect(await newer.selectPage()).toEqual({ kind: "bundled" });
-  const same = createUiStore({ root, verify, bundledVersion: 0, shell: "0".repeat(32) });
+  expect(await store(20).selectPage()).toEqual({ kind: "bundled" });
+  const same = store();
   await take(same, 9);
   expect(await same.selectPage()).toEqual({ kind: "ui", uiVersion: 9, dir: join(root, "9") });
+});
+
+test("a bundle of another contract major is not installed", async () => {
+  const s = store();
+  const b = await bundle(7, {}, undefined, 3);
+  expect(await s.install(b.staging, b.manifest, b.sig)).toEqual({
+    ok: false,
+    reason: "it is for another contract major than this app's",
+  });
+  expect(await s.selectPage()).toEqual({ kind: "bundled" });
 });
 
 test("installing more bundles does not remove the folder of the one the window shows", async () => {

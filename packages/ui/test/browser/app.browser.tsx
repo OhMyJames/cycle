@@ -1106,16 +1106,29 @@ test("without the agent's word that it takes images, there is nothing to attach 
   expect(screen.queryByRole("button", { name: "Attach image" })).toBeNull();
 });
 
-test("a newer interface that is ready is offered with Reload, and not while the whole app has an update", async () => {
+test("a newer interface that is ready is offered with Reload, also beside an app update, and not while the app is replaced", async () => {
   const { user, emit, named } = await mount();
   await accountMenu();
   expect(screen.queryByRole("button", { name: "Reload" })).toBeNull();
   await emit({ type: "interface-update", state: { bundled: 100, running: 100, ready: 120 } });
   expect(screen.getByText("A newer interface is ready")).toBeTruthy();
-  // The whole app has an update: it carries the newest page itself, so there is only that one to act on.
+  // An app update that is only available may wait for days: the page is offered meanwhile (CYC-539).
   await emit({
     type: "app-update",
     state: { current: "0.1.0", kind: "available", version: "0.2.0" },
+  });
+  expect(screen.getByRole("button", { name: "Reload" })).toBeTruthy();
+  // The app is being replaced: the new one carries its own page, so there is only that to wait for.
+  await emit({
+    type: "app-update",
+    state: {
+      current: "0.1.0",
+      kind: "downloading",
+      version: "0.2.0",
+      received: 1,
+      total: 10,
+      how: "whole",
+    },
   });
   expect(screen.queryByRole("button", { name: "Reload" })).toBeNull();
   await emit({ type: "app-update", state: { current: "0.1.0", kind: "up-to-date", checkedAt: 0 } });
