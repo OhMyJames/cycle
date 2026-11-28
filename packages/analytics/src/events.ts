@@ -240,6 +240,7 @@ export const EVENTS = {
       "shape",
       "shape_qa",
       "graph_planner",
+      "operator",
     ]),
   }),
   /** The person asked to check for an update. */

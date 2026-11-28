@@ -141,6 +141,10 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
           },
     prReview:
       file.prReview?.enabled === true ? { maxReviewsPerPr: file.prReview.maxReviewsPerPr } : null,
+    operator: {
+      blockedThreshold: file.operator?.blockedThreshold ?? 3,
+      inspectIntervalMinutes: file.operator?.inspectIntervalMinutes ?? 60,
+    },
     dryRun,
   };
   const tuning = {

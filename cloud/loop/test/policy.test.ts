@@ -180,7 +180,16 @@ test("review role is strictly read-only like QA", () => {
 const ROOT = "/repo";
 // The planning node's roles (CYC-322) are under exactly the research rules: every `research:` test runs them too.
 const researchers = (
-  ["research", "design", "research_qa", "triage", "shape", "shape_qa", "graph_planner"] as const
+  [
+    "research",
+    "design",
+    "research_qa",
+    "triage",
+    "shape",
+    "shape_qa",
+    "graph_planner",
+    "operator",
+  ] as const
 ).map((role) => ({ role, worktree: W, readRoots: [ROOT, "/data/runs/"] }));
 type ResearchCtx = (typeof researchers)[number];
 const each = (check: (ctx: ResearchCtx) => void) => {

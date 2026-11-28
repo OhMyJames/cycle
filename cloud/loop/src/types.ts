@@ -250,6 +250,8 @@ export type Config = {
    * default). `maxReviewsPerPr` is how many commits of one pull request are reviewed before the loop stops.
    */
   prReview: { maxReviewsPerPr: number } | null;
+  /** The operator agent (CYC-486): Blocked tickets that wake it, and minutes between inspections. */
+  operator: { blockedThreshold: number; inspectIntervalMinutes: number };
   /** `owner/name` of the repository the pull requests are on; null when it is not known. */
   repoSlug: string | null;
 };
@@ -338,6 +340,7 @@ export const defaultConfig = (
   design: null,
   planning: null,
   prReview: null,
+  operator: { blockedThreshold: 3, inspectIntervalMinutes: 60 },
   repoSlug: null,
   ...partial,
 });
@@ -352,7 +355,9 @@ export type SessionRole =
   | "triage"
   | "shape"
   | "shape_qa"
-  | "graph_planner";
+  | "graph_planner"
+  /** The operator agent (CYC-486): read-only, like research; it also reads the export directory under stateDir. */
+  | "operator";
 
 export type TurnResult = {
   /** `end_turn` is the only one that is a finished turn; `cancelled`, `error`, `max_tokens`, `refusal` are not. */

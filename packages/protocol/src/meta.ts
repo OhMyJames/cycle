@@ -214,6 +214,7 @@ export const SessionOriginRoleSchema = z.enum([
   "shape",
   "shape_qa",
   "graph_planner",
+  "operator",
 ]);
 export type SessionOriginRole = z.infer<typeof SessionOriginRoleSchema>;
 

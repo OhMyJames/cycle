@@ -873,6 +873,7 @@ export const enUS = {
   "loop.run.session.shape": "Shaping session",
   "loop.run.session.shape_qa": "Shaping QA session",
   "loop.run.session.graph_planner": "Graph planner session",
+  "loop.run.session.operator": "Operator session",
   "loop.run.session.other": "{kind} session",
   "loop.run.sessionMissing": "That session is not in the list of any connected location.",
   "loop.run.cancel": "Cancel turn",
