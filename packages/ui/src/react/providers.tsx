@@ -2,13 +2,6 @@
 // what a location's daemon keeps, one location at a time. A key is only ever written here: the daemon says there is
 // one (`hasKey`), and no field of this page is filled from one.
 import { Button } from "@ui-sdk/react/button";
-import {
-  Dialog,
-  DialogBackdrop,
-  DialogClose,
-  DialogContent,
-  DialogTitle,
-} from "@ui-sdk/react/dialog";
 import { Field, FieldDescription, FieldLabel } from "@ui-sdk/react/field";
 import { Input } from "@ui-sdk/react/input";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@ui-sdk/react/menu";
@@ -32,12 +25,11 @@ import {
   type ProviderModel,
   type ProviderProblem,
 } from "../api.ts";
-import { ConfirmDialog } from "./dialogs.tsx";
+import { ConfirmDialog, FormDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import { CheckIcon, CloseIcon, MoreIcon, PlusIcon } from "./icons.tsx";
 import { LocationScope } from "./location-scope.tsx";
-import { PageGroup, PageRow, PageRows } from "./page-layout.tsx";
-import { StateBlock } from "./state-block.tsx";
+import { PageRow, PageRows, ResourceGroup } from "./page-layout.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
 import { Tip } from "./tip.tsx";
 
@@ -89,93 +81,74 @@ function ProvidersGroup({ location }: { location: LocationConfig }) {
     void store.loadProviders(locationId);
   }, [store, locationId]);
 
-  const add = (
-    <Button data-variant="outline" onClick={() => setEditing("new")}>
-      {t("providers.add")}
-    </Button>
-  );
   return (
-    <PageGroup
-      lead={t("providers.lead", { location: location.name })}
-      action={list !== undefined && list.length > 0 ? add : undefined}
-    >
-      {read?.error !== undefined ? (
-        <StateBlock
-          size="inline"
-          align="start"
-          tone="error"
-          title={t("providers.unreadable")}
-          reason={read.error}
-          action={{
-            label: t("providers.retry"),
-            onAction: () => void store.loadProviders(locationId),
-          }}
-        />
-      ) : null}
-      {list === undefined ? (
-        read?.error === undefined ? (
-          <StateBlock size="inline" align="start" tone="loading" title={t("providers.loading")} />
-        ) : null
-      ) : list.length === 0 ? (
-        <StateBlock
-          size="inline"
-          align="start"
-          tone="empty"
-          title={t("providers.empty")}
-          body={t("providers.emptyBody")}
-          action={{ label: t("providers.add"), onAction: () => setEditing("new") }}
-        />
-      ) : (
-        <PageRows>
-          {list.map((provider) => {
-            const kindName =
-              provider.kind === CUSTOM_PROVIDER_KIND
-                ? t("providers.form.kind.custom")
-                : (kinds.find((k) => k.id === provider.kind)?.name ?? provider.kind);
-            return (
-              <PageRow
-                key={provider.id}
-                label={provider.name}
-                description={
-                  <>
-                    <span data-slot="connector-status">{kindName}</span>
-                    <span data-slot="connector-status">
-                      {t("providers.models", { count: provider.models.length })}
-                    </span>
-                    <span data-slot="connector-status" data-key={provider.hasKey}>
-                      {t(provider.hasKey ? "providers.key.saved" : "providers.key.none")}
-                    </span>
-                    {provider.baseUrl !== null ? (
-                      <code data-slot="connector-where" title={provider.baseUrl}>
-                        {provider.baseUrl}
-                      </code>
-                    ) : null}
-                  </>
-                }
-              >
-                <Menu
-                  onAction={(value) => {
-                    if (value === "edit") setEditing(provider);
-                    else if (value === "remove") setRemoving(provider);
-                  }}
+    <>
+      <ResourceGroup
+        lead={t("providers.lead", { location: location.name })}
+        items={list}
+        error={read?.error}
+        onRetry={() => void store.loadProviders(locationId)}
+        says={{
+          loading: t("providers.loading"),
+          unreadable: t("providers.unreadable"),
+          retry: t("providers.retry"),
+          empty: t("providers.empty"),
+          emptyBody: t("providers.emptyBody"),
+        }}
+        add={{ label: t("providers.add"), onAdd: () => setEditing("new") }}
+      >
+        {(list) => (
+          <PageRows>
+            {list.map((provider) => {
+              const kindName =
+                provider.kind === CUSTOM_PROVIDER_KIND
+                  ? t("providers.form.kind.custom")
+                  : (kinds.find((k) => k.id === provider.kind)?.name ?? provider.kind);
+              return (
+                <PageRow
+                  key={provider.id}
+                  label={provider.name}
+                  description={
+                    <>
+                      <span data-slot="connector-status">{kindName}</span>
+                      <span data-slot="connector-status">
+                        {t("providers.models", { count: provider.models.length })}
+                      </span>
+                      <span data-slot="connector-status" data-key={provider.hasKey}>
+                        {t(provider.hasKey ? "providers.key.saved" : "providers.key.none")}
+                      </span>
+                      {provider.baseUrl !== null ? (
+                        <code data-slot="connector-where" title={provider.baseUrl}>
+                          {provider.baseUrl}
+                        </code>
+                      ) : null}
+                    </>
+                  }
                 >
-                  <Tip label={t("providers.actions", { name: provider.name })}>
-                    <MenuTrigger data-variant="ghost">
-                      <MoreIcon />
-                    </MenuTrigger>
-                  </Tip>
-                  <MenuContent align="end">
-                    <MenuItem value="edit">{t("providers.edit")}</MenuItem>
-                    <MenuItem value="remove" data-destructive>
-                      {t("providers.remove")}
-                    </MenuItem>
-                  </MenuContent>
-                </Menu>
-              </PageRow>
-            );
-          })}
-        </PageRows>
-      )}
+                  <Menu
+                    onAction={(value) => {
+                      if (value === "edit") setEditing(provider);
+                      else if (value === "remove") setRemoving(provider);
+                    }}
+                  >
+                    <Tip label={t("providers.actions", { name: provider.name })}>
+                      <MenuTrigger data-variant="ghost">
+                        <MoreIcon />
+                      </MenuTrigger>
+                    </Tip>
+                    <MenuContent align="end">
+                      <MenuItem value="edit">{t("providers.edit")}</MenuItem>
+                      <MenuItem value="remove" data-destructive>
+                        {t("providers.remove")}
+                      </MenuItem>
+                    </MenuContent>
+                  </Menu>
+                </PageRow>
+              );
+            })}
+          </PageRows>
+        )}
+      </ResourceGroup>
       {editing !== undefined ? (
         <ProviderFormDialog
           location={location}
@@ -199,7 +172,7 @@ function ProvidersGroup({ location }: { location: LocationConfig }) {
           }}
         />
       ) : null}
-    </PageGroup>
+    </>
   );
 }
 
@@ -253,7 +226,6 @@ function ProviderFormDialog(props: {
   );
   const [catalog, setCatalog] = useState<Catalog>({ state: "loading" });
   const [problem, setProblem] = useState<Problem | undefined>(undefined);
-  const [busy, setBusy] = useState(false);
 
   const locationId = props.location.id;
   /** Which asking of the catalog is the latest: an answer to an earlier one (another service, a retry) is dropped. */
@@ -319,16 +291,11 @@ function ProviderFormDialog(props: {
   });
 
   const save = async () => {
-    if (!ready || busy) return;
-    setBusy(true);
     setProblem(undefined);
-    try {
-      const answer = await store.saveProvider(locationId, draft());
-      if ("provider" in answer) props.onDone();
-      else setProblem(answer);
-    } finally {
-      setBusy(false);
-    }
+    const answer = await store.saveProvider(locationId, draft());
+    if ("provider" in answer) return true;
+    setProblem(answer);
+    return false;
   };
 
   const patchRow = (rowKey: number, change: Partial<ProviderModel>) =>
@@ -345,288 +312,271 @@ function ProviderFormDialog(props: {
     });
 
   return (
-    <Dialog open onOpenChange={(open) => !open && !busy && props.onDone()}>
-      <DialogBackdrop />
-      <DialogContent data-kind="provider-form">
-        <DialogTitle>
-          {before === undefined
-            ? t("providers.form.addTitle")
-            : t("providers.form.editTitle", { name: before.name })}
-        </DialogTitle>
-        <form
-          data-slot="stack"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void save();
-          }}
-        >
-          {before === undefined ? (
-            <Field name="kind">
-              <FieldLabel>{t("providers.form.kind")}</FieldLabel>
-              <Select
-                items={[
-                  ...props.kinds.map((k) => ({ value: k.id, label: k.name })),
-                  { value: CUSTOM_PROVIDER_KIND, label: t("providers.form.kind.custom") },
-                ]}
-                value={kind}
-                onValueChange={(next) => {
-                  if (typeof next !== "string" || next === kind) return;
-                  setKind(next);
-                  setChosen(new Map());
-                }}
-              >
-                <SelectTrigger autoFocus>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {props.kinds.map((k) => (
-                    <SelectItem key={k.id} value={k.id}>
-                      {k.name}
-                    </SelectItem>
-                  ))}
-                  <SelectItem value={CUSTOM_PROVIDER_KIND}>
-                    {t("providers.form.kind.custom")}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-          ) : null}
-          <Field name="name">
-            <FieldLabel>{t("providers.form.name")}</FieldLabel>
-            <Input
-              autoFocus={before !== undefined}
-              value={name}
-              placeholder={props.kinds.find((k) => k.id === kind)?.name ?? ""}
-              onChange={(e) => setName(e.currentTarget.value)}
-            />
-            <FieldDescription>{t("providers.form.nameHint")}</FieldDescription>
-          </Field>
-          {custom ? (
-            <Field name="api">
-              <FieldLabel>{t("providers.form.api")}</FieldLabel>
-              <Select
-                items={PROVIDER_APIS.map((a) => ({ value: a, label: t(`providers.api.${a}`) }))}
-                value={api}
-                onValueChange={(next) => {
-                  if (typeof next === "string") setApi(next as ProviderApi);
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {PROVIDER_APIS.map((a) => (
-                    <SelectItem key={a} value={a}>
-                      {t(`providers.api.${a}`)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-          ) : null}
-          <Field name="baseUrl">
-            <FieldLabel>{t("providers.form.address")}</FieldLabel>
-            <Input
-              value={baseUrl}
-              placeholder="https://"
-              spellCheck={false}
-              onChange={(e) => setBaseUrl(e.currentTarget.value)}
-            />
-            {custom ? null : <FieldDescription>{t("providers.form.addressHint")}</FieldDescription>}
-          </Field>
-          <Field name="apiKey">
-            <FieldLabel>{t("providers.form.apiKey")}</FieldLabel>
-            {keyMode === "keep" ? (
-              <div data-slot="row">
-                <span data-slot="secret-name">{t("providers.form.keySaved")}</span>
-                <Button type="button" data-variant="ghost" onClick={() => setKeyMode("replace")}>
-                  {t("providers.form.keyReplace")}
-                </Button>
-                <Button type="button" data-variant="ghost" onClick={() => setKeyMode("remove")}>
-                  {t("providers.form.keyRemove")}
-                </Button>
-              </div>
-            ) : keyMode === "remove" ? (
-              <div data-slot="row">
-                <span data-slot="secret-name" data-removed>
-                  {t("providers.form.keyRemoving")}
-                </span>
-                <Button type="button" data-variant="ghost" onClick={() => setKeyMode("keep")}>
-                  {t("providers.form.keyKeep")}
-                </Button>
-              </div>
-            ) : (
-              <div data-slot="row">
-                <Input
-                  type="password"
-                  autoComplete="off"
-                  spellCheck={false}
-                  value={key}
-                  onChange={(e) => setKey(e.currentTarget.value)}
-                />
-                {before?.hasKey === true ? (
-                  <Button
-                    type="button"
-                    data-variant="ghost"
-                    onClick={() => {
-                      setKey("");
-                      setKeyMode("keep");
-                    }}
-                  >
-                    {t("providers.form.keyKeep")}
-                  </Button>
-                ) : null}
-              </div>
-            )}
-            <FieldDescription>
-              {t("providers.form.apiKeyHint", { location: props.location.name })}
-            </FieldDescription>
-            {addressChanged && before?.hasKey === true && keyMode === "keep" ? (
-              <FieldDescription role="status">{t("providers.form.keyAddress")}</FieldDescription>
-            ) : null}
-          </Field>
-          <fieldset data-slot="provider-models">
-            <legend>{t("providers.form.models")}</legend>
-            {custom ? (
-              <>
-                {rows.map((row) => (
-                  <div key={row.key} data-slot="provider-model-row">
-                    <div data-slot="row">
-                      <Input
-                        aria-label={t("providers.form.modelId")}
-                        placeholder={t("providers.form.modelId")}
-                        spellCheck={false}
-                        value={row.model.id}
-                        onChange={(e) => patchRow(row.key, { id: e.currentTarget.value })}
-                      />
-                      <Input
-                        aria-label={t("providers.form.modelName")}
-                        placeholder={t("providers.form.modelName")}
-                        value={row.model.name}
-                        onChange={(e) => patchRow(row.key, { name: e.currentTarget.value })}
-                      />
-                      <Tip label={t("providers.form.modelRemove")}>
-                        <Button
-                          type="button"
-                          data-variant="ghost"
-                          disabled={rows.length === 1}
-                          onClick={() => setRows((list) => list.filter((r) => r.key !== row.key))}
-                        >
-                          <CloseIcon />
-                        </Button>
-                      </Tip>
-                    </div>
-                    <div data-slot="row">
-                      <label data-slot="form-option">
-                        <input
-                          type="checkbox"
-                          checked={row.model.reasoning}
-                          onChange={(e) =>
-                            patchRow(row.key, { reasoning: e.currentTarget.checked })
-                          }
-                        />
-                        <span data-slot="form-mark" data-several aria-hidden="true">
-                          <CheckIcon size={12} />
-                        </span>
-                        <span data-slot="option-name">{t("providers.form.reasoning")}</span>
-                      </label>
-                      <label data-slot="form-option">
-                        <input
-                          type="checkbox"
-                          checked={row.model.images}
-                          onChange={(e) => patchRow(row.key, { images: e.currentTarget.checked })}
-                        />
-                        <span data-slot="form-mark" data-several aria-hidden="true">
-                          <CheckIcon size={12} />
-                        </span>
-                        <span data-slot="option-name">{t("providers.form.images")}</span>
-                      </label>
-                      <Input
-                        inputMode="numeric"
-                        aria-label={t("providers.form.context")}
-                        placeholder={t("providers.form.context")}
-                        value={row.model.contextWindow > 0 ? String(row.model.contextWindow) : ""}
-                        onChange={(e) =>
-                          patchRow(row.key, {
-                            contextWindow: Number.parseInt(e.currentTarget.value, 10) || 0,
-                          })
-                        }
-                      />
-                    </div>
-                  </div>
-                ))}
-                <div data-slot="row">
-                  <Button
-                    type="button"
-                    data-variant="ghost"
-                    onClick={() => {
-                      setRows((list) => [...list, { key: counter, model: emptyModel() }]);
-                      setCounter((n) => n + 1);
-                    }}
-                  >
-                    <PlusIcon />
-                    {t("providers.form.modelAdd")}
-                  </Button>
-                </div>
-              </>
-            ) : catalog.state === "loading" && offered.length === 0 ? (
-              <p data-slot="hint" role="status">
-                {t("providers.form.modelsLoading")}
-              </p>
-            ) : (
-              <>
-                {catalog.state === "error" ? (
-                  <div data-slot="row">
-                    <p data-slot="hint" role="alert">
-                      {t("providers.form.modelsUnreadable")}
-                      {catalog.message !== "" ? (
-                        <code data-slot="reason">{catalog.message}</code>
-                      ) : null}
-                    </p>
-                    <Button type="button" data-variant="ghost" onClick={() => fetchCatalog()}>
-                      {t("providers.retry")}
-                    </Button>
-                  </div>
-                ) : null}
-                {catalog.state === "ready" && offered.length === 0 ? (
-                  <p data-slot="hint">{t("providers.form.modelsEmpty")}</p>
-                ) : null}
-                <div data-slot="form-options">
-                  {offered.map((model) => (
-                    <label key={model.id} data-slot="form-option">
-                      <input
-                        type="checkbox"
-                        checked={chosen.has(model.id)}
-                        onChange={() => toggle(model)}
-                      />
-                      <span data-slot="form-mark" data-several aria-hidden="true">
-                        <CheckIcon size={12} />
-                      </span>
-                      <span data-slot="option">
-                        <span data-slot="option-name">{model.name || model.id}</span>
-                        {model.name !== "" && model.name !== model.id ? (
-                          <span data-slot="option-description">{model.id}</span>
-                        ) : null}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </>
-            )}
-          </fieldset>
-          {problem !== undefined ? (
-            <p data-slot="hint" role="alert">
-              {problemText(problem)}
-            </p>
-          ) : null}
-          <div data-slot="row" data-dialog-footer="">
-            <DialogClose disabled={busy}>{t("dialog.cancel")}</DialogClose>
-            <Button data-variant="solid" type="submit" disabled={!ready || busy}>
-              {t(before === undefined ? "providers.form.create" : "providers.form.save")}
+    <FormDialog
+      kind="provider-form"
+      title={
+        before === undefined
+          ? t("providers.form.addTitle")
+          : t("providers.form.editTitle", { name: before.name })
+      }
+      ready={ready}
+      submitLabel={t(before === undefined ? "providers.form.create" : "providers.form.save")}
+      onSubmit={save}
+      onClose={props.onDone}
+      problem={problem !== undefined ? problemText(problem) : undefined}
+    >
+      {before === undefined ? (
+        <Field name="kind">
+          <FieldLabel>{t("providers.form.kind")}</FieldLabel>
+          <Select
+            items={[
+              ...props.kinds.map((k) => ({ value: k.id, label: k.name })),
+              { value: CUSTOM_PROVIDER_KIND, label: t("providers.form.kind.custom") },
+            ]}
+            value={kind}
+            onValueChange={(next) => {
+              if (typeof next !== "string" || next === kind) return;
+              setKind(next);
+              setChosen(new Map());
+            }}
+          >
+            <SelectTrigger autoFocus>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {props.kinds.map((k) => (
+                <SelectItem key={k.id} value={k.id}>
+                  {k.name}
+                </SelectItem>
+              ))}
+              <SelectItem value={CUSTOM_PROVIDER_KIND}>
+                {t("providers.form.kind.custom")}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
+      ) : null}
+      <Field name="name">
+        <FieldLabel>{t("providers.form.name")}</FieldLabel>
+        <Input
+          autoFocus={before !== undefined}
+          value={name}
+          placeholder={props.kinds.find((k) => k.id === kind)?.name ?? ""}
+          onChange={(e) => setName(e.currentTarget.value)}
+        />
+        <FieldDescription>{t("providers.form.nameHint")}</FieldDescription>
+      </Field>
+      {custom ? (
+        <Field name="api">
+          <FieldLabel>{t("providers.form.api")}</FieldLabel>
+          <Select
+            items={PROVIDER_APIS.map((a) => ({ value: a, label: t(`providers.api.${a}`) }))}
+            value={api}
+            onValueChange={(next) => {
+              if (typeof next === "string") setApi(next as ProviderApi);
+            }}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PROVIDER_APIS.map((a) => (
+                <SelectItem key={a} value={a}>
+                  {t(`providers.api.${a}`)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
+      ) : null}
+      <Field name="baseUrl">
+        <FieldLabel>{t("providers.form.address")}</FieldLabel>
+        <Input
+          value={baseUrl}
+          placeholder="https://"
+          spellCheck={false}
+          onChange={(e) => setBaseUrl(e.currentTarget.value)}
+        />
+        {custom ? null : <FieldDescription>{t("providers.form.addressHint")}</FieldDescription>}
+      </Field>
+      <Field name="apiKey">
+        <FieldLabel>{t("providers.form.apiKey")}</FieldLabel>
+        {keyMode === "keep" ? (
+          <div data-slot="row">
+            <span data-slot="secret-name">{t("providers.form.keySaved")}</span>
+            <Button type="button" data-variant="ghost" onClick={() => setKeyMode("replace")}>
+              {t("providers.form.keyReplace")}
+            </Button>
+            <Button type="button" data-variant="ghost" onClick={() => setKeyMode("remove")}>
+              {t("providers.form.keyRemove")}
             </Button>
           </div>
-        </form>
-      </DialogContent>
-    </Dialog>
+        ) : keyMode === "remove" ? (
+          <div data-slot="row">
+            <span data-slot="secret-name" data-removed>
+              {t("providers.form.keyRemoving")}
+            </span>
+            <Button type="button" data-variant="ghost" onClick={() => setKeyMode("keep")}>
+              {t("providers.form.keyKeep")}
+            </Button>
+          </div>
+        ) : (
+          <div data-slot="row">
+            <Input
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              value={key}
+              onChange={(e) => setKey(e.currentTarget.value)}
+            />
+            {before?.hasKey === true ? (
+              <Button
+                type="button"
+                data-variant="ghost"
+                onClick={() => {
+                  setKey("");
+                  setKeyMode("keep");
+                }}
+              >
+                {t("providers.form.keyKeep")}
+              </Button>
+            ) : null}
+          </div>
+        )}
+        <FieldDescription>
+          {t("providers.form.apiKeyHint", { location: props.location.name })}
+        </FieldDescription>
+        {addressChanged && before?.hasKey === true && keyMode === "keep" ? (
+          <FieldDescription role="status">{t("providers.form.keyAddress")}</FieldDescription>
+        ) : null}
+      </Field>
+      <fieldset data-slot="provider-models">
+        <legend>{t("providers.form.models")}</legend>
+        {custom ? (
+          <>
+            {rows.map((row) => (
+              <div key={row.key} data-slot="provider-model-row">
+                <div data-slot="row">
+                  <Input
+                    aria-label={t("providers.form.modelId")}
+                    placeholder={t("providers.form.modelId")}
+                    spellCheck={false}
+                    value={row.model.id}
+                    onChange={(e) => patchRow(row.key, { id: e.currentTarget.value })}
+                  />
+                  <Input
+                    aria-label={t("providers.form.modelName")}
+                    placeholder={t("providers.form.modelName")}
+                    value={row.model.name}
+                    onChange={(e) => patchRow(row.key, { name: e.currentTarget.value })}
+                  />
+                  <Tip label={t("providers.form.modelRemove")}>
+                    <Button
+                      type="button"
+                      data-variant="ghost"
+                      disabled={rows.length === 1}
+                      onClick={() => setRows((list) => list.filter((r) => r.key !== row.key))}
+                    >
+                      <CloseIcon />
+                    </Button>
+                  </Tip>
+                </div>
+                <div data-slot="row">
+                  <label data-slot="form-option">
+                    <input
+                      type="checkbox"
+                      checked={row.model.reasoning}
+                      onChange={(e) => patchRow(row.key, { reasoning: e.currentTarget.checked })}
+                    />
+                    <span data-slot="form-mark" data-several aria-hidden="true">
+                      <CheckIcon size={12} />
+                    </span>
+                    <span data-slot="option-name">{t("providers.form.reasoning")}</span>
+                  </label>
+                  <label data-slot="form-option">
+                    <input
+                      type="checkbox"
+                      checked={row.model.images}
+                      onChange={(e) => patchRow(row.key, { images: e.currentTarget.checked })}
+                    />
+                    <span data-slot="form-mark" data-several aria-hidden="true">
+                      <CheckIcon size={12} />
+                    </span>
+                    <span data-slot="option-name">{t("providers.form.images")}</span>
+                  </label>
+                  <Input
+                    inputMode="numeric"
+                    aria-label={t("providers.form.context")}
+                    placeholder={t("providers.form.context")}
+                    value={row.model.contextWindow > 0 ? String(row.model.contextWindow) : ""}
+                    onChange={(e) =>
+                      patchRow(row.key, {
+                        contextWindow: Number.parseInt(e.currentTarget.value, 10) || 0,
+                      })
+                    }
+                  />
+                </div>
+              </div>
+            ))}
+            <div data-slot="row">
+              <Button
+                type="button"
+                data-variant="ghost"
+                onClick={() => {
+                  setRows((list) => [...list, { key: counter, model: emptyModel() }]);
+                  setCounter((n) => n + 1);
+                }}
+              >
+                <PlusIcon />
+                {t("providers.form.modelAdd")}
+              </Button>
+            </div>
+          </>
+        ) : catalog.state === "loading" && offered.length === 0 ? (
+          <p data-slot="hint" role="status">
+            {t("providers.form.modelsLoading")}
+          </p>
+        ) : (
+          <>
+            {catalog.state === "error" ? (
+              <div data-slot="row">
+                <p data-slot="hint" role="alert">
+                  {t("providers.form.modelsUnreadable")}
+                  {catalog.message !== "" ? (
+                    <code data-slot="reason">{catalog.message}</code>
+                  ) : null}
+                </p>
+                <Button type="button" data-variant="ghost" onClick={() => fetchCatalog()}>
+                  {t("providers.retry")}
+                </Button>
+              </div>
+            ) : null}
+            {catalog.state === "ready" && offered.length === 0 ? (
+              <p data-slot="hint">{t("providers.form.modelsEmpty")}</p>
+            ) : null}
+            <div data-slot="form-options">
+              {offered.map((model) => (
+                <label key={model.id} data-slot="form-option">
+                  <input
+                    type="checkbox"
+                    checked={chosen.has(model.id)}
+                    onChange={() => toggle(model)}
+                  />
+                  <span data-slot="form-mark" data-several aria-hidden="true">
+                    <CheckIcon size={12} />
+                  </span>
+                  <span data-slot="option">
+                    <span data-slot="option-name">{model.name || model.id}</span>
+                    {model.name !== "" && model.name !== model.id ? (
+                      <span data-slot="option-description">{model.id}</span>
+                    ) : null}
+                  </span>
+                </label>
+              ))}
+            </div>
+          </>
+        )}
+      </fieldset>
+    </FormDialog>
   );
 }

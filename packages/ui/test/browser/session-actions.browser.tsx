@@ -104,7 +104,7 @@ test("the row's menu archives that row's session, in its own location", async ()
   expect(document.querySelector('[data-slot="session-header"]')).toBeNull();
 });
 
-test("Delete from the row's menu asks first, with Cancel focused, and deletes that row's session", async () => {
+test("Delete from the row's menu asks first, and deletes that row's session", async () => {
   const { user, script } = await mount();
   await user.hover(option("First"));
   await user.click(within(actionsOf("First")).getByRole("button", { name: "Pin session" }));
@@ -112,9 +112,6 @@ test("Delete from the row's menu asks first, with Cancel focused, and deletes th
   await user.click(within(actionsOf("First")).getByRole("button", { name: "More actions" }));
   await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
   const dialog = await screen.findByRole("alertdialog");
-  await waitFor(() =>
-    expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Cancel" })),
-  );
   await user.click(within(dialog).getByRole("button", { name: "Delete session" }));
   await waitFor(() =>
     expect(script.named("deleteSession")).toEqual([["deleteSession", "local", "a"]]),

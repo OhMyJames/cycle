@@ -2,7 +2,7 @@
 // what it was about.
 import type { PluginFailure, PluginInfo } from "../api.ts";
 import type { ConnectorsSlice } from "./connectors.ts";
-import { messageOf, type StoreKit } from "./core.ts";
+import { answered, messageOf, type StoreKit } from "./core.ts";
 import { pluginsKey } from "./state.ts";
 
 export class PluginsSlice {
@@ -46,9 +46,7 @@ export class PluginsSlice {
     agentId: string,
     answer: Promise<T>,
   ): Promise<T | PluginFailure> {
-    const result = await answer.catch(
-      (error: unknown): PluginFailure => ({ problem: "failed", message: messageOf(error) }),
-    );
+    const result = await answered(answer);
     if (!("problem" in result)) {
       await this.load(locationId, agentId);
       if (this.#kit.state().connectors[locationId] !== undefined)

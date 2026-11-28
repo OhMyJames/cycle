@@ -2,13 +2,6 @@
 // conversation, and a session's actions in its title bar. A variable's value is shown only in the editor: never in a
 // list, a menu, a notice or a report.
 import { Button } from "@ui-sdk/react/button";
-import {
-  Dialog,
-  DialogBackdrop,
-  DialogClose,
-  DialogContent,
-  DialogTitle,
-} from "@ui-sdk/react/dialog";
 import { Field, FieldDescription, FieldLabel } from "@ui-sdk/react/field";
 import { Input } from "@ui-sdk/react/input";
 import {
@@ -58,7 +51,7 @@ import {
 } from "../environments.ts";
 import type { Translator } from "../i18n.ts";
 import { type BlankConversation, blankEnvironmentOf } from "../store/index.ts";
-import { ConfirmDialog } from "./dialogs.tsx";
+import { ConfirmDialog, FormDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import {
   CheckIcon,
@@ -412,19 +405,17 @@ export function EnvironmentEditor({
   // Line problems are said once a save was tried, and then follow what is typed.
   const [checked, setChecked] = useState(initialProblem !== undefined);
   const [problem, setProblem] = useState<EnvironmentProblem | undefined>(initialProblem);
-  const [busy, setBusy] = useState(false);
   const variablesRef = useRef<HTMLTextAreaElement>(null);
   const variablesNote = useId();
   const parsed = parseVariables(variablesText);
   const lineProblems = checked ? parsed.problems : [];
 
-  const save = async () => {
-    if (busy) return;
+  const save = async (): Promise<boolean> => {
     setChecked(true);
     setProblem(undefined);
     if (parsed.problems.length > 0) {
       variablesRef.current?.focus();
-      return;
+      return false;
     }
     const next: Environment = {
       id: environment.id,
@@ -438,164 +429,137 @@ export function EnvironmentEditor({
     const local = environmentProblem(next);
     if (local !== undefined) {
       setProblem(local);
-      return;
+      return false;
     }
-    setBusy(true);
-    try {
-      const refused = await onSave(next);
-      if (refused !== undefined) {
-        setProblem(refused);
-        return;
-      }
-      onDone();
-    } finally {
-      setBusy(false);
-    }
+    const refused = await onSave(next);
+    if (refused === undefined) return true;
+    setProblem(refused);
+    return false;
   };
 
   const changeAction = (id: string, change: Partial<EnvironmentAction>) =>
     setActions((list) => list.map((a) => (a.id === id ? { ...a, ...change } : a)));
 
   return (
-    <Dialog open onOpenChange={(open) => !open && !busy && onDone()}>
-      <DialogBackdrop />
-      <DialogContent data-kind="environment-form">
-        <DialogTitle>
-          {isNew
-            ? t("environment.addTitle")
-            : t("environment.editTitle", { name: environment.name })}
-        </DialogTitle>
-        <form
-          data-slot="stack"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void save();
-          }}
-        >
-          <Field name="name" invalid={problem?.problem === "name_missing"}>
-            <FieldLabel>{t("environment.name")}</FieldLabel>
-            <Input
-              autoFocus
-              value={name}
-              placeholder={t("environment.namePlaceholder")}
-              onChange={(e) => setName(e.currentTarget.value)}
-            />
-          </Field>
-          <Field name="variables" invalid={lineProblems.length > 0}>
-            <FieldLabel>{t("environment.variables")}</FieldLabel>
-            <Textarea
-              ref={variablesRef}
-              data-kind="environment-variables"
-              rows={5}
-              spellCheck={false}
-              autoComplete="off"
-              autoCapitalize="off"
-              value={variablesText}
-              placeholder={t("environment.variables.placeholder")}
-              aria-describedby={variablesNote}
-              onChange={(e) => setVariablesText(e.currentTarget.value)}
-            />
-            <FieldDescription id={variablesNote}>
-              {t("environment.variables.note")}
-            </FieldDescription>
-            {lineProblems.length > 0 ? (
-              <ul data-slot="environment-line-problems" role="alert">
-                {lineProblems.map((p) => (
-                  <li key={`${p.line}:${p.problem}`}>{lineProblemText(p, t)}</li>
-                ))}
-              </ul>
-            ) : null}
-          </Field>
-          <fieldset data-slot="environment-actions">
-            <legend>{t("environment.actions")}</legend>
-            <p data-slot="hint">{t("environment.actions.note")}</p>
-            {actions.map((action) => (
-              <div key={action.id} data-slot="environment-action">
-                <div data-slot="row">
-                  <Field name={`action-${action.id}`}>
-                    <FieldLabel>{t("environment.action.name")}</FieldLabel>
-                    <Input
-                      value={action.name}
-                      placeholder={t("environment.action.namePlaceholder")}
-                      onChange={(e) => changeAction(action.id, { name: e.currentTarget.value })}
-                    />
-                  </Field>
-                  <ActionIconField
-                    icon={action.icon}
-                    onChange={(icon) => changeAction(action.id, { icon })}
-                  />
-                  <Tip
-                    label={
-                      action.name.trim() === ""
-                        ? t("environment.action.removeUnnamed")
-                        : t("environment.action.remove", { name: action.name })
-                    }
-                  >
-                    <Button
-                      type="button"
-                      data-variant="ghost"
-                      data-kind="environment-action-remove"
-                      onClick={() => setActions((list) => list.filter((a) => a.id !== action.id))}
-                    >
-                      <CloseIcon />
-                    </Button>
-                  </Tip>
-                </div>
-                <ScriptsField
-                  label={t("environment.action.command")}
-                  value={action.command}
-                  rows={2}
-                  onChange={(command) => changeAction(action.id, { command })}
-                />
-              </div>
+    <FormDialog
+      kind="environment-form"
+      title={
+        isNew ? t("environment.addTitle") : t("environment.editTitle", { name: environment.name })
+      }
+      submitLabel={isNew ? t("environment.addSubmit") : t("environment.save")}
+      onSubmit={save}
+      onClose={onDone}
+      problem={problem !== undefined ? environmentProblemText(problem, i18n) : undefined}
+    >
+      <Field name="name" invalid={problem?.problem === "name_missing"}>
+        <FieldLabel>{t("environment.name")}</FieldLabel>
+        <Input
+          autoFocus
+          value={name}
+          placeholder={t("environment.namePlaceholder")}
+          onChange={(e) => setName(e.currentTarget.value)}
+        />
+      </Field>
+      <Field name="variables" invalid={lineProblems.length > 0}>
+        <FieldLabel>{t("environment.variables")}</FieldLabel>
+        <Textarea
+          ref={variablesRef}
+          data-kind="environment-variables"
+          rows={5}
+          spellCheck={false}
+          autoComplete="off"
+          autoCapitalize="off"
+          value={variablesText}
+          placeholder={t("environment.variables.placeholder")}
+          aria-describedby={variablesNote}
+          onChange={(e) => setVariablesText(e.currentTarget.value)}
+        />
+        <FieldDescription id={variablesNote}>{t("environment.variables.note")}</FieldDescription>
+        {lineProblems.length > 0 ? (
+          <ul data-slot="environment-line-problems" role="alert">
+            {lineProblems.map((p) => (
+              <li key={`${p.line}:${p.problem}`}>{lineProblemText(p, t)}</li>
             ))}
+          </ul>
+        ) : null}
+      </Field>
+      <fieldset data-slot="environment-actions">
+        <legend>{t("environment.actions")}</legend>
+        <p data-slot="hint">{t("environment.actions.note")}</p>
+        {actions.map((action) => (
+          <div key={action.id} data-slot="environment-action">
             <div data-slot="row">
-              <Button
-                type="button"
-                data-variant="outline"
-                onClick={() =>
-                  setActions((list) => [
-                    ...list,
-                    {
-                      id: newEnvironmentId("action", new Set(list.map((a) => a.id))),
-                      name: "",
-                      command: {},
-                    },
-                  ])
+              <Field name={`action-${action.id}`}>
+                <FieldLabel>{t("environment.action.name")}</FieldLabel>
+                <Input
+                  value={action.name}
+                  placeholder={t("environment.action.namePlaceholder")}
+                  onChange={(e) => changeAction(action.id, { name: e.currentTarget.value })}
+                />
+              </Field>
+              <ActionIconField
+                icon={action.icon}
+                onChange={(icon) => changeAction(action.id, { icon })}
+              />
+              <Tip
+                label={
+                  action.name.trim() === ""
+                    ? t("environment.action.removeUnnamed")
+                    : t("environment.action.remove", { name: action.name })
                 }
               >
-                {t("environment.actions.add")}
-              </Button>
+                <Button
+                  type="button"
+                  data-variant="ghost"
+                  data-kind="environment-action-remove"
+                  onClick={() => setActions((list) => list.filter((a) => a.id !== action.id))}
+                >
+                  <CloseIcon />
+                </Button>
+              </Tip>
             </div>
-          </fieldset>
-          <ScriptsField
-            label={t("environment.setup")}
-            note={t("environment.setup.note")}
-            value={setup}
-            rows={3}
-            onChange={setSetup}
-          />
-          <ScriptsField
-            label={t("environment.cleanup")}
-            note={t("environment.cleanup.note")}
-            value={cleanup}
-            rows={3}
-            onChange={setCleanup}
-          />
-          {problem !== undefined ? (
-            <p data-slot="hint" role="alert">
-              {environmentProblemText(problem, i18n)}
-            </p>
-          ) : null}
-          <div data-slot="row" data-dialog-footer="">
-            <DialogClose disabled={busy}>{t("dialog.cancel")}</DialogClose>
-            <Button data-variant="solid" type="submit" disabled={busy}>
-              {isNew ? t("environment.addSubmit") : t("environment.save")}
-            </Button>
+            <ScriptsField
+              label={t("environment.action.command")}
+              value={action.command}
+              rows={2}
+              onChange={(command) => changeAction(action.id, { command })}
+            />
           </div>
-        </form>
-      </DialogContent>
-    </Dialog>
+        ))}
+        <div data-slot="row">
+          <Button
+            type="button"
+            data-variant="outline"
+            onClick={() =>
+              setActions((list) => [
+                ...list,
+                {
+                  id: newEnvironmentId("action", new Set(list.map((a) => a.id))),
+                  name: "",
+                  command: {},
+                },
+              ])
+            }
+          >
+            {t("environment.actions.add")}
+          </Button>
+        </div>
+      </fieldset>
+      <ScriptsField
+        label={t("environment.setup")}
+        note={t("environment.setup.note")}
+        value={setup}
+        rows={3}
+        onChange={setSetup}
+      />
+      <ScriptsField
+        label={t("environment.cleanup")}
+        note={t("environment.cleanup.note")}
+        value={cleanup}
+        rows={3}
+        onChange={setCleanup}
+      />
+    </FormDialog>
   );
 }
 

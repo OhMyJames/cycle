@@ -1,13 +1,6 @@
 // The Connectors page (CYCL-82): what a location's daemon keeps for every agent, in one page that takes the window
 // in place of the sessions, as Settings does. Its sections share one choice, made at the top of each: which location.
 import { Button } from "@ui-sdk/react/button";
-import {
-  Dialog,
-  DialogBackdrop,
-  DialogClose,
-  DialogContent,
-  DialogTitle,
-} from "@ui-sdk/react/dialog";
 import { Field, FieldDescription, FieldLabel } from "@ui-sdk/react/field";
 import { Input } from "@ui-sdk/react/input";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@ui-sdk/react/menu";
@@ -36,11 +29,11 @@ import type {
 } from "../api.ts";
 import { CONNECTORS_SECTIONS, type ConnectorsSection } from "../connectors-sections.ts";
 import { ConnectorValuesDialog } from "./connector-values.tsx";
-import { ConfirmDialog } from "./dialogs.tsx";
+import { ConfirmDialog, FormDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import { MoreIcon } from "./icons.tsx";
 import { useKeyedAsyncAction } from "./keyed-action.ts";
-import { PageGroup, PageLayout, PageRow, PageRows } from "./page-layout.tsx";
+import { PageGroup, PageLayout, PageRow, PageRows, ResourceGroup } from "./page-layout.tsx";
 import { PluginsSection } from "./plugins.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { type Shape, StatusDot, type Tone } from "./status.tsx";
@@ -283,164 +276,148 @@ function McpSection({ location }: ConnectorsSectionProps) {
     if ("connector" in answer) setSignedIn(connector.name);
   };
 
-  const add = (
-    <Button data-variant="outline" onClick={() => setEditing("new")}>
-      {t("connectors.add")}
-    </Button>
-  );
   return (
-    // With none yet, the way to add one is in what says so, not twice.
-    <PageGroup
-      lead={t("connectors.lead", { location: location.name })}
-      action={list !== undefined && list.length > 0 ? add : undefined}
-    >
-      {read?.error !== undefined ? (
-        <StateBlock
-          size="inline"
-          align="start"
-          tone="error"
-          title={t("connectors.unreadable")}
-          reason={read.error}
-          action={{
-            label: t("connectors.retry"),
-            onAction: () => void store.loadConnectors(locationId),
-          }}
-        />
-      ) : null}
-      {waiting !== undefined ? (
-        <div data-slot="row" role="status">
-          <span data-slot="hint">{t("connectors.waiting", { name: waiting.name })}</span>
-          <Button data-variant="outline" onClick={() => void store.cancelConnectorAuth()}>
-            {t("connectors.stopWaiting")}
-          </Button>
-        </div>
-      ) : signedIn !== undefined ? (
-        <p data-slot="hint" role="status">
-          {t("connectors.signedIn", { name: signedIn })}
-        </p>
-      ) : null}
-      {list === undefined ? (
-        read?.error === undefined ? (
-          <StateBlock size="inline" align="start" tone="loading" title={t("connectors.loading")} />
-        ) : null
-      ) : list.length === 0 ? (
-        <StateBlock
-          size="inline"
-          align="start"
-          tone="empty"
-          title={t("connectors.empty")}
-          body={t("connectors.emptyBody")}
-          action={{ label: t("connectors.add"), onAction: () => setEditing("new") }}
-        />
-      ) : (
-        <PageRows>
-          {list.map((connector) => {
-            const oauth = connector.auth.type === "oauth";
-            const problem = problems[connector.id];
-            const where = whereOf(connector);
-            // A plugin's server: it comes, goes and is switched with its plugin (docs/protocol.md §15).
-            const origin = connector.origin;
-            const requires = connector.requires ?? [];
-            const unfilled = requires.some((name) => !connector.secrets.env.includes(name));
-            return (
-              <PageRow
-                key={connector.id}
-                label={origin?.server ?? connector.name}
-                before={<StatusDot {...STATUS_MARK[connector.status.state]} />}
-                description={
-                  <>
-                    <span data-slot="connector-status">
-                      {unfilled && connector.enabled
-                        ? t("connectors.status.needs_values")
-                        : statusWord(t, connector)}
-                    </span>
-                    {origin !== undefined ? (
+    <>
+      <ResourceGroup
+        lead={t("connectors.lead", { location: location.name })}
+        items={list}
+        error={read?.error}
+        onRetry={() => void store.loadConnectors(locationId)}
+        says={{
+          loading: t("connectors.loading"),
+          unreadable: t("connectors.unreadable"),
+          retry: t("connectors.retry"),
+          empty: t("connectors.empty"),
+          emptyBody: t("connectors.emptyBody"),
+        }}
+        add={{ label: t("connectors.add"), onAdd: () => setEditing("new") }}
+        status={
+          waiting !== undefined ? (
+            <div data-slot="row" role="status">
+              <span data-slot="hint">{t("connectors.waiting", { name: waiting.name })}</span>
+              <Button data-variant="outline" onClick={() => void store.cancelConnectorAuth()}>
+                {t("connectors.stopWaiting")}
+              </Button>
+            </div>
+          ) : signedIn !== undefined ? (
+            <p data-slot="hint" role="status">
+              {t("connectors.signedIn", { name: signedIn })}
+            </p>
+          ) : null
+        }
+      >
+        {(list) => (
+          <PageRows>
+            {list.map((connector) => {
+              const oauth = connector.auth.type === "oauth";
+              const problem = problems[connector.id];
+              const where = whereOf(connector);
+              // A plugin's server: it comes, goes and is switched with its plugin (docs/protocol.md §15).
+              const origin = connector.origin;
+              const requires = connector.requires ?? [];
+              const unfilled = requires.some((name) => !connector.secrets.env.includes(name));
+              return (
+                <PageRow
+                  key={connector.id}
+                  label={origin?.server ?? connector.name}
+                  before={<StatusDot {...STATUS_MARK[connector.status.state]} />}
+                  description={
+                    <>
                       <span data-slot="connector-status">
-                        {t("connectors.fromPlugin", {
-                          plugin: origin.pluginName ?? origin.pluginId,
-                        })}
+                        {unfilled && connector.enabled
+                          ? t("connectors.status.needs_values")
+                          : statusWord(t, connector)}
                       </span>
-                    ) : null}
-                    <code data-slot="connector-where" title={where}>
-                      {where}
-                    </code>
-                  </>
-                }
-                below={
-                  problem !== undefined ? (
-                    <p data-slot="hint" role="alert">
-                      {problemText(problem)}
-                    </p>
-                  ) : undefined
-                }
-              >
-                {requires.length > 0 && unfilled && connector.enabled ? (
-                  <Button data-variant="outline" onClick={() => setValues(connector)}>
-                    {t("connectors.setValues")}
-                  </Button>
-                ) : oauth && connector.enabled && connector.status.state === "needs_auth" ? (
-                  <Button
-                    data-variant="outline"
-                    disabled={busy[connector.id] === true}
-                    onClick={() => void signIn(connector)}
-                  >
-                    {t("connectors.signIn")}
-                  </Button>
-                ) : null}
-                {origin === undefined ? (
-                  <Switch
-                    aria-label={t("connectors.use", { name: connector.name })}
-                    checked={connector.enabled}
-                    disabled={busy[connector.id] === true}
-                    onCheckedChange={(enabled) =>
-                      void act(connector, () =>
-                        store.updateConnector(locationId, connector.id, { enabled }),
-                      )
-                    }
-                  >
-                    <SwitchThumb />
-                  </Switch>
-                ) : null}
-                {origin !== undefined &&
-                requires.length === 0 &&
-                !(oauth && connector.authorized) ? null : (
-                  <Menu
-                    onAction={(value) => {
-                      if (value === "edit") setEditing(connector);
-                      else if (value === "values") setValues(connector);
-                      else if (value === "sign-out")
-                        void act(connector, () => store.signOutConnector(locationId, connector.id));
-                      else if (value === "remove") setRemoving(connector);
-                    }}
-                  >
-                    <Tip label={t("connectors.actions", { name: connector.name })}>
-                      <MenuTrigger data-variant="ghost">
-                        <MoreIcon />
-                      </MenuTrigger>
-                    </Tip>
-                    <MenuContent align="end">
-                      {origin === undefined ? (
-                        <MenuItem value="edit">{t("connectors.edit")}</MenuItem>
+                      {origin !== undefined ? (
+                        <span data-slot="connector-status">
+                          {t("connectors.fromPlugin", {
+                            plugin: origin.pluginName ?? origin.pluginId,
+                          })}
+                        </span>
                       ) : null}
-                      {requires.length > 0 ? (
-                        <MenuItem value="values">{t("connectors.setValues")}</MenuItem>
-                      ) : null}
-                      {oauth && connector.authorized ? (
-                        <MenuItem value="sign-out">{t("connectors.signOut")}</MenuItem>
-                      ) : null}
-                      {origin === undefined ? (
-                        <MenuItem value="remove" data-destructive>
-                          {t("connectors.remove")}
-                        </MenuItem>
-                      ) : null}
-                    </MenuContent>
-                  </Menu>
-                )}
-              </PageRow>
-            );
-          })}
-        </PageRows>
-      )}
+                      <code data-slot="connector-where" title={where}>
+                        {where}
+                      </code>
+                    </>
+                  }
+                  below={
+                    problem !== undefined ? (
+                      <p data-slot="hint" role="alert">
+                        {problemText(problem)}
+                      </p>
+                    ) : undefined
+                  }
+                >
+                  {requires.length > 0 && unfilled && connector.enabled ? (
+                    <Button data-variant="outline" onClick={() => setValues(connector)}>
+                      {t("connectors.setValues")}
+                    </Button>
+                  ) : oauth && connector.enabled && connector.status.state === "needs_auth" ? (
+                    <Button
+                      data-variant="outline"
+                      disabled={busy[connector.id] === true}
+                      onClick={() => void signIn(connector)}
+                    >
+                      {t("connectors.signIn")}
+                    </Button>
+                  ) : null}
+                  {origin === undefined ? (
+                    <Switch
+                      aria-label={t("connectors.use", { name: connector.name })}
+                      checked={connector.enabled}
+                      disabled={busy[connector.id] === true}
+                      onCheckedChange={(enabled) =>
+                        void act(connector, () =>
+                          store.updateConnector(locationId, connector.id, { enabled }),
+                        )
+                      }
+                    >
+                      <SwitchThumb />
+                    </Switch>
+                  ) : null}
+                  {origin !== undefined &&
+                  requires.length === 0 &&
+                  !(oauth && connector.authorized) ? null : (
+                    <Menu
+                      onAction={(value) => {
+                        if (value === "edit") setEditing(connector);
+                        else if (value === "values") setValues(connector);
+                        else if (value === "sign-out")
+                          void act(connector, () =>
+                            store.signOutConnector(locationId, connector.id),
+                          );
+                        else if (value === "remove") setRemoving(connector);
+                      }}
+                    >
+                      <Tip label={t("connectors.actions", { name: connector.name })}>
+                        <MenuTrigger data-variant="ghost">
+                          <MoreIcon />
+                        </MenuTrigger>
+                      </Tip>
+                      <MenuContent align="end">
+                        {origin === undefined ? (
+                          <MenuItem value="edit">{t("connectors.edit")}</MenuItem>
+                        ) : null}
+                        {requires.length > 0 ? (
+                          <MenuItem value="values">{t("connectors.setValues")}</MenuItem>
+                        ) : null}
+                        {oauth && connector.authorized ? (
+                          <MenuItem value="sign-out">{t("connectors.signOut")}</MenuItem>
+                        ) : null}
+                        {origin === undefined ? (
+                          <MenuItem value="remove" data-destructive>
+                            {t("connectors.remove")}
+                          </MenuItem>
+                        ) : null}
+                      </MenuContent>
+                    </Menu>
+                  )}
+                </PageRow>
+              );
+            })}
+          </PageRows>
+        )}
+      </ResourceGroup>
       {editing !== undefined ? (
         <ConnectorFormDialog
           location={location}
@@ -471,7 +448,7 @@ function McpSection({ location }: ConnectorsSectionProps) {
           }}
         />
       ) : null}
-    </PageGroup>
+    </>
   );
 }
 
@@ -520,7 +497,6 @@ function ConnectorFormDialog(props: {
   const [added, setAdded] = useState<NewSecret[]>([]);
   const [counter, setCounter] = useState(0);
   const [problem, setProblem] = useState<Problem | undefined>(undefined);
-  const [busy, setBusy] = useState(false);
   const kept = before?.secrets[secretKind] ?? [];
 
   const draft = (): ConnectorDraft => {
@@ -562,19 +538,14 @@ function ConnectorFormDialog(props: {
   const ready = name.trim() !== "" && (kind === "http" ? url.trim() !== "" : command.trim() !== "");
 
   const save = async () => {
-    if (!ready || busy) return;
-    setBusy(true);
     setProblem(undefined);
-    try {
-      const answer =
-        before === undefined
-          ? await store.addConnector(props.location.id, draft())
-          : await store.updateConnector(props.location.id, before.id, draft());
-      if ("connector" in answer) props.onDone();
-      else setProblem(answer);
-    } finally {
-      setBusy(false);
-    }
+    const answer =
+      before === undefined
+        ? await store.addConnector(props.location.id, draft())
+        : await store.updateConnector(props.location.id, before.id, draft());
+    if ("connector" in answer) return true;
+    setProblem(answer);
+    return false;
   };
 
   const fields = (
@@ -725,39 +696,24 @@ function ConnectorFormDialog(props: {
           </Button>
         </div>
       </fieldset>
-      {problem !== undefined ? (
-        <p data-slot="hint" role="alert">
-          {problemText(problem)}
-        </p>
-      ) : null}
     </>
   );
 
   return (
-    <Dialog open onOpenChange={(open) => !open && !busy && props.onDone()}>
-      <DialogBackdrop />
-      <DialogContent data-kind="connector-form">
-        <DialogTitle>
-          {before === undefined
-            ? t("connectors.form.addTitle")
-            : t("connectors.form.editTitle", { name: before.name })}
-        </DialogTitle>
-        <form
-          data-slot="stack"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void save();
-          }}
-        >
-          {fields}
-          <div data-slot="row" data-dialog-footer="">
-            <DialogClose disabled={busy}>{t("dialog.cancel")}</DialogClose>
-            <Button data-variant="solid" type="submit" disabled={!ready || busy}>
-              {t(before === undefined ? "connectors.form.create" : "connectors.form.save")}
-            </Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <FormDialog
+      kind="connector-form"
+      title={
+        before === undefined
+          ? t("connectors.form.addTitle")
+          : t("connectors.form.editTitle", { name: before.name })
+      }
+      ready={ready}
+      submitLabel={t(before === undefined ? "connectors.form.create" : "connectors.form.save")}
+      onSubmit={save}
+      onClose={props.onDone}
+      problem={problem !== undefined ? problemText(problem) : undefined}
+    >
+      {fields}
+    </FormDialog>
   );
 }

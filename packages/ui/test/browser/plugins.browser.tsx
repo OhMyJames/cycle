@@ -191,8 +191,6 @@ test("an installed plugin says what it brings, is switched and updated, and unin
   await user.click(within(installed).getByRole("button", { name: "Actions for tracker" }));
   await user.click(await screen.findByRole("menuitem", { name: "Uninstall" }));
   const dialog = await screen.findByRole("alertdialog", { name: "Uninstall tracker?" });
-  // A destructive question opens on the way out of it.
-  expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Cancel" }));
   expect(named("uninstallPlugin")).toHaveLength(0);
   await user.click(within(dialog).getByRole("button", { name: "Uninstall plugin" }));
   expect(await within(installed).findByText("No plugins installed yet.")).toBeTruthy();

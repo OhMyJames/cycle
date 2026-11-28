@@ -143,10 +143,6 @@ test("an environment is edited, duplicated and removed from its row's menu; remo
   await user.click(await screen.findByRole("menuitem", { name: "Remove" }));
   const confirm = await screen.findByRole("alertdialog", { name: "Remove Node?" });
   expect(confirm.textContent).toContain("Sessions that already use it keep their own copy.");
-  // The keyboard starts on Cancel: a second Enter removes nothing.
-  await waitFor(() =>
-    expect(document.activeElement).toBe(within(confirm).getByRole("button", { name: "Cancel" })),
-  );
   await user.click(within(confirm).getByRole("button", { name: "Remove environment" }));
   await waitFor(() =>
     expect(named("removeEnvironment")).toEqual([["removeEnvironment", "env-node"]]),

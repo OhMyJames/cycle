@@ -17,17 +17,12 @@ import {
 } from "@ui-sdk/react/dialog";
 import { Field, FieldLabel } from "@ui-sdk/react/field";
 import { Input } from "@ui-sdk/react/input";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import type { LocationConfig } from "../api.ts";
+import { messageOf } from "../store/core.ts";
 import { useI18n } from "./i18n.tsx";
 
 type OpenProps = { open: boolean; onOpenChange: (open: boolean) => void };
-
-const messageOf = (error: unknown): string =>
-  (error instanceof Error ? error.message : String(error)).replace(
-    /^Error invoking remote method '[^']*': (Error: )?/,
-    "",
-  );
 
 export function ConfirmDialog({
   open,
@@ -117,6 +112,95 @@ export function ConfirmDialog({
   );
 }
 
+/**
+ * A dialog that is a form (packages/ui/AGENTS.md): Enter submits it, Cancel is on the left of the action, and while it is
+ * saving neither can be pressed again and it cannot be closed. What the page says is its own: the fields, when it can be
+ * submitted, and what went wrong (`problem`, beside what it is about). What was thrown is said here too.
+ */
+export function FormDialog({
+  open = true,
+  kind,
+  title,
+  description,
+  ready = true,
+  submitLabel,
+  onSubmit,
+  onClose,
+  problem,
+  children,
+}: {
+  /** Mounted only while it shows, by default: its fields then start from what they are given each time. */
+  open?: boolean;
+  /** What the dialog is (`data-kind`), for its styles. */
+  kind?: string;
+  title: ReactNode;
+  description?: ReactNode;
+  /** Whether what is filled can be sent; the action is off until then. */
+  ready?: boolean;
+  submitLabel: string;
+  /** Sends what is filled. `true`: it went through, and the dialog closes. Otherwise it stays, saying `problem`. */
+  onSubmit: () => Promise<boolean>;
+  /** Closed: saved (`true`), or left (Cancel, Escape, outside). */
+  onClose: (saved: boolean) => void;
+  /** What went wrong, under the fields: a sentence, or what the page draws for it. */
+  problem?: ReactNode;
+  children: ReactNode;
+}) {
+  const { t } = useI18n();
+  const [busy, setBusy] = useState(false);
+  const [thrown, setThrown] = useState<string | undefined>();
+  useEffect(() => {
+    if (!open) {
+      setBusy(false);
+      setThrown(undefined);
+    }
+  }, [open]);
+  const submit = async () => {
+    if (!ready || busy) return;
+    setBusy(true);
+    setThrown(undefined);
+    try {
+      if (await onSubmit()) onClose(true);
+    } catch (error) {
+      setThrown(messageOf(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const said = problem ?? thrown;
+  return (
+    <Dialog open={open} onOpenChange={(next) => !next && !busy && onClose(false)}>
+      <DialogBackdrop />
+      <DialogContent data-kind={kind}>
+        <DialogTitle>{title}</DialogTitle>
+        {description !== undefined ? <DialogDescription>{description}</DialogDescription> : null}
+        <form
+          data-slot="stack"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void submit();
+          }}
+        >
+          {children}
+          {typeof said === "string" ? (
+            <p data-slot="hint" role="alert">
+              {said}
+            </p>
+          ) : (
+            said
+          )}
+          <div data-slot="row" data-dialog-footer="">
+            <DialogClose disabled={busy}>{t("dialog.cancel")}</DialogClose>
+            <Button data-variant="solid" type="submit" disabled={!ready || busy}>
+              {submitLabel}
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export type RemoteLocation = LocationConfig & { kind: "remote" };
 
 export type LocationDialogProps = OpenProps & {
@@ -151,7 +235,6 @@ export function LocationDialog({
   const [name, setName] = useState("");
   const [host, setHost] = useState("");
   const [command, setCommand] = useState("cycle proxy");
-  const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | undefined>();
   // Reset when closed or switching between add and edit so stale inputs do not carry across.
   useEffect(() => {
@@ -159,7 +242,6 @@ export function LocationDialog({
       setName("");
       setHost("");
       setCommand("cycle proxy");
-      setBusy(false);
       setProblem(undefined);
       return;
     }
@@ -180,83 +262,60 @@ export function LocationDialog({
     setProblem(undefined);
   }, [open, editing]);
   const save = async () => {
-    if (host.trim() === "" || busy) return;
-    setBusy(true);
     setProblem(undefined);
-    try {
-      const id = editing?.id ?? uniqueLocationId(host, existingIds);
-      const error = await onSave({
-        id,
-        name: name.trim() || host.trim(),
-        kind: "remote",
-        transport: {
-          type: "ssh",
-          host: host.trim(),
-          command: command.trim().split(/\s+/).filter(Boolean),
-        },
-      });
-      if (typeof error === "string" && error !== "") {
-        setProblem(error);
-        return;
-      }
-      onOpenChange(false);
-    } catch (error) {
-      setProblem(messageOf(error));
-    } finally {
-      setBusy(false);
+    const id = editing?.id ?? uniqueLocationId(host, existingIds);
+    const error = await onSave({
+      id,
+      name: name.trim() || host.trim(),
+      kind: "remote",
+      transport: {
+        type: "ssh",
+        host: host.trim(),
+        command: command.trim().split(/\s+/).filter(Boolean),
+      },
+    });
+    if (typeof error === "string" && error !== "") {
+      setProblem(error);
+      return false;
     }
+    return true;
   };
   return (
-    <Dialog open={open} onOpenChange={(next) => !busy && onOpenChange(next)}>
-      <DialogBackdrop />
-      <DialogContent>
-        <DialogTitle>
-          {editing !== undefined
-            ? t("location.editTitle", { name: editing.name })
-            : t("location.addTitle")}
-        </DialogTitle>
-        <DialogDescription>{t("location.sshNote")}</DialogDescription>
-        <form
-          data-slot="stack"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void save();
-          }}
-        >
-          <Field name="host">
-            <FieldLabel>{t("location.address")}</FieldLabel>
-            <Input
-              autoFocus
-              value={host}
-              placeholder={t("location.addressHint")}
-              onChange={(e) => setHost(e.currentTarget.value)}
-            />
-          </Field>
-          <Field name="name">
-            <FieldLabel>{t("location.name")}</FieldLabel>
-            <Input
-              value={name}
-              placeholder={host || t("location.nameHint")}
-              onChange={(e) => setName(e.currentTarget.value)}
-            />
-          </Field>
-          <Field name="command">
-            <FieldLabel>{t("location.command")}</FieldLabel>
-            <Input value={command} onChange={(e) => setCommand(e.currentTarget.value)} />
-          </Field>
-          {problem !== undefined ? (
-            <p data-slot="hint" role="alert">
-              {problem}
-            </p>
-          ) : null}
-          <div data-slot="row" data-dialog-footer="">
-            <DialogClose disabled={busy}>{t("dialog.cancel")}</DialogClose>
-            <Button type="submit" data-variant="solid" disabled={host.trim() === "" || busy}>
-              {editing !== undefined ? t("location.save") : t("location.addSubmit")}
-            </Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <FormDialog
+      open={open}
+      title={
+        editing !== undefined
+          ? t("location.editTitle", { name: editing.name })
+          : t("location.addTitle")
+      }
+      description={t("location.sshNote")}
+      ready={host.trim() !== ""}
+      submitLabel={editing !== undefined ? t("location.save") : t("location.addSubmit")}
+      onSubmit={save}
+      onClose={() => onOpenChange(false)}
+      problem={problem}
+    >
+      <Field name="host">
+        <FieldLabel>{t("location.address")}</FieldLabel>
+        <Input
+          autoFocus
+          value={host}
+          placeholder={t("location.addressHint")}
+          onChange={(e) => setHost(e.currentTarget.value)}
+        />
+      </Field>
+      <Field name="name">
+        <FieldLabel>{t("location.name")}</FieldLabel>
+        <Input
+          value={name}
+          placeholder={host || t("location.nameHint")}
+          onChange={(e) => setName(e.currentTarget.value)}
+        />
+      </Field>
+      <Field name="command">
+        <FieldLabel>{t("location.command")}</FieldLabel>
+        <Input value={command} onChange={(e) => setCommand(e.currentTarget.value)} />
+      </Field>
+    </FormDialog>
   );
 }

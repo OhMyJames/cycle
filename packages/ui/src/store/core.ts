@@ -32,6 +32,15 @@ export const messageOf = (error: unknown): string => {
 };
 
 /**
+ * What main threw (it lost its connection, it is too old) as an answer the page shows like the daemon's own refusals:
+ * a "failed" problem with the system's words.
+ */
+export const answered = <T>(
+  answer: Promise<T>,
+): Promise<T | { problem: "failed"; message: string }> =>
+  answer.catch((error: unknown) => ({ problem: "failed" as const, message: messageOf(error) }));
+
+/**
  * The state, who is told of a change, and the kit its parts share. `AppStore` builds on it, so that its parts can be
  * made as its fields, with the kit already there.
  */

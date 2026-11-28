@@ -4,13 +4,7 @@
 import type { AgentWord } from "@cycle/analytics/events";
 import { Button } from "@ui-sdk/react/button";
 import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
-import type {
-  AgentAuthProblemReason,
-  AgentInfo,
-  AgentSetupSnapshot,
-  LocationConfig,
-  LocationStatus,
-} from "../api.ts";
+import type { AgentAuthProblemReason, AgentInfo, LocationConfig, LocationStatus } from "../api.ts";
 import {
   AgentSignInDialog,
   accountPrimaryLabel,
@@ -18,6 +12,7 @@ import {
   authErrorText,
   type SignInModalState,
 } from "./agent-account-parts.tsx";
+import { useAgentSetup } from "./agent-setup.ts";
 import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import { LocationScope } from "./location-scope.tsx";
@@ -87,31 +82,26 @@ function SubscriptionGroup({
   const { t, date } = useI18n();
   const store = useAppStore();
   const livePlanUsage = useAppState((s) => s.planUsage[location.id]?.[agentId]);
-  const setupRevision = useAppState((s) => s.agentSetupRevision[`${location.id}:${agentId}`] ?? 0);
   const hasAgent = agentInfo !== undefined;
   const readable = supportsSetup && hasAgent;
 
-  const [snapshot, setSnapshot] = useState<AgentSetupSnapshot | undefined>(undefined);
-  const [loading, setLoading] = useState(readable);
-  const [refreshing, setRefreshing] = useState(false);
-  const [loadError, setLoadError] = useState<string | undefined>(undefined);
+  const {
+    snapshot,
+    loading,
+    refreshing,
+    loadError,
+    read: fetchSetup,
+    mounted: mountedRef,
+  } = useAgentSetup(location.id, agentId, readable);
   const [copiedLogin, setCopiedLogin] = useState(false);
   const [signInDialog, setSignInDialog] = useState<SignInModalState | undefined>(undefined);
   const [confirmSignOut, setConfirmSignOut] = useState(false);
-  const mountedRef = useRef(true);
-  const seenSetupRevisionRef = useRef(setupRevision);
-  /** Each read is numbered: an answer is kept only if no newer one has been kept since. */
-  const fetchSeqRef = useRef(0);
-  const appliedSeqRef = useRef(0);
-  const pendingLoudRef = useRef(0);
   const signInSessionRef = useRef(0);
   const activeFlowIdRef = useRef<string | undefined>(undefined);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
-    mountedRef.current = true;
     return () => {
-      mountedRef.current = false;
       signInSessionRef.current += 1;
       const pendingFlow = activeFlowIdRef.current;
       activeFlowIdRef.current = undefined;
@@ -119,52 +109,6 @@ function SubscriptionGroup({
       clearTimeout(copyTimer.current);
     };
   }, [store, location.id]);
-
-  const fetchSetup = useCallback(
-    async (opts: { forceRefresh?: boolean; refreshUsage?: boolean; silent?: boolean }) => {
-      if (!readable) return;
-      const seq = ++fetchSeqRef.current;
-      const loud = opts.silent !== true;
-      if (loud) {
-        pendingLoudRef.current += 1;
-        if (opts.forceRefresh) setRefreshing(true);
-        else setLoading(true);
-        setLoadError(undefined);
-      }
-      try {
-        const result = await store.readAgentSetup(location.id, agentId, {
-          ...(opts.forceRefresh ? { forceRefresh: true } : {}),
-          ...(opts.refreshUsage ? { refreshUsage: true } : {}),
-        });
-        if (!mountedRef.current || seq <= appliedSeqRef.current) return;
-        appliedSeqRef.current = seq;
-        setSnapshot(result);
-        setLoadError(undefined);
-      } catch (error) {
-        if (!mountedRef.current || seq <= appliedSeqRef.current) return;
-        if (loud) setLoadError(error instanceof Error ? error.message : String(error));
-      } finally {
-        if (loud && mountedRef.current) {
-          pendingLoudRef.current -= 1;
-          if (pendingLoudRef.current === 0) {
-            setLoading(false);
-            setRefreshing(false);
-          }
-        }
-      }
-    },
-    [readable, store, location.id, agentId],
-  );
-
-  useEffect(() => {
-    if (readable) void fetchSetup({ refreshUsage: agentId === "codex" });
-  }, [fetchSetup, readable, agentId]);
-
-  useEffect(() => {
-    if (setupRevision === seenSetupRevisionRef.current) return;
-    seenSetupRevisionRef.current = setupRevision;
-    if (readable) void fetchSetup({ silent: true });
-  }, [setupRevision, fetchSetup, readable]);
 
   const copyLoginCommand = (command: string) => {
     void store.copyText(command).then((ok) => {
@@ -199,7 +143,7 @@ function SubscriptionGroup({
       ...(answer.host !== undefined ? { host: answer.host } : {}),
       ...(answer.userCode !== undefined ? { userCode: answer.userCode } : {}),
     });
-  }, [store, location.id, agentId]);
+  }, [store, location.id, agentId, mountedRef]);
 
   const activeFlowId = signInDialog?.kind === "active" ? signInDialog.flowId : undefined;
   const flowCompletion = useAppState((s) =>

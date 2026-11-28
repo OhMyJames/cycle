@@ -1,11 +1,7 @@
 // Each location's vault (docs/protocol.md §6 "环境"): the keys of its `secrets.env`. Only names are read; a value is on
 // its way to the daemon when it is set and nothing here keeps one.
 import type { VaultAnswer } from "../api.ts";
-import { messageOf, type StoreKit } from "./core.ts";
-
-/** What main threw (it lost its connection, it is too old) as an answer the page shows like the others. */
-const answered = (answer: Promise<VaultAnswer>): Promise<VaultAnswer> =>
-  answer.catch((error: unknown) => ({ problem: "failed" as const, message: messageOf(error) }));
+import { answered, messageOf, type StoreKit } from "./core.ts";
 
 const sorted = (keys: readonly string[]): string[] => [...keys].sort();
 

@@ -21,6 +21,7 @@ import { MIN_DAEMON_VERSION } from "../src/shared/release.ts";
 
 let dir: string;
 let cleanup: (() => void | Promise<void>)[] = [];
+let sockets = 0;
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "cv1-"));
 });
@@ -45,7 +46,9 @@ const setup = async (fake = fakeAgent(), daemonVersion?: string) => {
     agents: [fake.definition],
     ...(daemonVersion !== undefined ? { version: daemonVersion } : {}),
   });
-  const socket = join(dir, "d.sock");
+  // Each daemon its own socket: one closed just before (a test that sets up again) lets its file go a moment later, and
+  // would take the next one's with it.
+  const socket = join(dir, `d-${++sockets}.sock`);
   const server = await listenUnix({
     path: socket,
     onConnection: ({ stream }) => void daemon.accept(stream),
@@ -86,6 +89,7 @@ const setup = async (fake = fakeAgent(), daemonVersion?: string) => {
   };
   return {
     fake,
+    socket,
     manager,
     held,
     drop: () => {
@@ -996,7 +1000,7 @@ test("a session deleted elsewhere while the connection was away is gone here, an
 });
 
 test("every host is connected, one that cannot be reached does not hold up the others, and why is kept for a renderer that asks later", async () => {
-  const { manager } = await setup();
+  const { manager, socket } = await setup();
   const { m, events } = await manager("all");
   await m.saveLocation(far);
   // Same settings file, a manager whose far location cannot be reached.
@@ -1004,7 +1008,7 @@ test("every host is connected, one that cannot be reached does not hold up the o
     settings: fileSettings(join(dir, "settings-all.json")),
     channelFor: (location) => async () => {
       if (location.id === "far") throw new Error("Host key verification failed");
-      return connectUnix(join(dir, "d.sock"));
+      return connectUnix(socket);
     },
     emit: (e) => events.push(e),
   });

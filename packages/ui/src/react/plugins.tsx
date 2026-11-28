@@ -3,13 +3,6 @@
 // how any agent keeps them. Installing one is agreeing to run someone else's code there, so it is always asked.
 import { isComposing } from "@ui-sdk/core";
 import { Button } from "@ui-sdk/react/button";
-import {
-  Dialog,
-  DialogBackdrop,
-  DialogClose,
-  DialogContent,
-  DialogTitle,
-} from "@ui-sdk/react/dialog";
 import { Field, FieldDescription, FieldLabel } from "@ui-sdk/react/field";
 import { Input } from "@ui-sdk/react/input";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@ui-sdk/react/menu";
@@ -32,11 +25,11 @@ import type {
 } from "../api.ts";
 import { pluginsKey } from "../store/store.ts";
 import { ConnectorValuesDialog } from "./connector-values.tsx";
-import { ConfirmDialog } from "./dialogs.tsx";
+import { ConfirmDialog, FormDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import { MoreIcon } from "./icons.tsx";
 import { useKeyedAsyncAction } from "./keyed-action.ts";
-import { PageGroup, PageRow, PageRows } from "./page-layout.tsx";
+import { PageGroup, PageRow, PageRows, ResourceGroup } from "./page-layout.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { StatusDot } from "./status.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
@@ -235,198 +228,190 @@ function Installed({ location, agentId, words, onChanged }: SectionProps) {
   };
 
   return (
-    <PageGroup title={t("plugins.installed.title")} lead={t("plugins.lead", words)}>
-      {read?.error !== undefined ? (
-        <StateBlock
-          size="inline"
-          align="start"
-          tone="error"
-          title={t("plugins.unreadable")}
-          reason={read.error}
-          action={{
-            label: t("plugins.retry"),
-            onAction: () => void store.loadPlugins(locationId, agentId),
-          }}
-        />
-      ) : null}
-      {said !== undefined ? (
-        <p data-slot="hint" role="status">
-          {said}
-        </p>
-      ) : null}
-      {list === undefined ? (
-        read?.error === undefined ? (
-          <StateBlock size="inline" align="start" tone="loading" title={t("plugins.loading")} />
-        ) : null
-      ) : list.length === 0 ? (
-        <StateBlock
-          size="inline"
-          align="start"
-          tone="empty"
-          title={t("plugins.empty")}
-          body={t("plugins.emptyBody")}
-        />
-      ) : (
-        <PageRows>
-          {list.map((plugin) => {
-            const on = plugin.enabled === true;
-            const failure = failures[plugin.id];
-            const wants = wantsOf(plugin, connectors);
-            const contents = CONTENT_KINDS.flatMap((kind) => {
-              const count = plugin.contents?.[kind] ?? 0;
-              return count > 0 ? [t(`plugins.contents.${kind}`, { count })] : [];
-            });
-            const facts = [
-              t(on ? "plugins.state.on" : "plugins.state.off"),
-              ...(plugin.version !== undefined
-                ? [t("plugins.version", { version: plugin.version })]
-                : []),
-              ...contents,
-            ];
-            return (
-              <PageRow
-                key={plugin.id}
-                label={plugin.name}
-                before={
-                  <>
-                    {plugin.icon !== undefined ? (
-                      <img
-                        data-slot="plugin-icon"
-                        src={plugin.icon}
-                        alt=""
-                        width={16}
-                        height={16}
-                      />
-                    ) : null}
-                    <StatusDot
-                      tone={!on ? "muted" : wants.length > 0 ? "attention" : "success"}
-                      shape={on && wants.length === 0 ? "solid" : "ring"}
-                    />
-                  </>
-                }
-                description={
-                  <>
-                    <span data-slot="plugin-facts">{facts.join(" · ")}</span>
-                    {plugin.description !== undefined ? (
-                      <span data-slot="plugin-description" title={plugin.description}>
-                        {plugin.description}
-                      </span>
-                    ) : null}
-                  </>
-                }
-                below={
-                  failure !== undefined || wants.length > 0 ? (
+    <>
+      <ResourceGroup
+        title={t("plugins.installed.title")}
+        lead={t("plugins.lead", words)}
+        items={list}
+        error={read?.error}
+        onRetry={() => void store.loadPlugins(locationId, agentId)}
+        says={{
+          loading: t("plugins.loading"),
+          unreadable: t("plugins.unreadable"),
+          retry: t("plugins.retry"),
+          empty: t("plugins.empty"),
+          emptyBody: t("plugins.emptyBody"),
+        }}
+        status={
+          said !== undefined ? (
+            <p data-slot="hint" role="status">
+              {said}
+            </p>
+          ) : null
+        }
+      >
+        {(list) => (
+          <PageRows>
+            {list.map((plugin) => {
+              const on = plugin.enabled === true;
+              const failure = failures[plugin.id];
+              const wants = wantsOf(plugin, connectors);
+              const contents = CONTENT_KINDS.flatMap((kind) => {
+                const count = plugin.contents?.[kind] ?? 0;
+                return count > 0 ? [t(`plugins.contents.${kind}`, { count })] : [];
+              });
+              const facts = [
+                t(on ? "plugins.state.on" : "plugins.state.off"),
+                ...(plugin.version !== undefined
+                  ? [t("plugins.version", { version: plugin.version })]
+                  : []),
+                ...contents,
+              ];
+              return (
+                <PageRow
+                  key={plugin.id}
+                  label={plugin.name}
+                  before={
                     <>
-                      {wants.map((want) => {
-                        const refusal = refusals[want.connector.id];
-                        return waiting === want.connector.id ? (
-                          <div
-                            key={want.connector.id}
-                            data-slot="row"
-                            data-plugin-want=""
-                            role="status"
-                          >
-                            <span data-slot="hint">
-                              {t("connectors.waiting", { name: want.server })}
-                            </span>
-                            <Button
-                              data-variant="outline"
-                              onClick={() => void store.cancelConnectorAuth()}
+                      {plugin.icon !== undefined ? (
+                        <img
+                          data-slot="plugin-icon"
+                          src={plugin.icon}
+                          alt=""
+                          width={16}
+                          height={16}
+                        />
+                      ) : null}
+                      <StatusDot
+                        tone={!on ? "muted" : wants.length > 0 ? "attention" : "success"}
+                        shape={on && wants.length === 0 ? "solid" : "ring"}
+                      />
+                    </>
+                  }
+                  description={
+                    <>
+                      <span data-slot="plugin-facts">{facts.join(" · ")}</span>
+                      {plugin.description !== undefined ? (
+                        <span data-slot="plugin-description" title={plugin.description}>
+                          {plugin.description}
+                        </span>
+                      ) : null}
+                    </>
+                  }
+                  below={
+                    failure !== undefined || wants.length > 0 ? (
+                      <>
+                        {wants.map((want) => {
+                          const refusal = refusals[want.connector.id];
+                          return waiting === want.connector.id ? (
+                            <div
+                              key={want.connector.id}
+                              data-slot="row"
+                              data-plugin-want=""
+                              role="status"
                             >
-                              {t("connectors.stopWaiting")}
-                            </Button>
-                          </div>
-                        ) : (
-                          <div key={want.connector.id} data-slot="stack" data-plugin-want-of="">
-                            <div data-slot="row" data-plugin-want="">
                               <span data-slot="hint">
-                                {t(
-                                  want.kind === "values"
-                                    ? "plugins.server.values"
-                                    : "plugins.server.signIn",
-                                  { server: want.server },
-                                )}
+                                {t("connectors.waiting", { name: want.server })}
                               </span>
                               <Button
                                 data-variant="outline"
-                                // One sign-in has the browser at a time.
-                                disabled={busy[plugin.id] === true || waiting !== undefined}
-                                onClick={() =>
-                                  want.kind === "values"
-                                    ? setValues(want.connector)
-                                    : void signIn(want.connector)
-                                }
+                                onClick={() => void store.cancelConnectorAuth()}
                               >
-                                {t(
-                                  want.kind === "values"
-                                    ? "connectors.setValues"
-                                    : "connectors.signIn",
-                                )}
+                                {t("connectors.stopWaiting")}
                               </Button>
                             </div>
-                            {refusal !== undefined ? (
-                              <p data-slot="hint" role="alert">
-                                {t(`connectors.problem.${refusal.problem}`, {
-                                  location: location.name,
-                                  reason: refusal.message ?? "",
-                                })}
-                              </p>
-                            ) : null}
-                          </div>
-                        );
-                      })}
-                      {failure !== undefined ? <Failure failure={failure} words={words} /> : null}
-                    </>
-                  ) : undefined
-                }
-              >
-                <Switch
-                  aria-label={t("plugins.use", { name: plugin.name })}
-                  checked={on}
-                  disabled={busy[plugin.id] === true}
-                  onCheckedChange={(enabled) =>
-                    void act(plugin, () =>
-                      store.setPluginEnabled(locationId, agentId, plugin.id, enabled),
-                    )
+                          ) : (
+                            <div key={want.connector.id} data-slot="stack" data-plugin-want-of="">
+                              <div data-slot="row" data-plugin-want="">
+                                <span data-slot="hint">
+                                  {t(
+                                    want.kind === "values"
+                                      ? "plugins.server.values"
+                                      : "plugins.server.signIn",
+                                    { server: want.server },
+                                  )}
+                                </span>
+                                <Button
+                                  data-variant="outline"
+                                  // One sign-in has the browser at a time.
+                                  disabled={busy[plugin.id] === true || waiting !== undefined}
+                                  onClick={() =>
+                                    want.kind === "values"
+                                      ? setValues(want.connector)
+                                      : void signIn(want.connector)
+                                  }
+                                >
+                                  {t(
+                                    want.kind === "values"
+                                      ? "connectors.setValues"
+                                      : "connectors.signIn",
+                                  )}
+                                </Button>
+                              </div>
+                              {refusal !== undefined ? (
+                                <p data-slot="hint" role="alert">
+                                  {t(`connectors.problem.${refusal.problem}`, {
+                                    location: location.name,
+                                    reason: refusal.message ?? "",
+                                  })}
+                                </p>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                        {failure !== undefined ? <Failure failure={failure} words={words} /> : null}
+                      </>
+                    ) : undefined
                   }
                 >
-                  <SwitchThumb />
-                </Switch>
-                <Menu
-                  onAction={(value) => {
-                    if (value === "remove") setRemoving(plugin);
-                    else if (value === "update")
+                  <Switch
+                    aria-label={t("plugins.use", { name: plugin.name })}
+                    checked={on}
+                    disabled={busy[plugin.id] === true}
+                    onCheckedChange={(enabled) =>
                       void act(plugin, () =>
-                        store.updatePlugin(locationId, agentId, plugin.id),
-                      ).then((answer) => {
-                        if ("updated" in answer)
-                          setSaid(
-                            t(answer.updated ? "plugins.updated" : "plugins.current", {
-                              name: plugin.name,
-                            }),
-                          );
-                      });
-                  }}
-                >
-                  <Tip label={t("plugins.actions", { name: plugin.name })}>
-                    <MenuTrigger data-variant="ghost" disabled={busy[plugin.id] === true}>
-                      <MoreIcon />
-                    </MenuTrigger>
-                  </Tip>
-                  <MenuContent align="end">
-                    <MenuItem value="update">{t("plugins.update")}</MenuItem>
-                    {plugin.builtin !== true && (
-                      <MenuItem value="remove" data-destructive>
-                        {t("plugins.uninstall")}
-                      </MenuItem>
-                    )}
-                  </MenuContent>
-                </Menu>
-              </PageRow>
-            );
-          })}
-        </PageRows>
-      )}
+                        store.setPluginEnabled(locationId, agentId, plugin.id, enabled),
+                      )
+                    }
+                  >
+                    <SwitchThumb />
+                  </Switch>
+                  <Menu
+                    onAction={(value) => {
+                      if (value === "remove") setRemoving(plugin);
+                      else if (value === "update")
+                        void act(plugin, () =>
+                          store.updatePlugin(locationId, agentId, plugin.id),
+                        ).then((answer) => {
+                          if ("updated" in answer)
+                            setSaid(
+                              t(answer.updated ? "plugins.updated" : "plugins.current", {
+                                name: plugin.name,
+                              }),
+                            );
+                        });
+                    }}
+                  >
+                    <Tip label={t("plugins.actions", { name: plugin.name })}>
+                      <MenuTrigger data-variant="ghost" disabled={busy[plugin.id] === true}>
+                        <MoreIcon />
+                      </MenuTrigger>
+                    </Tip>
+                    <MenuContent align="end">
+                      <MenuItem value="update">{t("plugins.update")}</MenuItem>
+                      {plugin.builtin !== true && (
+                        <MenuItem value="remove" data-destructive>
+                          {t("plugins.uninstall")}
+                        </MenuItem>
+                      )}
+                    </MenuContent>
+                  </Menu>
+                </PageRow>
+              );
+            })}
+          </PageRows>
+        )}
+      </ResourceGroup>
       {removing !== undefined ? (
         <ConfirmDialog
           open
@@ -450,7 +435,7 @@ function Installed({ location, agentId, words, onChanged }: SectionProps) {
           onDone={() => setValues(undefined)}
         />
       ) : null}
-    </PageGroup>
+    </>
   );
 }
 
@@ -844,56 +829,38 @@ function SourceFormDialog({
   const { t } = useI18n();
   const store = useAppStore();
   const [source, setSource] = useState("");
-  const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<PluginFailure | undefined>(undefined);
-  const ready = source.trim() !== "";
 
   const save = async () => {
-    if (!ready || busy) return;
-    setBusy(true);
     setFailure(undefined);
-    try {
-      const answer = await store.addPluginSource(location.id, agentId, source.trim());
-      if ("problem" in answer) setFailure(answer);
-      else onDone(true);
-    } finally {
-      setBusy(false);
-    }
+    const answer = await store.addPluginSource(location.id, agentId, source.trim());
+    if (!("problem" in answer)) return true;
+    setFailure(answer);
+    return false;
   };
 
   return (
-    <Dialog open onOpenChange={(open) => !open && !busy && onDone(false)}>
-      <DialogBackdrop />
-      <DialogContent data-kind="plugin-source-form">
-        <DialogTitle>{t("plugins.sourceForm.title")}</DialogTitle>
-        <form
-          data-slot="stack"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void save();
-          }}
-        >
-          <Field name="location">
-            <FieldLabel>{t("plugins.sourceForm.location")}</FieldLabel>
-            <Input
-              autoFocus
-              autoComplete="off"
-              spellCheck={false}
-              value={source}
-              onChange={(e) => setSource(e.currentTarget.value)}
-            />
-            <FieldDescription>{t("plugins.sourceForm.hint", words)}</FieldDescription>
-          </Field>
-          <p data-slot="hint">{t("plugins.sourceForm.warning", words)}</p>
-          {failure !== undefined ? <Failure failure={failure} words={words} /> : null}
-          <div data-slot="row" data-dialog-footer="">
-            <DialogClose disabled={busy}>{t("dialog.cancel")}</DialogClose>
-            <Button data-variant="solid" type="submit" disabled={!ready || busy}>
-              {t("plugins.sourceForm.submit")}
-            </Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <FormDialog
+      kind="plugin-source-form"
+      title={t("plugins.sourceForm.title")}
+      ready={source.trim() !== ""}
+      submitLabel={t("plugins.sourceForm.submit")}
+      onSubmit={save}
+      onClose={onDone}
+      problem={failure !== undefined ? <Failure failure={failure} words={words} /> : undefined}
+    >
+      <Field name="location">
+        <FieldLabel>{t("plugins.sourceForm.location")}</FieldLabel>
+        <Input
+          autoFocus
+          autoComplete="off"
+          spellCheck={false}
+          value={source}
+          onChange={(e) => setSource(e.currentTarget.value)}
+        />
+        <FieldDescription>{t("plugins.sourceForm.hint", words)}</FieldDescription>
+      </Field>
+      <p data-slot="hint">{t("plugins.sourceForm.warning", words)}</p>
+    </FormDialog>
   );
 }
