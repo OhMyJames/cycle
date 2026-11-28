@@ -41,6 +41,7 @@ const setup = async (opts: { ci?: CiStatus["state"]; review?: ReturnType<typeof 
       diff: async () => "diff --git a/a b/a",
       snapshot: async () => "snap",
       head: async () => ({ ok: true as const, sha: worktreeAt.sha }),
+      fetchMain: async () => ({ code: 0, output: "", timedOut: false }),
       fetchPrBranch: async (_at: unknown, branch: string) => {
         fetched.push(branch);
         return { code: 0, output: "", timedOut: false };

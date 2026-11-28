@@ -713,14 +713,20 @@ export class StoreOps {
     return row === null ? undefined : toTask(row);
   }
 
-  /** Takes a pending task: true for exactly one caller. */
-  claimReviewTask(id: number): boolean {
+  /**
+   * Takes a pending task: true for exactly one caller. A running task nobody touched for `leaseMs` is taken too: its
+   * claimer died without releasing it.
+   */
+  claimReviewTask(id: number, leaseMs = 0): boolean {
+    const now = this.now();
+    const stale = new Date(now.getTime() - leaseMs).toISOString();
     return (
       this.db
         .query(
-          "UPDATE review_tasks SET status = 'running', updated_at = ? WHERE id = ? AND status = 'pending'",
+          `UPDATE review_tasks SET status = 'running', updated_at = ?
+           WHERE id = ? AND (status = 'pending' OR (status = 'running' AND ? > 0 AND updated_at < ?))`,
         )
-        .run(this.now().toISOString(), id).changes > 0
+        .run(now.toISOString(), id, leaseMs, stale).changes > 0
     );
   }
 
@@ -1079,8 +1085,8 @@ export class SqliteStore implements LoopStore {
   findReviewTask(repo: string, pr: number, headSha: string) {
     return this.#ops.findReviewTask(repo, pr, headSha);
   }
-  claimReviewTask(id: number) {
-    return this.#ops.claimReviewTask(id);
+  claimReviewTask(id: number, leaseMs?: number) {
+    return this.#ops.claimReviewTask(id, leaseMs);
   }
   releaseReviewTask(id: number) {
     this.#ops.releaseReviewTask(id);

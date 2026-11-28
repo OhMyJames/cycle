@@ -81,3 +81,12 @@ test("PR review counts and the cap is said once", async () => {
   expect(s.prReview("o/r", 3).capped).toBe(true);
   s.close();
 });
+
+test("a running review task whose claimer died is taken over after the lease", async () => {
+  const s = await open();
+  const a = s.reviewTask("o/r", 1, "sha", "pr");
+  expect(s.claimReviewTask(a.id)).toBe(true);
+  expect(s.claimReviewTask(a.id, 60_000)).toBe(false);
+  clock = new Date(clock.getTime() + 120_000);
+  expect(s.claimReviewTask(a.id, 60_000)).toBe(true);
+});

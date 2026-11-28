@@ -541,6 +541,8 @@ const findUrl = (text: string): string | undefined =>
     ?.trim();
 
 /** The forge over `gh`: isolated cwd/env and `--repo` when configured, with outbound secret redaction (CYC-478). */
+const OPEN_PR_LIMIT = 1000;
+
 export const githubForge = (deps: {
   exec: Exec;
   env: Record<string, string | undefined>;
@@ -681,13 +683,19 @@ export const githubForge = (deps: {
         "--state",
         "open",
         "--limit",
-        "100",
+        String(OPEN_PR_LIMIT),
         "--json",
         "number,headRefName,headRefOid,baseRefName,isDraft,isCrossRepository,author,title,body",
       ]);
       if (done.timedOut || done.code !== 0) return timedOutOrFailed("gh pr list", done);
       const parsed = parseJson(done.output, (v) => OpenPrsSchema.parse(v), "gh pr list");
       if (!parsed.ok) return parsed;
+      // `gh pr list` stops at the limit: a list that may be cut is not trusted (waits would be cleared as "gone").
+      if (parsed.value.length >= OPEN_PR_LIMIT)
+        return {
+          ok: false,
+          error: `gh pr list reached its limit of ${OPEN_PR_LIMIT} pull requests`,
+        };
       const prs: OpenPr[] = parsed.value.map((p) => ({
         number: p.number,
         headBranch: p.headRefName,

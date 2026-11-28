@@ -4,7 +4,13 @@
 // CI by registering a wait (and ends, so the worker is free), calls the review task, and merges only through the
 // merge gate, pinned to the commit that was reviewed.
 
-import type { FlowHost, Intake, OwnRun, StepResult } from "../../engine/flow.ts";
+import {
+  type FlowHost,
+  type Intake,
+  NetworkWait,
+  type OwnRun,
+  type StepResult,
+} from "../../engine/flow.ts";
 import { recordHeartbeat } from "../../engine/heartbeat.ts";
 import { mayMerge } from "../../guard/merge-gate.ts";
 import type { At, OpenPr } from "../../ports/forge.ts";
@@ -57,10 +63,10 @@ export class PrFlow {
   #lastPoll = 0;
   #open = new Map<number, OpenPr>();
   /**
-   * "<key>@<sha>" that ended without anything left to do until a new commit (CI failed, no write access, cap).
-   * Kept in memory only (a departure from Design's persisted state): after a restart such a pull request is looked
-   * at once more, which reads GitHub again and costs a review only if its task is not done (the cap still holds,
-   * it is in `pr_reviews`). Likewise the CI signal is deduped as "<subject>:settled", one per wait.
+   * "<key>@<sha>" that ended without anything left to do until a new commit (no write access, cap, a conclusion).
+   * Kept in memory only (a departure from Design's persisted state), and pruned at each poll to the heads of open
+   * pull requests: after a restart such a pull request is looked at once more, which reads GitHub again and costs a
+   * review only if its task is not done (the cap still holds, it is in `pr_reviews`).
    */
   readonly #settled = new Set<string>();
 
@@ -128,6 +134,9 @@ export class PrFlow {
     }
     const prs = eligible(read.prs, baseBranchOf(config.baseRef));
     this.#open = new Map(prs.map((p) => [p.number, p]));
+    // A commit that is no longer the head of an open pull request cannot be asked about again.
+    const heads = new Set(prs.map((p) => `${prKey(slug, p.number)}@${p.headSha}`));
+    for (const m of this.#settled) if (!heads.has(m)) this.#settled.delete(m);
     if (config.dryRun) return;
     for (const p of prs) {
       db(store).signal(`pr:${slug}#${p.number}@${p.headSha}`, `pr:${slug}#${p.number}`, "poll");
@@ -143,8 +152,9 @@ export class PrFlow {
       }
       if (!w.subject.startsWith("ci:")) continue;
       const ci = await this.#d.forge.ciStatus(this.#at(), String(p.number), sha, config.ciChecks);
-      if (ci.ok && ci.status.state !== "pending")
-        db(store).signal(`${w.subject}:settled`, w.subject, "poll");
+      // Only green wakes it at once; a failed commit is looked at again at its recheck time.
+      if (ci.ok && ci.status.state === "passed")
+        db(store).signal(`${w.subject}:settled:${w.createdAt}`, w.subject, "poll");
     }
   }
 
@@ -250,11 +260,7 @@ export class PrFlow {
         await store.event(key, "pr_waiting_ci", { sha });
         return done("waiting-ci");
       }
-      if (ci.status.state === "failed") {
-        this.#settled.add(mark);
-        await store.event(key, "pr_ci_failed", { sha });
-        return done("ci-failed");
-      }
+      if (ci.status.state === "failed") return this.#ciFailed(key, slug, sha);
     }
 
     const result = await reviewTask(h, input);
@@ -268,12 +274,16 @@ export class PrFlow {
         );
         return done("waiting-ci");
       }
-      this.#settled.add(mark);
-      return done("ci-failed");
+      return this.#ciFailed(key, slug, sha);
     }
     if (result.kind === "unavailable") return this.#retryLater(key, sha, "unavailable");
     // The conclusion is kept, but a comment that did not get onto the pull request comes first: no merge on a
     // review nobody could read. The task is done, so the next look only retries the comment.
+    // A failure of the review system is not a review of the commit: it neither counts toward the cap nor settles it.
+    if (result.conclusion.decision === "system_error") {
+      await store.event(key, "pr_review_done", { decision: "system_error" });
+      return this.#retryLater(key, sha, "system-error");
+    }
     if (!reviewed) db(store).countPrReview(slug, number, sha);
     if (!result.conclusion.commented) return this.#retryLater(key, sha, "comment-failed");
     const { decision } = result.conclusion;
@@ -283,6 +293,18 @@ export class PrFlow {
       return done(decision);
     }
     return this.#merge(key, number, info, input);
+  }
+
+  /** CI failed on this commit: not reviewed, but looked at again later, since a re-run on the same commit can pass. */
+  #ciFailed(key: string, slug: string, sha: string): StepResult {
+    const { store, clock, config } = this.#d;
+    db(store).wait(
+      key,
+      `ci:${slug}@${sha}`,
+      new Date(clock.now().getTime() + config.ciPollIntervalMs).toISOString(),
+    );
+    void store.event(key, "pr_ci_failed", { sha });
+    return { status: "pr_step", key, outcome: "ci-failed" };
   }
 
   #retryLater(key: string, sha: string, why: string): StepResult {
@@ -358,8 +380,7 @@ export class PrFlow {
       return done("merged");
     } catch (error) {
       // GitHub out of reach: the conclusion is kept, and the merge is tried again later.
-      if (error instanceof Error && error.constructor.name === "NetworkWait")
-        this.#retryLater(key, sha, "network");
+      if (error instanceof NetworkWait) this.#retryLater(key, sha, "network");
       throw error;
     }
   }

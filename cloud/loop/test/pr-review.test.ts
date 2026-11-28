@@ -91,6 +91,7 @@ const setup = async (
   const workspace = {
     diff: async () => "diff --git a/a b/a",
     snapshot: async () => "snap",
+    fetchMain: async () => ({ code: 0, output: "", timedOut: false }),
     fetchPrBranch: async (_a: unknown, branch: string) => {
       fetchedBranch = branch;
       return { code: 0, output: "", timedOut: false };

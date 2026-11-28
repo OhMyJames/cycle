@@ -205,11 +205,12 @@ export async function reviewTask(h: FlowHost, input: ReviewInput): Promise<Revie
     ciReadGreen = true;
   }
 
-  if (!store.transaction((tx) => tx.claimReviewTask(task.id))) return { kind: "busy" };
+  // A claim older than a turn plus its commands belongs to a process that died: it is taken over.
+  const lease = config.turnTimeoutMs + 4 * config.commandTimeoutMs;
+  if (!store.transaction((tx) => tx.claimReviewTask(task.id, lease))) return { kind: "busy" };
   let concluded = false;
   try {
-    let worktree = input.worktree;
-    if (worktree === undefined) {
+    if (input.worktree === undefined) {
       // A pull request of a person: its branch comes to a local one, with credentials only in the delivery repository.
       if (input.branch === undefined)
         throw new Error("a pull request review needs its head branch");
@@ -221,16 +222,23 @@ export async function reviewTask(h: FlowHost, input: ReviewInput): Promise<Revie
       if (fetched.code !== 0 || fetched.timedOut) {
         return { kind: "unavailable", reason: `拉取 PR 分支失败：${tail(fetched.output)}` };
       }
+      // The diff is against the base: a stale base would show the person's PR wrongly.
+      const main = await h.d.workspace.fetchMain(at(h, config.repoRoot));
+      if (main.code !== 0 || main.timedOut) {
+        return { kind: "unavailable", reason: `刷新基线分支失败：${tail(main.output)}` };
+      }
     }
 
     const maxAttempts = Math.max(1, config.maxReviewRetries + 1);
     const sessions: string[] = [];
     let verdict: ReviewVerdict | undefined;
     let lastFailure: string | null = null;
+    let tried = 0;
     let diff: string | undefined;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       let worktreeModified = false;
+      tried = attempt + 1;
       try {
         const created = await h.d.sessions.create({
           role: "review",
@@ -251,7 +259,8 @@ export async function reviewTask(h: FlowHost, input: ReviewInput): Promise<Revie
         });
         sessions.push(created.sessionId);
         store.transaction((tx) => tx.addReviewSession(task.id, created.sessionId));
-        worktree ??= created.cwd;
+        // A pull request of a person gets its worktree from the session each attempt; the dev flow's is its own.
+        const worktree = input.worktree ?? created.cwd;
         // What is read must be the commit the conclusion will be bound to.
         const at0 = await h.d.workspace.head(at(h, worktree));
         if (!at0.ok || at0.sha !== headSha)
@@ -319,7 +328,7 @@ export async function reviewTask(h: FlowHost, input: ReviewInput): Promise<Revie
         verdict: null,
         reason,
         sessions: current.sessions,
-        attempts: maxAttempts,
+        attempts: tried,
         commented: true,
         commentError: null,
       });
