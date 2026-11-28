@@ -9,6 +9,7 @@ import type {
   LoopTicketDetail,
 } from "../../src/api.ts";
 import { fakeBridge, summary } from "../fake-bridge.ts";
+import { openSettings } from "./account-menu.ts";
 import { renderApp } from "./render-app.tsx";
 
 afterEach(cleanup);
@@ -391,4 +392,26 @@ test("opening the Console reports the counts once, and a notice press reports wh
   await user.click(within(needs).getByRole("button", { name: /No progress/ }));
   expect(tracked(calls)).toContainEqual(["loop_notice_opened", { kind: "stuck", from: "console" }]);
   expect(tracked(calls).filter(([event]) => event === "loop_console_shown")).toHaveLength(1);
+});
+
+// The queue's Escape clears its picks only while the Console is shown: over it, Escape is the page's.
+test("Escape leaves a page opened over the Console, and the picks stay", async () => {
+  const { user } = await mountConsole({
+    loopBoards: { CYC: boardOf({ backlog: [waiting(740, "high", "Why")] }) },
+  });
+  const queue = await screen.findByRole("region", { name: "Awaiting approval" });
+  await user.click(within(queue).getByRole("checkbox", { name: "Select CYC-740" }));
+  await openSettings(user);
+  await screen.findByRole("heading", { name: "General", level: 2 });
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("heading", { name: "General", level: 2 })).toBeNull(),
+  );
+  expect(
+    (
+      within(screen.getByRole("region", { name: "Awaiting approval" })).getByRole("checkbox", {
+        name: "Select CYC-740",
+      }) as HTMLInputElement
+    ).checked,
+  ).toBe(true);
 });

@@ -622,8 +622,8 @@ const waiting = (n: number, priority: string, reason: string): LoopTicket => ({
   pending: { reason },
 });
 
-test("awaiting-approval cards sit at the top of Backlog with a badge, quick approve, and floating batch bar", async () => {
-  const { user, calls } = await mountBoard({
+test("awaiting-approval cards sit at the top of Backlog with a badge and a quick approve, and no batch selection", async () => {
+  const { calls } = await mountBoard({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: {
       CYC: withTickets({
@@ -654,37 +654,12 @@ test("awaiting-approval cards sit at the top of Backlog with a badge, quick appr
   expect(items[0]?.textContent).toContain("Reason urgent");
   // Ordinary tickets do not carry the awaiting-approval badge.
   expect(items[2]?.textContent).not.toContain("Awaiting approval");
-  // Floating selection bar is hidden until at least one pending card is picked.
+  // Selecting and approving a batch lives on the Console now; the board keeps the badge and the single Approve.
+  expect(within(backlog).queryByRole("checkbox")).toBeNull();
   expect(screen.queryByRole("region", { name: "Awaiting approval" })).toBeNull();
-
-  await user.click(within(backlog).getByRole("checkbox", { name: "Select all" }));
-  const bar = await screen.findByRole("region", { name: "Awaiting approval" });
-  await user.click(within(bar).getByRole("button", { name: "Approve selected" }));
+  expect(screen.queryByRole("button", { name: /Awaiting approval/ })).toBeNull();
+  expect(within(items[0] as HTMLElement).getByRole("button", { name: /^Approve/ })).toBeTruthy();
   expect(calls.some(([name]) => name === "loopActMany")).toBe(false);
-  const dialog = await screen.findByRole("alertdialog");
-  expect(dialog.textContent).toContain("CYC-702 Ticket 702");
-  expect(dialog.textContent).toContain("CYC-701 Ticket 701");
-  await user.click(within(dialog).getByRole("button", { name: "Approve selected" }));
-  expect(await screen.findByText(/1 succeeded, 1 skipped, 0 failed/)).toBeTruthy();
-  expect(calls.filter(([name]) => name === "loopActMany")).toEqual([
-    ["loopActMany", "CYC", "approve_many", ["CYC-702", "CYC-701"], true, undefined],
-  ]);
-
-  // Return: one ticket, with a reason; no second confirmation.
-  await user.click(within(backlog).getByRole("checkbox", { name: "Select CYC-701" }));
-  const bar2 = await screen.findByRole("region", { name: "Awaiting approval" });
-  await user.type(within(bar2).getByRole("textbox"), "not now");
-  await user.click(within(bar2).getByRole("button", { name: "Return selected" }));
-  await waitFor(() =>
-    expect(calls.filter(([name]) => name === "loopActMany")[1]).toEqual([
-      "loopActMany",
-      "CYC",
-      "return_many",
-      ["CYC-701"],
-      true,
-      "not now",
-    ]),
-  );
 });
 
 const withPriority = (n: number, column: string, priority: string | null): LoopTicket => ({
@@ -744,7 +719,7 @@ test("with nothing waiting for approval there is no awaiting-approval badge or f
   expect(screen.queryByText("Awaiting approval")).toBeNull();
 });
 
-test("search and awaiting-approval filter chip narrow visible cards and can be cleared", async () => {
+test("search narrows visible cards and can be cleared", async () => {
   const { user } = await mountBoard({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: {
@@ -755,7 +730,7 @@ test("search and awaiting-approval filter chip narrow visible cards and can be c
     },
   });
   await screen.findByRole("region", { name: "Backlog" });
-  await user.click(screen.getByRole("button", { name: /Awaiting approval/ }));
+  await user.type(screen.getByRole("searchbox", { name: "Search tickets" }), "701");
   expect(screen.getByText("Ticket 701")).toBeTruthy();
   expect(screen.queryByText("Ticket 702")).toBeNull();
   expect(screen.queryByText("Ticket 703")).toBeNull();
@@ -767,23 +742,6 @@ test("search and awaiting-approval filter chip narrow visible cards and can be c
   expect(screen.queryByText("Ticket 701")).toBeNull();
 });
 
-test("a batch return that fails is said on the board, and the picks stay", async () => {
-  const { user, calls } = await mountBoard({
-    loopProjects: { kind: "ok", projects: [cycle] },
-    loopBoards: { CYC: withTickets({ Backlog: [waiting(720, "high", "Why")] }) },
-    loopActMany: { kind: "failed", reason: "offline" },
-  });
-  const backlog = await screen.findByRole("region", { name: "Backlog" });
-  await user.click(within(backlog).getByRole("checkbox", { name: "Select CYC-720" }));
-  const bar = await screen.findByRole("region", { name: "Awaiting approval" });
-  await user.click(within(bar).getByRole("button", { name: "Return selected" }));
-  expect(await screen.findByText(/could not be reached/)).toBeTruthy();
-  expect(calls.filter(([name]) => name === "loopActMany")).toHaveLength(1);
-  expect(
-    (within(backlog).getByRole("checkbox", { name: "Select CYC-720" }) as HTMLInputElement).checked,
-  ).toBe(true);
-});
-
 test("a Backlog of only waiting tickets does not say it is empty", async () => {
   await mountBoard({
     loopProjects: { kind: "ok", projects: [cycle] },
@@ -791,34 +749,6 @@ test("a Backlog of only waiting tickets does not say it is empty", async () => {
   });
   const column = await screen.findByRole("region", { name: "Backlog" });
   expect(within(column).queryByText("Nothing here")).toBeNull();
-});
-
-test("the counts of a batch stay when the reloaded board has nothing waiting any more", async () => {
-  const user = userEvent.setup();
-  const before = withTickets({ Backlog: [waiting(740, "high", "Why")] });
-  const after = withTickets({ Backlog: [ticket(741, "Backlog")] });
-  // The board changes once the batch has been asked for.
-  let asked: () => boolean = () => false;
-  const fake = fakeBridge({
-    connected: true,
-    loopProjects: { kind: "ok", projects: [cycle] },
-    workspaceRepos: { "/work": cycle.repo.displayName },
-    loopBoards: {
-      get CYC() {
-        return asked() ? after : before;
-      },
-    },
-  });
-  asked = () => fake.calls.some(([name]) => name === "loopActMany");
-  const bridge = fake.bridge;
-  await renderApp(bridge);
-  await user.click(await screen.findByRole("button", { name: "Kanban" }));
-  const backlog = await screen.findByRole("region", { name: "Backlog" });
-  await user.click(within(backlog).getByRole("checkbox", { name: "Select all" }));
-  const bar = await screen.findByRole("region", { name: "Awaiting approval" });
-  await user.click(within(bar).getByRole("button", { name: "Return selected" }));
-  expect(await screen.findByText(/1 succeeded, 0 skipped, 0 failed/)).toBeTruthy();
-  expect(screen.queryByRole("checkbox", { name: "Select all" })).toBeNull();
 });
 
 test("Notices show research and QA sessions too, and pressing one joins its session", async () => {
@@ -1360,29 +1290,6 @@ test("Settings opened while Loop projects are loading stays open when the Projec
   expect(screen.getByRole("heading", { name: "General", level: 2 })).toBeTruthy();
   await user.click(screen.getByRole("button", { name: /Back to Loop/ }));
   await screen.findByRole("region", { name: "Projects" });
-});
-
-// The board's Escape clears its picks only while the board is shown: over it, Escape is the page's.
-test("Escape leaves a page opened over a board with picks, and the picks stay", async () => {
-  const { user } = await mountBoard({
-    loopProjects: { kind: "ok", projects: [cycle] },
-    loopBoards: { CYC: withTickets({ Backlog: [waiting(740, "high", "Why")] }) },
-  });
-  const backlog = await screen.findByRole("region", { name: "Backlog" });
-  await user.click(within(backlog).getByRole("checkbox", { name: "Select CYC-740" }));
-  await openSettings(user);
-  await screen.findByRole("heading", { name: "General", level: 2 });
-  await user.keyboard("{Escape}");
-  await waitFor(() =>
-    expect(screen.queryByRole("heading", { name: "General", level: 2 })).toBeNull(),
-  );
-  expect(
-    (
-      within(screen.getByRole("region", { name: "Backlog" })).getByRole("checkbox", {
-        name: "Select CYC-740",
-      }) as HTMLInputElement
-    ).checked,
-  ).toBe(true);
 });
 
 test("a parent card folds a sub-ticket list; children keep their cards and name the parent", async () => {
