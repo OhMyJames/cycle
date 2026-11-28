@@ -1,13 +1,10 @@
 import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
-import { userEvent } from "vitest/browser";
-import type { AgentInfo, SessionSnapshot } from "../../src/api.ts";
-import { applyUpdate, emptyConversation } from "../../src/model/index.ts";
-import { fakeBridge } from "../fake-bridge.ts";
+import type { AgentInfo } from "../../src/api.ts";
 import { findAlert } from "./alert.ts";
-import { boxText, press, ready, write } from "./box.ts";
-import { renderApp } from "./render-app.tsx";
+import { boxText, press, write } from "./box.ts";
+import { openSession } from "./mount.tsx";
 
 afterEach(() => {
   cleanup();
@@ -26,26 +23,18 @@ const open = async (
   promptCapabilities: AgentInfo["promptCapabilities"],
   ...updates: SessionUpdate[]
 ) => {
-  const snapshot = (): SessionSnapshot => ({
-    conversation: updates.reduce((c, u) => applyUpdate(c, u), emptyConversation()),
-    permissions: [],
-    version: updates.length,
+  const opened = await openSession(updates, {
+    box: true,
+    configure: (script) => {
+      script.bridge.agents = async () => [agent(promptCapabilities)];
+    },
   });
-  const script = fakeBridge({ connected: true, snapshot });
-  script.bridge.agents = async () => [agent(promptCapabilities)];
-  await renderApp(script.bridge);
-  const user = userEvent.setup();
-  await user.click(await screen.findByRole("option", { name: /work/ }));
-  const box = await screen.findByRole("textbox", { name: "Message" });
-  await ready(box);
-  const tracked = () =>
-    script.calls.filter(([name]) => name === "track").map(([, event, props]) => [event, props]);
   const picker = () => {
     const input = document.querySelector<HTMLInputElement>('input[type="file"]');
     if (input === null) throw new Error("no file input");
     return input;
   };
-  return { user, box, script, tracked, picker };
+  return { ...opened, picker };
 };
 
 const both = { image: {}, embeddedContext: {} };

@@ -7,6 +7,7 @@ import type { GitBranches } from "../../src/api.ts";
 import { fakeBridge, summary } from "../fake-bridge.ts";
 import { typeFolder } from "./blank.ts";
 import { press, ready, write } from "./box.ts";
+import { mountApp } from "./mount.tsx";
 import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
@@ -17,13 +18,11 @@ afterEach(() => {
 const CAPABILITIES = { queue: true, files: true, folders: true, trust: true, worktrees: true };
 
 const mount = async (branches: GitBranches | null) => {
-  const script = fakeBridge({ connected: true, capabilities: CAPABILITIES, branches });
-  const store = await renderApp(script.bridge);
-  const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: "New session" }));
+  const app = await mountApp({ capabilities: CAPABILITIES, branches });
+  await app.user.click(await screen.findByRole("button", { name: "New session" }));
   await screen.findByRole("heading", { name: "New session" });
-  await typeFolder(user, "/repo");
-  return { user, store, ...script };
+  await typeFolder(app.user, "/repo");
+  return app;
 };
 
 const REPO = { branches: ["main", "release/1.0", "feature/login"], current: "main" };

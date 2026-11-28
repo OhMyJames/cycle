@@ -2,16 +2,15 @@ import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
-import type { PermissionRequest, PlanUsage, SessionSnapshot, UpdateState } from "../../src/api.ts";
+import type { PermissionRequest, PlanUsage, UpdateState } from "../../src/api.ts";
 import { codeTheme } from "../../src/code-theme.ts";
-import { applyUpdate, emptyConversation } from "../../src/model/index.ts";
 import { MOD } from "../../src/react/sidebar.tsx";
-import { fakeBridge, idle, summary, text } from "../fake-bridge.ts";
+import { type fakeBridge, idle, summary, text } from "../fake-bridge.ts";
 import { accountMenu, openSettings } from "./account-menu.ts";
 import { findAlert, getAlert, queryAlert } from "./alert.ts";
 import { chosenFolder, typeFolder } from "./blank.ts";
 import { boxText, press, ready, sleep, write } from "./box.ts";
-import { renderApp } from "./render-app.tsx";
+import { type FakeOptions, history, mountApp, type Script } from "./mount.tsx";
 
 afterEach(() => {
   cleanup();
@@ -37,39 +36,11 @@ const askPermission = (
   options,
 });
 
-const mount = async (
-  options: {
-    snapshot?: () => SessionSnapshot;
-    configure?: (script: ReturnType<typeof fakeBridge>) => void;
-    capabilities?: {
-      queue: boolean;
-      steer?: boolean;
-      files: boolean;
-      folders: boolean;
-      sessionMentions?: boolean;
-    };
-    steer?: boolean;
-  } = {},
-) => {
-  const script = fakeBridge({
-    connected: true,
-    ...(options.steer === true ? { steer: true } : {}),
-    ...(options.snapshot ? { snapshot: options.snapshot } : {}),
-    ...(options.capabilities ? { capabilities: options.capabilities } : {}),
-  });
-  options.configure?.(script);
-  const store = await renderApp(script.bridge);
-  const user = userEvent.setup();
-  // An event arrives outside React's own calls: say so, or each one warns.
-  const emit = (event: Parameters<typeof script.emit>[0]) => act(() => script.emit(event));
-  return { store, user, ...script, emit };
-};
-
-const history = (...updates: SessionUpdate[]): SessionSnapshot => ({
-  conversation: updates.reduce((c, u) => applyUpdate(c, u), emptyConversation()),
-  permissions: [],
-  version: updates.length,
-});
+/** The app on a connected fake bridge; `configure` changes the bridge before the app starts. */
+const mount = ({
+  configure,
+  ...options
+}: FakeOptions & { configure?: (script: Script) => void } = {}) => mountApp(options, { configure });
 
 const openFirstSession = async (user: ReturnType<typeof userEvent.setup>) => {
   const option = await screen.findByRole("option", { name: /work/ });

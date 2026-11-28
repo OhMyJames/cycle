@@ -1,9 +1,7 @@
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
-import { userEvent } from "vitest/browser";
-import { fakeBridge } from "../fake-bridge.ts";
 import { openSettings } from "./account-menu.ts";
-import { renderApp } from "./render-app.tsx";
+import { mountApp } from "./mount.tsx";
 
 afterEach(() => {
   cleanup();
@@ -11,8 +9,7 @@ afterEach(() => {
 });
 
 const mount = async (keys: string[] = []) => {
-  const script = fakeBridge({
-    connected: true,
+  const app = await mountApp({
     vault: { keys },
     environments: {
       environments: [
@@ -27,14 +24,12 @@ const mount = async (keys: string[] = []) => {
       defaults: {},
     },
   });
-  await renderApp(script.bridge);
-  const user = userEvent.setup();
-  await openSettings(user);
-  await user.click(await screen.findByRole("tab", { name: "Vault" }));
+  await openSettings(app.user);
+  await app.user.click(await screen.findByRole("tab", { name: "Vault" }));
   const group = (await screen.findByText(/Secrets kept on/)).closest(
     '[data-slot="page-group"]',
   ) as HTMLElement;
-  return { user, group: within(group), ...script };
+  return { ...app, group: within(group) };
 };
 
 test("an item is listed by name and the environments that use it, never by a value", async () => {

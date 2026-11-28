@@ -4,6 +4,7 @@ import { userEvent } from "vitest/browser";
 import type { LocationConfig } from "../../src/api.ts";
 import { fakeBridge } from "../fake-bridge.ts";
 import { accountMenu, openSettings } from "./account-menu.ts";
+import { type FakeOptions, mountApp } from "./mount.tsx";
 import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
@@ -18,14 +19,15 @@ const far: LocationConfig = {
   transport: { type: "ssh", host: "me@box" },
 };
 
-const mount = async (options: Parameters<typeof fakeBridge>[0] = {}) => {
-  const script = fakeBridge({ connected: true, ...options });
-  const store = await renderApp(script.bridge);
-  return { user: userEvent.setup(), store, ...script };
-};
 const mod = /Mac/.test(navigator.userAgent) ? "Meta" : "Control";
 const tracked = (calls: [string, ...unknown[]][]) =>
   calls.filter(([name]) => name === "track").map(([, event, props]) => [event, props]);
+
+/** The app, with the bridge's own `emit`: these tests wrap what they send in `act` themselves. */
+const mount = async (options: FakeOptions = {}) => {
+  const app = await mountApp(options);
+  return { ...app, emit: app.script.emit };
+};
 
 test("Settings is a page over the sessions: its button opens it, Escape goes back to where the keyboard was", async () => {
   const { user, calls } = await mount();

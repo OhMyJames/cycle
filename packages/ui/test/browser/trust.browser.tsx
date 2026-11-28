@@ -1,34 +1,34 @@
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
-import { userEvent } from "vitest/browser";
-import { fakeBridge } from "../fake-bridge.ts";
+import type { userEvent } from "vitest/browser";
 import { chosenFolder, typeFolder } from "./blank.ts";
 import { boxText, press, ready, write } from "./box.ts";
-import { renderApp } from "./render-app.tsx";
+import { mountApp } from "./mount.tsx";
 
 afterEach(cleanup);
 
 /** The app on a daemon that keeps folder trust, with `trusted` as the decision for every folder. */
 const mount = async (trusted: boolean | null) => {
-  const script = fakeBridge({
-    connected: true,
-    capabilities: { queue: true, files: true, folders: true, trust: true },
-  });
-  const decided = new Map<string, boolean>();
-  script.bridge.readTrust = async (_location, path) => {
-    script.calls.push(["readTrust", _location, path]);
-    const value = decided.get(path) ?? trusted;
-    return { path, trusted: value, from: value === null ? null : path };
-  };
-  script.bridge.setTrust = async (_location, path, value) => {
-    script.calls.push(["setTrust", _location, path, value]);
-    decided.set(path, value);
-    return { path, trusted: value, from: path };
-  };
-  await renderApp(script.bridge);
-  const user = userEvent.setup();
+  const app = await mountApp(
+    { capabilities: { queue: true, files: true, folders: true, trust: true } },
+    {
+      configure: (script) => {
+        const decided = new Map<string, boolean>();
+        script.bridge.readTrust = async (_location, path) => {
+          script.calls.push(["readTrust", _location, path]);
+          const value = decided.get(path) ?? trusted;
+          return { path, trusted: value, from: value === null ? null : path };
+        };
+        script.bridge.setTrust = async (_location, path, value) => {
+          script.calls.push(["setTrust", _location, path, value]);
+          decided.set(path, value);
+          return { path, trusted: value, from: path };
+        };
+      },
+    },
+  );
   await screen.findAllByRole("option");
-  return { user, ...script };
+  return app;
 };
 
 /** Opens a blank conversation in `path` and sends its first message: what makes the session, and so what asks. */

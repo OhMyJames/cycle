@@ -1,12 +1,11 @@
 // The sign-in page and the notes about the login (CYCL-166, CYCL-167), in a real browser.
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
-import { userEvent } from "vitest/browser";
 import type { AccountStatus } from "../../src/api.ts";
-import { fakeBridge, SIGNED_IN } from "../fake-bridge.ts";
+import { SIGNED_IN } from "../fake-bridge.ts";
 import { accountMenu, openSettings } from "./account-menu.ts";
 import { getAlert } from "./alert.ts";
-import { renderApp } from "./render-app.tsx";
+import { type FakeOptions, mountApp } from "./mount.tsx";
 
 afterEach(() => {
   cleanup();
@@ -15,10 +14,10 @@ afterEach(() => {
 
 const SIGNED_OUT: AccountStatus = { state: "signed-out", open: false, signingIn: false };
 
-const mount = async (options: Parameters<typeof fakeBridge>[0] = {}) => {
-  const script = fakeBridge({ connected: true, ...options });
-  const store = await renderApp(script.bridge);
-  return { user: userEvent.setup(), store, ...script };
+/** The app, with the bridge's own `emit`: these tests wrap what they send in `act` themselves. */
+const mount = async (options: FakeOptions = {}) => {
+  const app = await mountApp(options);
+  return { ...app, emit: app.script.emit };
 };
 
 test("signed out, the sign-in page is the whole window: one button, which has the focus", async () => {

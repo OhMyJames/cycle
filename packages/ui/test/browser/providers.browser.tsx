@@ -4,6 +4,7 @@ import { userEvent } from "vitest/browser";
 import type { ProviderInfo, ProviderModel } from "../../src/api.ts";
 import { fakeBridge } from "../fake-bridge.ts";
 import { openSettings } from "./account-menu.ts";
+import { mountApp } from "./mount.tsx";
 import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
@@ -31,22 +32,19 @@ const mine: ProviderInfo = {
 };
 
 const mount = async (providers: ProviderInfo[] = []) => {
-  const script = fakeBridge({
-    connected: true,
+  const app = await mountApp({
     providers: {
       list: providers,
       kinds: [{ id: "openrouter", name: "OpenRouter" }],
       catalog: { openrouter: [model("acme/fast", "Fast"), model("acme/deep", "Deep")] },
     },
   });
-  const store = await renderApp(script.bridge);
-  const user = userEvent.setup();
-  await openSettings(user);
-  await user.click(await screen.findByRole("tab", { name: "API keys" }));
+  await openSettings(app.user);
+  await app.user.click(await screen.findByRole("tab", { name: "API keys" }));
   const group = (await screen.findByText(/Models from your own accounts/)).closest(
     '[data-slot="page-group"]',
   ) as HTMLElement;
-  return { user, store, group: within(group), ...script };
+  return { ...app, group: within(group) };
 };
 
 test("a provider is listed by name, kind, models and whether a key is saved, never by the key", async () => {

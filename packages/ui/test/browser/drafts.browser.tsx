@@ -4,6 +4,7 @@ import { userEvent } from "vitest/browser";
 import type { SessionSummary } from "../../src/api.ts";
 import { fakeBridge, summary } from "../fake-bridge.ts";
 import { boxText, press, ready, write } from "./box.ts";
+import { mountApp } from "./mount.tsx";
 import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
@@ -18,39 +19,40 @@ const sessions: SessionSummary[] = [
 ];
 
 const mount = async () => {
-  const script = fakeBridge({
-    connected: true,
-    capabilities: { queue: true, files: true, folders: true, sessionMentions: true },
-  });
-  script.bridge.sessions = async () => sessions;
-  script.bridge.searchFiles = async (_host, _session, query) => ({
-    root: "/work",
-    entries: query.startsWith("s")
-      ? [
-          { path: "src/main.ts", kind: "file" as const },
-          { path: "src/lib", kind: "folder" as const },
-        ]
-      : [],
-    truncated: false,
-  });
-  script.bridge.agents = async () => [
+  const app = await mountApp(
+    { capabilities: { queue: true, files: true, folders: true, sessionMentions: true } },
     {
-      id: "fake",
-      name: "Fake",
-      available: true,
-      configSchema: {},
-      promptCapabilities: { image: {} },
+      configure: (script) => {
+        script.bridge.sessions = async () => sessions;
+        script.bridge.searchFiles = async (_host, _session, query) => ({
+          root: "/work",
+          entries: query.startsWith("s")
+            ? [
+                { path: "src/main.ts", kind: "file" as const },
+                { path: "src/lib", kind: "folder" as const },
+              ]
+            : [],
+          truncated: false,
+        });
+        script.bridge.agents = async () => [
+          {
+            id: "fake",
+            name: "Fake",
+            available: true,
+            configSchema: {},
+            promptCapabilities: { image: {} },
+          },
+        ];
+      },
     },
-  ];
-  const store = await renderApp(script.bridge);
-  const user = userEvent.setup();
+  );
   const open = async (title: string) => {
-    await user.click(await screen.findByRole("option", { name: new RegExp(title) }));
+    await app.user.click(await screen.findByRole("option", { name: new RegExp(title) }));
     const box = await screen.findByRole("textbox", { name: "Message" });
     await ready(box);
     return box;
   };
-  return { store, user, open, ...script };
+  return { ...app, open };
 };
 
 const png = (name: string) =>
