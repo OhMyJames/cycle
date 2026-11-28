@@ -3,6 +3,7 @@
 // daemon gives against the hardcoded allowlist (agent-auth-guard.ts), and opens one only when the person clicks.
 import { agentOf } from "@cycle/analytics/events";
 import type { ClientEvents, CycleClient } from "@cycle/client";
+import { CycleErrorCode } from "@cycle/protocol";
 import type {
   AgentAuthLogoutAnswer,
   AgentAuthProblemReason,
@@ -150,14 +151,14 @@ export class AgentAuthFlows {
             : {}),
         };
       }
-      if (rpc.code === -32014 && rpc.data?.reason === "file_corrupt") {
+      if (rpc.code === CycleErrorCode.InvalidConfig && rpc.data?.reason === "file_corrupt") {
         return {
           saved: false,
           problem: "file_corrupt",
           ...(typeof rpc.message === "string" ? { message: rpc.message } : {}),
         };
       }
-      if (rpc.code === -32014) {
+      if (rpc.code === CycleErrorCode.InvalidConfig) {
         return {
           saved: false,
           problem: "invalid_config",
