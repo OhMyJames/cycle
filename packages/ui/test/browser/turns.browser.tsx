@@ -2,9 +2,7 @@ import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
-import type { PermissionRequest, SessionSnapshot } from "../../src/api.ts";
 import { displayMode } from "../../src/display-mode.ts";
-import { applyUpdate, emptyConversation } from "../../src/model/index.ts";
 import { App, StoreProvider } from "../../src/react/index.ts";
 import { reveal } from "../../src/reveal.ts";
 import { startedAt } from "../../src/started.ts";
@@ -13,6 +11,7 @@ import { fakeBridge, summary } from "../fake-bridge.ts";
 import { LONG_CODE_LINES, READING } from "../markdown-samples.ts";
 import { openSettings } from "./account-menu.ts";
 import { findAlert } from "./alert.ts";
+import { history, openSession } from "./mount.tsx";
 import { renderApp } from "./render-app.tsx";
 
 /** The session these tests open, by its view key: what its display mode is kept under. */
@@ -40,54 +39,30 @@ const tool = (id: string, name: string, status: string, rawInput: object) => [
 const state = (extra: object) => u({ sessionUpdate: "state_update", ...extra });
 
 /** The session `s1`, open, with these updates in it; `stopSubagent`: its daemon can stop one sub-agent alone. */
-const openWith = async (
+const openWith = (
   options: {
     stopSubagent?: boolean;
     fs?: boolean;
     stopped?: (childId: string) => Promise<boolean>;
   },
   ...updates: SessionUpdate[]
-) => {
-  const snapshot = (): SessionSnapshot => ({
-    conversation: updates.reduce((c, u) => applyUpdate(c, u), emptyConversation()),
-    permissions: [],
-    version: updates.length,
+) =>
+  openSession(updates, {
+    fake: {
+      ...(options.stopped !== undefined ? { stopSubagent: options.stopped } : {}),
+      ...(options.stopSubagent === true || options.fs === true
+        ? {
+            capabilities: {
+              queue: true,
+              files: true,
+              folders: true,
+              ...(options.stopSubagent === true ? { stopSubagent: true } : {}),
+              ...(options.fs === true ? { fs: true } : {}),
+            },
+          }
+        : {}),
+    },
   });
-  const script = fakeBridge({
-    connected: true,
-    snapshot,
-    ...(options.stopped !== undefined ? { stopSubagent: options.stopped } : {}),
-    ...(options.stopSubagent === true || options.fs === true
-      ? {
-          capabilities: {
-            queue: true,
-            files: true,
-            folders: true,
-            ...(options.stopSubagent === true ? { stopSubagent: true } : {}),
-            ...(options.fs === true ? { fs: true } : {}),
-          },
-        }
-      : {}),
-  });
-  await renderApp(script.bridge);
-  const user = userEvent.setup();
-  await user.click(await screen.findByRole("option", { name: /work/ }));
-  const log = await screen.findByRole("log", { name: "Conversation" });
-  let version = updates.length;
-  const emit = (...batch: SessionUpdate[]) =>
-    act(() => {
-      for (const update of batch) {
-        version += 1;
-        script.emit({ type: "update", locationId: "local", sessionId: "s1", update, version });
-      }
-    });
-  /** The agent asks for leave, as the next thing the session says. */
-  const ask = (request: PermissionRequest) => {
-    version += 1;
-    return act(() => script.emit({ type: "permission", request, version }));
-  };
-  return { user, log, emit, ask, script };
-};
 const open = (...updates: SessionUpdate[]) => openWith({}, ...updates);
 
 /** A turn that ended normally folds its work above its answer: opens each fold, so its rows can be read. */
@@ -222,44 +197,36 @@ test("a long @ session chip truncates to 20 chars with ..., stays inside the bub
     "帮我看一下 咱们现在 itsaplan 里面，有哪些 workitem 过期了或者 现在状态已经不对了的 workitem";
   const said =
     "帮我看一下 咱们现在 itsaplan 里面，有哪些 workitem 过期了或者 现在状态已经不对了的 workit";
-  const s1History: SessionSnapshot = {
-    conversation: [
-      u({
-        sessionUpdate: "user_message",
-        messageId: "u1",
-        content: [
-          { type: "text", text: `看一下咱们 session\n@${said}\n为什么一直在 writing\n@alpha` },
-          {
-            type: "resource_link",
-            name: fullName,
-            uri: "cycle://session/s2",
-            _meta: { "cycle/mention": said },
-          },
-          {
-            type: "resource_link",
-            name: "alpha",
-            uri: "cycle://session/s1",
-            _meta: { "cycle/mention": "alpha" },
-          },
-        ],
-      }),
-      state({ state: "idle", stopReason: "end_turn" }),
-    ].reduce((c, item) => applyUpdate(c, item), emptyConversation()),
-    permissions: [],
-    version: 2,
-  };
-  const s2History: SessionSnapshot = {
-    conversation: [
-      u({
-        sessionUpdate: "user_message",
-        messageId: "u2",
-        content: [{ type: "text", text: "Target session content" }],
-      }),
-      state({ state: "idle", stopReason: "end_turn" }),
-    ].reduce((c, item) => applyUpdate(c, item), emptyConversation()),
-    permissions: [],
-    version: 2,
-  };
+  const s1History = history(
+    u({
+      sessionUpdate: "user_message",
+      messageId: "u1",
+      content: [
+        { type: "text", text: `看一下咱们 session\n@${said}\n为什么一直在 writing\n@alpha` },
+        {
+          type: "resource_link",
+          name: fullName,
+          uri: "cycle://session/s2",
+          _meta: { "cycle/mention": said },
+        },
+        {
+          type: "resource_link",
+          name: "alpha",
+          uri: "cycle://session/s1",
+          _meta: { "cycle/mention": "alpha" },
+        },
+      ],
+    }),
+    state({ state: "idle", stopReason: "end_turn" }),
+  );
+  const s2History = history(
+    u({
+      sessionUpdate: "user_message",
+      messageId: "u2",
+      content: [{ type: "text", text: "Target session content" }],
+    }),
+    state({ state: "idle", stopReason: "end_turn" }),
+  );
   const script = fakeBridge({ connected: true });
   script.bridge.openSession = async (_locationId, sessionId) =>
     sessionId === "s2" ? s2History : s1History;
@@ -1946,11 +1913,7 @@ test("a long plan does not lengthen the window: nothing scrolls the header off i
   ];
   const script = fakeBridge({
     connected: true,
-    snapshot: (): SessionSnapshot => ({
-      conversation: updates.reduce((c, u) => applyUpdate(c, u), emptyConversation()),
-      permissions: [],
-      version: updates.length,
-    }),
+    snapshot: () => history(...updates),
   });
   const store = new AppStore(script.bridge);
   const user = userEvent.setup();

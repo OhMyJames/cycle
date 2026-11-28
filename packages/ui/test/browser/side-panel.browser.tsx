@@ -1,9 +1,9 @@
 import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
-import { cdp, userEvent } from "vitest/browser";
+import { cdp } from "vitest/browser";
 import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge, summary } from "../fake-bridge.ts";
-import { renderApp } from "./render-app.tsx";
+import { mountApp } from "./mount.tsx";
 
 afterEach(() => {
   cleanup();
@@ -13,9 +13,8 @@ afterEach(() => {
 const mod = /Mac/.test(navigator.userAgent) ? "Meta" : "Control";
 
 const mount = async (all = false) => {
-  const script = fakeBridge({
-    connected: true,
-    ...(all
+  const app = await mountApp(
+    all
       ? {
           capabilities: {
             queue: true,
@@ -26,20 +25,22 @@ const mount = async (all = false) => {
             terminal: true,
           },
         }
-      : {}),
-  });
-  script.bridge.sessions = async () => [
-    { ...summary("s1"), title: "first" },
-    { ...summary("s2"), title: "second" },
-  ];
-  const store = await renderApp(script.bridge);
-  const user = userEvent.setup();
+      : {},
+    {
+      configure: (script) => {
+        script.bridge.sessions = async () => [
+          { ...summary("s1"), title: "first" },
+          { ...summary("s2"), title: "second" },
+        ];
+      },
+    },
+  );
   const tracked = () =>
-    script.calls
+    app.calls
       .filter(([name]) => name === "track")
       .map(([, event, props]) => [event, props])
       .filter(([event]) => String(event).startsWith("side_panel"));
-  return { store, user, script, tracked };
+  return { ...app, tracked };
 };
 
 const panel = () => document.querySelector('[data-slot="side-panel"]');

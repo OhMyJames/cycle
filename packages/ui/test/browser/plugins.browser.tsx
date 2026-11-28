@@ -1,9 +1,7 @@
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
-import { userEvent } from "vitest/browser";
 import type { ConnectorInfo, PluginFailure, PluginInfo, PluginSourceInfo } from "../../src/api.ts";
-import { fakeBridge } from "../fake-bridge.ts";
-import { renderApp } from "./render-app.tsx";
+import { mountApp } from "./mount.tsx";
 
 // The Plugins section of the Connectors page (CYCL-84, docs/protocol.md §15).
 
@@ -78,8 +76,7 @@ const mount = async (
     sources: options.sources ?? [{ ...directory }],
     all: options.all ?? [],
   };
-  const script = fakeBridge({
-    connected: true,
+  const app = await mountApp({
     capabilities: {
       queue: true,
       files: true,
@@ -90,11 +87,9 @@ const mount = async (
     connectors: options.connectors ?? [],
     plugins,
   });
-  const store = await renderApp(script.bridge);
-  const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: "Connectors" }));
+  await app.user.click(await screen.findByRole("button", { name: "Connectors" }));
   const page = await screen.findByRole("tabpanel", { name: "Plugins" });
-  return { user, page, store, plugins, ...script };
+  return { ...app, page, plugins };
 };
 
 const group = (page: HTMLElement, title: string): HTMLElement =>

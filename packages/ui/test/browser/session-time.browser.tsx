@@ -2,8 +2,8 @@ import { act, cleanup, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import { userEvent } from "vitest/browser";
 import type { SessionSummary } from "../../src/api.ts";
-import { fakeBridge, summary } from "../fake-bridge.ts";
-import { renderApp } from "./render-app.tsx";
+import { summary } from "../fake-bridge.ts";
+import { mountApp } from "./mount.tsx";
 
 afterEach(() => {
   cleanup();
@@ -13,12 +13,11 @@ afterEach(() => {
 const MINUTE = 60_000;
 
 const mount = async (sessions: SessionSummary[], language?: "zh-CN") => {
-  const script = fakeBridge({
-    connected: true,
-    ...(language !== undefined ? { preferences: { language } } : {}),
+  await mountApp(language !== undefined ? { preferences: { language } } : {}, {
+    configure: (script) => {
+      script.bridge.sessions = async () => sessions;
+    },
   });
-  script.bridge.sessions = async () => sessions;
-  await renderApp(script.bridge);
   await screen.findAllByRole("option");
   // The pointer stays where an earlier test left it, and a row under it shows its actions in place of its time.
   await userEvent.unhover(document.body);

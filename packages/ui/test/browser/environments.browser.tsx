@@ -10,6 +10,7 @@ import { fakeBridge, summary } from "../fake-bridge.ts";
 import { openSettings } from "./account-menu.ts";
 import { openFolders, typeFolder } from "./blank.ts";
 import { press, ready, write } from "./box.ts";
+import { mountApp } from "./mount.tsx";
 import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
@@ -42,22 +43,24 @@ const ALL = {
   environments: true,
 };
 
-const mount = async (
+const mount = (
   options: { environments?: EnvironmentsState; capabilities?: typeof ALL | object } = {},
-) => {
-  const script = fakeBridge({
-    connected: true,
-    capabilities: { ...ALL, ...options.capabilities } as typeof ALL,
-    ...(options.environments !== undefined ? { environments: options.environments } : {}),
-  });
-  // Two folders with sessions on this computer: /work (newest) and /srv/api.
-  script.bridge.sessions = async (locationId: string) => [
-    summary("s1", locationId),
-    { ...summary("s3", locationId), cwd: "/srv/api", updatedAt: "2019-12-01T00:00:00.000Z" },
-  ];
-  const store = await renderApp(script.bridge);
-  return { user: userEvent.setup(), store, ...script };
-};
+) =>
+  mountApp(
+    {
+      capabilities: { ...ALL, ...options.capabilities } as typeof ALL,
+      ...(options.environments !== undefined ? { environments: options.environments } : {}),
+    },
+    {
+      configure: (script) => {
+        // Two folders with sessions on this computer: /work (newest) and /srv/api.
+        script.bridge.sessions = async (locationId: string) => [
+          summary("s1", locationId),
+          { ...summary("s3", locationId), cwd: "/srv/api", updatedAt: "2019-12-01T00:00:00.000Z" },
+        ];
+      },
+    },
+  );
 
 const openEnvironments = async (user: ReturnType<typeof userEvent.setup>) => {
   await openSettings(user);

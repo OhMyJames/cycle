@@ -1,9 +1,7 @@
-import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
-import { userEvent } from "vitest/browser";
-import { fakeBridge } from "../fake-bridge.ts";
 import { accountMenu } from "./account-menu.ts";
-import { renderApp } from "./render-app.tsx";
+import { mountApp } from "./mount.tsx";
 
 afterEach(() => {
   cleanup();
@@ -11,12 +9,9 @@ afterEach(() => {
 });
 
 const mount = async () => {
-  const script = fakeBridge({ connected: true });
-  const store = await renderApp(script.bridge);
-  const user = userEvent.setup();
-  const emit = (event: Parameters<typeof script.emit>[0]) => act(() => script.emit(event));
+  const app = await mountApp();
   await accountMenu();
-  return { store, user, ...script, emit };
+  return app;
 };
 
 const nav = () => document.querySelector("nav") as HTMLElement;

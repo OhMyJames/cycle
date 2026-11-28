@@ -3,8 +3,8 @@ import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
 import type { LocationConfig, SessionSummary } from "../../src/api.ts";
 import { sessionKey } from "../../src/sessions.ts";
-import { fakeBridge, summary } from "../fake-bridge.ts";
-import { renderApp } from "./render-app.tsx";
+import { summary } from "../fake-bridge.ts";
+import { mountApp } from "./mount.tsx";
 
 afterEach(() => {
   cleanup();
@@ -31,10 +31,15 @@ const sessions: SessionSummary[] = [
 ];
 
 const mount = async () => {
-  const script = fakeBridge({ connected: true, locations: [far], states: { far: "closed" } });
-  script.bridge.sessions = async (locationId: string) =>
-    sessions.filter((s) => s.locationId === locationId);
-  const store = await renderApp(script.bridge);
+  const { store } = await mountApp(
+    { locations: [far], states: { far: "closed" } },
+    {
+      configure: (script) => {
+        script.bridge.sessions = async (locationId: string) =>
+          sessions.filter((s) => s.locationId === locationId);
+      },
+    },
+  );
   await screen.findAllByRole("option");
   const row = (title: string) => screen.getByRole("option", { name: new RegExp(title) });
   const draft = (id: string, locationId = "local") => sessionKey(summary(id, locationId));

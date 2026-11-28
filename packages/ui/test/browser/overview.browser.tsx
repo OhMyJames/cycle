@@ -3,9 +3,10 @@ import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
 import type { SessionSnapshot } from "../../src/api.ts";
-import { applyUpdate, emptyConversation } from "../../src/model/index.ts";
+import { applyUpdate } from "../../src/model/index.ts";
 import { backgroundOf } from "../../src/react/overview.tsx";
 import { fakeBridge, idle, summary, text } from "../fake-bridge.ts";
+import { history, mountApp } from "./mount.tsx";
 import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
@@ -14,12 +15,6 @@ afterEach(() => {
 });
 
 const u = (update: object) => update as SessionUpdate;
-
-const history = (...updates: SessionUpdate[]): SessionSnapshot => ({
-  conversation: updates.reduce((c, u) => applyUpdate(c, u), emptyConversation()),
-  permissions: [],
-  version: updates.length,
-});
 
 const busy = history(
   u({ sessionUpdate: "user_message", messageId: "u1", content: [{ type: "text", text: "Go" }] }),
@@ -80,14 +75,12 @@ const busy = history(
 );
 
 const mount = async (snapshot: SessionSnapshot) => {
-  const script = fakeBridge({ connected: true, snapshot: () => snapshot });
-  await renderApp(script.bridge);
-  const user = userEvent.setup();
-  await user.click(await screen.findByRole("option", { name: /work/ }));
+  const app = await mountApp({ snapshot: () => snapshot });
+  await app.user.click(await screen.findByRole("option", { name: /work/ }));
   await screen.findByRole("log", { name: "Conversation" });
-  await user.click(await screen.findByRole("button", { name: "Show panel" }));
+  await app.user.click(await screen.findByRole("button", { name: "Show panel" }));
   const panel = await screen.findByRole("complementary", { name: "Panel" });
-  return { script, user, panel };
+  return { script: app.script, user: app.user, panel };
 };
 
 test("the Overview shows the goal, the todo list, the background, and the session's settings", async () => {
@@ -250,15 +243,19 @@ test("a task started by a call inside a closed card of several calls opens the c
 
 /** Opens the session as the daemon lists it, `background` running; the panel stays shut. */
 const openBetweenTurns = async (snapshot: SessionSnapshot, background: number | undefined) => {
-  const script = fakeBridge({ connected: true, snapshot: () => snapshot });
-  script.bridge.sessions = async (locationId: string) => [
-    { ...summary("s1", locationId), ...(background === undefined ? {} : { background }) },
-  ];
-  await renderApp(script.bridge);
-  const user = userEvent.setup();
-  await user.click(await screen.findByRole("option", { name: /work/ }));
+  const app = await mountApp(
+    { snapshot: () => snapshot },
+    {
+      configure: (script) => {
+        script.bridge.sessions = async (locationId: string) => [
+          { ...summary("s1", locationId), ...(background === undefined ? {} : { background }) },
+        ];
+      },
+    },
+  );
+  await app.user.click(await screen.findByRole("option", { name: /work/ }));
   const log = await screen.findByRole("log", { name: "Conversation" });
-  return { script, user, log };
+  return { script: app.script, user: app.user, log };
 };
 
 test("between turns, what still runs in the background is said at the end of the conversation and opens the Overview", async () => {

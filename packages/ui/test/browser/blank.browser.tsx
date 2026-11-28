@@ -1,28 +1,30 @@
 // The blank page of a new session (CYCL-55): where it runs in one line above the box, the folders it already has
 // sessions in, and one state with one way on when something stands between it and its first message.
-import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
 import { fakeBridge, summary } from "../fake-bridge.ts";
 import { chosenFolder, openFolders } from "./blank.ts";
 import { boxText, press, ready, write } from "./box.ts";
+import { mountApp } from "./mount.tsx";
 import { renderApp } from "./render-app.tsx";
 
 afterEach(cleanup);
 
-const mount = async (configure?: (script: ReturnType<typeof fakeBridge>) => void) => {
-  const script = fakeBridge({ connected: true });
-  // Two folders with sessions on this computer: /work (newest) and /srv/api.
-  script.bridge.sessions = async (locationId: string) => [
-    summary("s1", locationId),
-    { ...summary("s3", locationId), cwd: "/srv/api", updatedAt: "2019-12-01T00:00:00.000Z" },
-  ];
-  configure?.(script);
-  const store = await renderApp(script.bridge);
-  const user = userEvent.setup();
-  const emit = (event: Parameters<typeof script.emit>[0]) => act(() => script.emit(event));
-  return { store, user, ...script, emit };
-};
+const mount = (configure?: (script: ReturnType<typeof fakeBridge>) => void) =>
+  mountApp(
+    {},
+    {
+      configure: (script) => {
+        // Two folders with sessions on this computer: /work (newest) and /srv/api.
+        script.bridge.sessions = async (locationId: string) => [
+          summary("s1", locationId),
+          { ...summary("s3", locationId), cwd: "/srv/api", updatedAt: "2019-12-01T00:00:00.000Z" },
+        ];
+        configure?.(script);
+      },
+    },
+  );
 
 const png = (name: string) =>
   new File([Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10])], name, { type: "image/png" });

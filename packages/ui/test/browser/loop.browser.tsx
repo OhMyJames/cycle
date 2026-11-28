@@ -12,6 +12,7 @@ import type {
 } from "../../src/api.ts";
 import { fakeBridge, summary } from "../fake-bridge.ts";
 import { openSettings } from "./account-menu.ts";
+import { type FakeOptions, mountLoop } from "./mount.tsx";
 import { renderApp } from "./render-app.tsx";
 
 afterEach(cleanup);
@@ -61,30 +62,16 @@ const withTickets = (tickets: Record<string, LoopTicket[]>): LoopBoardAnswer => 
   })),
 });
 
-const mount = async (script: NonNullable<Parameters<typeof fakeBridge>[0]>) => {
-  // `options` stays live: a test can change what the bridge answers later.
-  const options = {
-    connected: true,
-    workspaceRepos: { "/work": cycle.repo.displayName },
-    ...script,
-  };
-  const fake = fakeBridge(options);
-  const store = await renderApp(fake.bridge);
-  const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: "Loop" }));
-  return { user, options, store, ...fake };
-};
+const mount = (script: FakeOptions) =>
+  mountLoop({ workspaceRepos: { "/work": cycle.repo.displayName }, ...script });
 
 const openOverviewProject = async (user: ReturnType<typeof userEvent.setup>, name: string) => {
   const overview = await screen.findByRole("region", { name: "Projects" });
   await user.click(within(overview).getByRole("button", { name: new RegExp(`\\b${name}\\b`) }));
 };
 
-const mountBoard = async (script: NonNullable<Parameters<typeof fakeBridge>[0]>) => {
-  const mounted = await mount(script);
-  await mounted.user.click(await screen.findByRole("button", { name: "Kanban" }));
-  return mounted;
-};
+const mountBoard = (script: FakeOptions) =>
+  mountLoop({ workspaceRepos: { "/work": cycle.repo.displayName }, ...script }, "board");
 
 test("the Loop page shows a full-width board as a row of columns, with Done open at the end", async () => {
   const { user, calls } = await mount({
@@ -306,21 +293,22 @@ const openTicketDrawer = async (
   script: Parameters<typeof fakeBridge>[0] = {},
 ) => {
   const mine = ticket(700, chat === "new" ? "Backlog" : "In Progress");
-  const user = userEvent.setup();
-  const fake = fakeBridge({
-    connected: true,
-    loopProjects: { kind: "ok", projects: [cycle] },
-    workspaceRepos: { "/work": cycle.repo.displayName },
-    loopBoards: {
-      CYC: withTickets({
-        Backlog: chat === "new" ? [mine] : [],
-        "In Progress": chat === "new" ? [] : [mine],
-      }),
+  const fake = await mountLoop(
+    {
+      loopProjects: { kind: "ok", projects: [cycle] },
+      workspaceRepos: { "/work": cycle.repo.displayName },
+      loopBoards: {
+        CYC: withTickets({
+          Backlog: chat === "new" ? [mine] : [],
+          "In Progress": chat === "new" ? [] : [mine],
+        }),
+      },
+      loopTickets: { "CYC-700": detailOf(mine, { chat, acceptance: [] }) },
+      ...script,
     },
-    loopTickets: { "CYC-700": detailOf(mine, { chat, acceptance: [] }) },
-    ...script,
-  });
-  await renderApp(fake.bridge);
+    "none",
+  );
+  const { user } = fake;
   await user.click(await screen.findByRole("button", { name: "Kanban" }));
   await user.click(await screen.findByRole("button", { name: "Ticket 700" }));
   return { user, fake };
@@ -1106,49 +1094,54 @@ test("an older board read that lands last does not replace a newer one", async (
 });
 
 test("sidebar keeps New/Search/Connectors/Loop at top, shows Kanban and Timeline under matched workspace, and hides them on unmatched workspaces", async () => {
-  const user = userEvent.setup();
-  const fake = fakeBridge({
-    connected: true,
-    loopProjects: { kind: "ok", projects: [cycle, docs] },
-    loopBoards: { CYC: board, DOC: board },
-    loopTimelines: {
-      CYC: {
-        kind: "ok",
-        project: "CYC",
-        entries: [],
-        hasMore: false,
-        nextBefore: null,
-        knownSessionIds: [],
-      },
-      DOC: {
-        kind: "ok",
-        project: "DOC",
-        entries: [],
-        hasMore: false,
-        nextBefore: null,
-        knownSessionIds: [],
-      },
-    },
-    workspaceRepos: {
-      "/work/cycle-v1": "CLAWDOT/CYCLE",
-      "/work/plain": null,
-    },
-  });
-  fake.bridge.sessions = async () => [
+  const fake = await mountLoop(
     {
-      ...summary("s1"),
-      cwd: "/work/cycle-v1",
-      title: "Cycle chat",
-      updatedAt: "2020-01-03T00:00:00Z",
+      loopProjects: { kind: "ok", projects: [cycle, docs] },
+      loopBoards: { CYC: board, DOC: board },
+      loopTimelines: {
+        CYC: {
+          kind: "ok",
+          project: "CYC",
+          entries: [],
+          hasMore: false,
+          nextBefore: null,
+          knownSessionIds: [],
+        },
+        DOC: {
+          kind: "ok",
+          project: "DOC",
+          entries: [],
+          hasMore: false,
+          nextBefore: null,
+          knownSessionIds: [],
+        },
+      },
+      workspaceRepos: {
+        "/work/cycle-v1": "CLAWDOT/CYCLE",
+        "/work/plain": null,
+      },
     },
+    "none",
     {
-      ...summary("s2"),
-      cwd: "/work/plain",
-      title: "Plain chat",
-      updatedAt: "2020-01-02T00:00:00Z",
+      configure: (script) => {
+        script.bridge.sessions = async () => [
+          {
+            ...summary("s1"),
+            cwd: "/work/cycle-v1",
+            title: "Cycle chat",
+            updatedAt: "2020-01-03T00:00:00Z",
+          },
+          {
+            ...summary("s2"),
+            cwd: "/work/plain",
+            title: "Plain chat",
+            updatedAt: "2020-01-02T00:00:00Z",
+          },
+        ];
+      },
     },
-  ];
-  await renderApp(fake.bridge);
+  );
+  const { user } = fake;
 
   // Top global actions: New, Search, Connectors, Loop; no Sessions/Loop mode switch.
   expect(document.querySelector('[data-slot="mode-switch"]')).toBeNull();
@@ -1780,21 +1773,18 @@ test("a pending Backlog ticket can be returned from the drawer with an optional 
     ...ticket(705, "Backlog"),
     pending: { reason: "Needs approval" },
   };
-  const user = userEvent.setup();
-  const options = {
-    connected: true,
-    loopProjects: { kind: "ok" as const, projects: [cycle] },
-    workspaceRepos: { "/work": cycle.repo.displayName },
-    loopBoards: { CYC: withTickets({ Backlog: [mine] }) },
-    loopTickets: {
-      "CYC-705": detailOf(mine, { actions: ["approve", "return"] }),
+  const { user, options, ...fake } = await mountLoop(
+    {
+      loopProjects: { kind: "ok", projects: [cycle] },
+      workspaceRepos: { "/work": cycle.repo.displayName },
+      loopBoards: { CYC: withTickets({ Backlog: [mine] }) },
+      loopTickets: {
+        "CYC-705": detailOf(mine, { actions: ["approve", "return"] }),
+      },
+      loopAct: { kind: "failed", reason: "offline" },
     },
-    loopAct: { kind: "failed" as const, reason: "offline" as const } as
-      | { kind: "ok" }
-      | { kind: "failed"; reason: "offline" },
-  };
-  const fake = fakeBridge(options);
-  await renderApp(fake.bridge);
+    "none",
+  );
   await user.click(await screen.findByRole("button", { name: "Kanban" }));
   await user.click(await screen.findByRole("button", { name: "Ticket 705" }));
   const drawer = await screen.findByRole("complementary", { name: "CYC-705" });

@@ -4,6 +4,7 @@ import { userEvent } from "vitest/browser";
 import type { ConnectorInfo, LocationConfig } from "../../src/api.ts";
 import { fakeBridge } from "../fake-bridge.ts";
 import { findAlert } from "./alert.ts";
+import { mountApp } from "./mount.tsx";
 import { renderApp } from "./render-app.tsx";
 
 afterEach(cleanup);
@@ -29,8 +30,7 @@ const far: LocationConfig = {
 const mount = async (
   options: { connectors?: ConnectorInfo[]; capable?: boolean; locations?: LocationConfig[] } = {},
 ) => {
-  const script = fakeBridge({
-    connected: true,
+  const app = await mountApp({
     capabilities: {
       queue: true,
       files: true,
@@ -40,14 +40,12 @@ const mount = async (
     connectors: options.connectors ?? [],
     ...(options.locations !== undefined ? { locations: options.locations } : {}),
   });
-  const store = await renderApp(script.bridge);
-  const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: "Connectors" }));
+  await app.user.click(await screen.findByRole("button", { name: "Connectors" }));
   // The page opens on its first section, Plugins (plugins.browser.tsx): these are about the second.
-  await user.click(await screen.findByRole("tab", { name: "MCP servers" }));
+  await app.user.click(await screen.findByRole("tab", { name: "MCP servers" }));
   // The section that is shown: everything of the page that is not its navigation.
   const page = await screen.findByRole("tabpanel", { name: "MCP servers" });
-  return { user, page, store, ...script };
+  return { ...app, emit: app.script.emit, page };
 };
 /** What the page reported, without the change of section `mount` itself makes. */
 const tracked = (calls: [string, ...unknown[]][]) =>

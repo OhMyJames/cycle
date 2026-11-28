@@ -1,13 +1,12 @@
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
-import { userEvent } from "vitest/browser";
-import type { LocationConfig } from "../../src/api.ts";
-import { fakeBridge } from "../fake-bridge.ts";
+import type { userEvent } from "vitest/browser";
+import type { AppEvent, LocationConfig } from "../../src/api.ts";
 import { openSettings } from "./account-menu.ts";
 import { findAlert } from "./alert.ts";
 import { browseFolders, chooseLocation, chosenFolder, openFolders, typeFolder } from "./blank.ts";
 import { press, ready, sleep, write } from "./box.ts";
-import { renderApp } from "./render-app.tsx";
+import { mountApp } from "./mount.tsx";
 
 afterEach(cleanup);
 
@@ -22,22 +21,19 @@ const mount = async (
   states: Record<string, "connected" | "closed" | "reconnecting"> = {},
   capabilities?: { queue: boolean; files: boolean; folders: boolean },
 ) => {
-  const script = fakeBridge({
-    connected: true,
+  const app = await mountApp({
     locations: [far],
     states,
     ...(capabilities !== undefined ? { capabilities } : {}),
   });
-  const store = await renderApp(script.bridge);
-  const user = userEvent.setup();
   await screen.findAllByRole("option");
   // An event can start a read (the agents of a location that connected): wait for it inside act, or React warns.
-  const emit = (event: Parameters<typeof script.emit>[0]) =>
+  const emit = (event: AppEvent) =>
     act(async () => {
-      script.emit(event);
+      app.emit(event);
       await sleep(5);
     });
-  return { store, user, ...script, emit };
+  return { ...app, emit };
 };
 
 // A blank conversation starts its session by sending its first message.

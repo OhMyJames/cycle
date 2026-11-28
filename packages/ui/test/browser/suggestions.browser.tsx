@@ -1,15 +1,12 @@
 // What to say next (CYCL-225): the agent's suggestion stands in the empty message box in place of its usual words, →
 // or Tab makes it the message, typing hides it, and the next turn makes it stale.
 import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
-import { act, cleanup, screen, waitFor } from "@testing-library/react";
+import { cleanup, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
-import { userEvent } from "vitest/browser";
-import type { Preferences, SessionSnapshot } from "../../src/api.ts";
-import { applyUpdate, emptyConversation } from "../../src/model/index.ts";
-import { fakeBridge } from "../fake-bridge.ts";
+import type { Preferences } from "../../src/api.ts";
 import { openSettings } from "./account-menu.ts";
-import { boxText, ready, write } from "./box.ts";
-import { renderApp } from "./render-app.tsx";
+import { boxText, write } from "./box.ts";
+import { openSession } from "./mount.tsx";
 
 afterEach(() => {
   cleanup();
@@ -30,29 +27,13 @@ const turn = (suggestion?: string) => [
 ];
 
 const open = async (updates: SessionUpdate[], preferences: Partial<Preferences> = {}) => {
-  const snapshot = (): SessionSnapshot => ({
-    conversation: updates.reduce((c, x) => applyUpdate(c, x), emptyConversation()),
-    permissions: [],
-    version: updates.length,
-  });
-  const script = fakeBridge({ connected: true, snapshot, preferences });
-  const store = await renderApp(script.bridge);
-  const user = userEvent.setup();
-  await user.click(await screen.findByRole("option", { name: /work/ }));
-  const box = await screen.findByRole("textbox", { name: "Message" });
-  await ready(box);
-  let version = updates.length;
-  const emit = (update: SessionUpdate) => {
-    version += 1;
-    return act(() =>
-      script.emit({ type: "update", locationId: "local", sessionId: "s1", update, version }),
-    );
-  };
+  const opened = await openSession(updates, { box: true, fake: { preferences } });
   const tracked = () =>
-    script.calls
-      .filter(([name, event]) => name === "track" && event === "prompt_suggestion_accepted")
-      .map(([, , props]) => props);
-  return { ...script, user, box, emit, tracked, store };
+    opened
+      .tracked()
+      .filter(([event]) => event === "prompt_suggestion_accepted")
+      .map(([, props]) => props);
+  return { ...opened, tracked };
 };
 
 const placeholderOf = (box: HTMLElement) => box.getAttribute("aria-placeholder");

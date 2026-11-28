@@ -1,10 +1,9 @@
-import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
-import { userEvent } from "vitest/browser";
 import type { SessionSummary } from "../../src/api.ts";
 import { PER_WORKSPACE } from "../../src/sessions.ts";
-import { fakeBridge, summary } from "../fake-bridge.ts";
-import { renderApp } from "./render-app.tsx";
+import { summary } from "../fake-bridge.ts";
+import { mountApp } from "./mount.tsx";
 
 afterEach(cleanup);
 
@@ -16,13 +15,16 @@ const row = (id: string, over: Partial<SessionSummary>): SessionSummary => ({
 });
 
 const mount = async (sessions: SessionSummary[]) => {
-  const script = fakeBridge({ connected: true });
-  script.bridge.sessions = async () => sessions;
-  await renderApp(script.bridge);
-  const user = userEvent.setup();
+  const app = await mountApp(
+    {},
+    {
+      configure: (script) => {
+        script.bridge.sessions = async () => sessions;
+      },
+    },
+  );
   await screen.findAllByRole("option");
-  const emit = (event: Parameters<typeof script.emit>[0]) => act(() => script.emit(event));
-  return { user, ...script, emit };
+  return app;
 };
 
 const names = () => screen.getAllByRole("option").map((o) => o.textContent ?? "");

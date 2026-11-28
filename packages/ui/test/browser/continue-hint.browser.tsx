@@ -2,12 +2,8 @@
 import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
 import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
-import { userEvent } from "vitest/browser";
-import type { SessionSnapshot } from "../../src/api.ts";
-import { applyUpdate, emptyConversation } from "../../src/model/index.ts";
-import { fakeBridge } from "../fake-bridge.ts";
-import { boxText, ready } from "./box.ts";
-import { renderApp } from "./render-app.tsx";
+import { boxText } from "./box.ts";
+import { openSession } from "./mount.tsx";
 
 afterEach(() => {
   cleanup();
@@ -27,22 +23,10 @@ const open = async (
     u({ sessionUpdate: "state_update", state: "idle", stopReason: "end_turn" }),
     u({ sessionUpdate: "usage_update", used, size: 1_000_000 }),
   ];
-  const snapshot = (): SessionSnapshot => ({
-    conversation: updates.reduce((c, x) => applyUpdate(c, x), emptyConversation()),
-    permissions: [],
-    version: updates.length,
-  });
-  const script = fakeBridge({ connected: true, snapshot, capabilities });
-  const store = await renderApp(script.bridge);
-  const user = userEvent.setup();
-  await user.click(await screen.findByRole("option", { name: /work/ }));
-  const box = await screen.findByRole("textbox", { name: "Message" });
-  await ready(box);
+  const app = await openSession(updates, { box: true, fake: { capabilities } });
   const tracked = () =>
-    script.calls
-      .filter(([name, event]) => name === "track" && String(event).startsWith("continue_hint"))
-      .map(([, event, props]) => [event, props]);
-  return { ...script, user, box, store, tracked };
+    app.tracked().filter(([event]) => String(event).startsWith("continue_hint"));
+  return { ...app, tracked };
 };
 
 const hint = () => document.querySelector('[data-kind="continue"]');

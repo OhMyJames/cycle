@@ -1,11 +1,8 @@
 import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
-import { userEvent } from "vitest/browser";
-import type { SessionSnapshot, WorkspaceStatus } from "../../src/api.ts";
-import { applyUpdate, emptyConversation } from "../../src/model/index.ts";
-import { fakeBridge } from "../fake-bridge.ts";
-import { renderApp } from "./render-app.tsx";
+import type { WorkspaceStatus } from "../../src/api.ts";
+import { openSession } from "./mount.tsx";
 
 afterEach(() => {
   cleanup();
@@ -39,39 +36,28 @@ const mount = async (
     status?: () => Promise<WorkspaceStatus>;
   } = {},
 ) => {
-  const updates = options.updates ?? [];
-  const snapshot = (): SessionSnapshot => ({
-    conversation: updates.reduce((c, x) => applyUpdate(c, x), emptyConversation()),
-    permissions: [],
-    version: updates.length,
-  });
-  const script = fakeBridge({
-    connected: true,
-    snapshot,
-    capabilities: {
-      queue: true,
-      files: true,
-      folders: true,
-      fs: true,
-      diff: options.diff ?? false,
+  const app = await openSession(options.updates ?? [], {
+    fake: {
+      capabilities: {
+        queue: true,
+        files: true,
+        folders: true,
+        fs: true,
+        diff: options.diff ?? false,
+      },
+    },
+    configure: (script) => {
+      if (options.status !== undefined) script.bridge.workspaceStatus = options.status;
+      script.bridge.workspaceFile = async (_e, _s, path) => ({
+        path,
+        patch: `diff --git a/${path} b/${path}\n${PATCH}`,
+        truncated: false,
+        binary: false,
+      });
     },
   });
-  if (options.status !== undefined) script.bridge.workspaceStatus = options.status;
-  script.bridge.workspaceFile = async (_e, _s, path) => ({
-    path,
-    patch: `diff --git a/${path} b/${path}\n${PATCH}`,
-    truncated: false,
-    binary: false,
-  });
-  const store = await renderApp(script.bridge);
-  const user = userEvent.setup();
-  await user.click(await screen.findByRole("option", { name: /work/ }));
-  await screen.findByRole("log", { name: "Conversation" });
-  const tracked = () =>
-    script.calls
-      .filter(([name, event]) => name === "track" && String(event).startsWith("diff"))
-      .map(([, event, props]) => [event, props]);
-  return { store, user, script, tracked };
+  const tracked = () => app.tracked().filter(([event]) => String(event).startsWith("diff"));
+  return { ...app, tracked };
 };
 
 const panel = () => document.querySelector('[data-slot="side-panel"]') as HTMLElement;
