@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
+import { META, ToolResultSchema } from "@cycle/protocol";
 import { applyUpdate, emptyConversation } from "../../../packages/ui/src/model/index.ts";
 import { StepsPlans, toV2ToolCallUpdate, translateSimpleUpdate } from "../src/translate.ts";
 import type { V1SessionUpdate, V1ToolCallPayload } from "../src/v1.ts";
@@ -200,4 +201,50 @@ test("update_steps is agy's plan: its calls are marked, and the finished one rep
       "s-plan",
     ),
   ).toEqual({ plan: false });
+});
+
+describe("read-file result numbers (rawOutput shape unverified)", () => {
+  const read = (status: string | undefined, rawOutput: unknown) =>
+    toV2ToolCallUpdate(
+      { toolCallId: "r1", name: "read_file", kind: "read", status, rawOutput } as V1ToolCallPayload,
+      false,
+    ) as { _meta?: Record<string, unknown>; rawOutput?: unknown };
+
+  test("a completed read with a range fills read, without content", () => {
+    const u = read("completed", { start_line: 5, num_lines: 20, content: "secret" });
+    const meta = u._meta?.[META.toolResult];
+    expect(meta).toEqual({ read: { startLine: 5, numLines: 20 } });
+    expect(() => ToolResultSchema.parse(meta)).not.toThrow();
+  });
+
+  test("totalLines is added only when given", () => {
+    const u = read("completed", { start_line: 1, num_lines: 10, total_lines: 99 });
+    const meta = u._meta?.[META.toolResult];
+    expect(meta).toEqual({ read: { startLine: 1, numLines: 10, totalLines: 99 } });
+    expect(() => ToolResultSchema.parse(meta)).not.toThrow();
+  });
+
+  test("missing or invalid numbers fill nothing and keep the rest", () => {
+    for (const raw of [
+      undefined,
+      "text",
+      {},
+      { start_line: 1 },
+      { start_line: "1", num_lines: 2 },
+      { start_line: 1.5, num_lines: 2 },
+      { start_line: -1, num_lines: 2 },
+    ]) {
+      const u = read("completed", raw);
+      expect(u._meta).toBeUndefined();
+      expect(u.rawOutput).toEqual(raw);
+    }
+    const bad = read("completed", { start_line: 1, num_lines: 2, total_lines: -3 });
+    expect(bad._meta?.[META.toolResult]).toEqual({ read: { startLine: 1, numLines: 2 } });
+  });
+
+  test("failed or unfinished reads fill nothing", () => {
+    for (const status of ["failed", "in_progress", "pending", undefined]) {
+      expect(read(status, { start_line: 1, num_lines: 2 })._meta).toBeUndefined();
+    }
+  });
 });

@@ -263,6 +263,24 @@ const toolResultMeta = (
   ) {
     return { [META.toolResult]: { run: { exitCode: raw.exit_code } } };
   }
+  if (payload.kind === "read" && payload.status === "completed" && raw) {
+    // UNVERIFIED shape: no real agy read-file output is captured in this repo (fixtures only have
+    // the command's `{ output, exit_code }`). Assumed, by analogy with `exit_code`:
+    // `rawOutput: { start_line, num_lines, total_lines? }`. Numbers only, never file content.
+    const isCount = (v: unknown): v is number =>
+      typeof v === "number" && Number.isInteger(v) && v >= 0;
+    if (isCount(raw.start_line) && isCount(raw.num_lines)) {
+      return {
+        [META.toolResult]: {
+          read: {
+            startLine: raw.start_line,
+            numLines: raw.num_lines,
+            ...(isCount(raw.total_lines) ? { totalLines: raw.total_lines } : {}),
+          },
+        },
+      };
+    }
+  }
   if (editStats) {
     return {
       [META.toolResult]: {
