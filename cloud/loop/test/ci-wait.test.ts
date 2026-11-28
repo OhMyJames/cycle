@@ -62,6 +62,7 @@ const setup = (
   const stop = { value: false };
   let now = new Date("2026-11-28T00:00:00Z");
   const sleeps = { count: 0 };
+  const logs: string[] = [];
   const clock = { now: () => now };
   const store = SqliteStore.open(cfg.stateDir, () => now);
   const exec = makeExec(world);
@@ -74,7 +75,9 @@ const setup = (
       exec,
       store,
       clock,
-      log: () => {},
+      log: (line: string) => {
+        logs.push(line);
+      },
       env,
       sleep: async () => {
         sleeps.count++;
@@ -103,7 +106,7 @@ const setup = (
   const advance = (ms: number) => {
     now = new Date(now.getTime() + ms);
   };
-  return { engine, tracker, sessions, store, stop, advance, world, sleeps };
+  return { engine, tracker, sessions, store, stop, advance, world, sleeps, logs };
 };
 
 const ready = (over: Partial<Issue> = {}) => issue({ description: readyDescription, ...over });
@@ -361,4 +364,104 @@ test("a person closing the PR while the run waits stops it at the next wake inst
   const result = await s.engine.step();
   expect(result.status).toBe("blocked");
   expect(s.store.waits("CYC-1")).toHaveLength(0);
+});
+
+const red = (job: string): CiResponse => ({
+  headRefOid: "abc",
+  statusCheckRollup: [
+    { name: "check", status: "COMPLETED", conclusion: "SUCCESS" },
+    { name: "browser", status: "COMPLETED", conclusion: "SUCCESS" },
+    {
+      name: "integration",
+      status: "COMPLETED",
+      conclusion: "FAILURE",
+      detailsUrl: `https://github.com/o/r/actions/runs/20/job/${job}`,
+    },
+  ],
+});
+
+const isWoken = (s: ReturnType<typeof setup>) =>
+  s.store.waits("CYC-1").some((w) => w.wokenAt !== null);
+
+/** A run waiting on `pending`, then the CI the checker reads next. */
+const waitingWith = async (next: CiResponse[], over: Parameters<typeof config>[0] = {}) => {
+  const s = setup([ready()], undefined, [pending, ...next], { ciPollIntervalMs: 1000, ...over });
+  expect((await s.engine.step()).status).toBe("waiting");
+  s.advance(2000);
+  return s;
+};
+
+test("the checker signals a run whose CI passed", async () => {
+  const s = await waitingWith([greenCi("abc")]);
+  await s.engine.watch();
+  expect(isWoken(s)).toBe(true);
+  // the checker moved nothing
+  expect((await s.store.load("CYC-1"))?.phase).toBe("ci");
+});
+
+test("the checker signals a failed run, and a second look at the same wait signals nothing new", async () => {
+  const s = await waitingWith([red("1"), red("1")]);
+  await s.engine.watch();
+  expect(isWoken(s)).toBe(true);
+  expect(s.world.calls.filter((c) => c.includes("gh run rerun"))).toHaveLength(0);
+  expect(s.world.calls.filter((c) => c.includes("gh run view"))).toHaveLength(0);
+});
+
+test("the checker does not count the old attempt just rerun as red", async () => {
+  const s = setup(
+    [ready()],
+    undefined,
+    [red("777"), red("777"), red("777"), red("777"), red("777")],
+    {
+      ciPollIntervalMs: 1000,
+    },
+  );
+  expect((await s.engine.step()).status).toBe("waiting");
+  s.advance(1000);
+  wakeRun(s);
+  expect((await s.engine.step()).status).toBe("waiting");
+  s.advance(2000);
+  await s.engine.watch();
+  expect(isWoken(s)).toBe(false);
+});
+
+test("the checker signals a PR that conflicts with its base", async () => {
+  const s = await waitingWith([pending]);
+  s.world.prMerge = [["OPEN", "CONFLICTING"]];
+  await s.engine.watch();
+  expect(isWoken(s)).toBe(true);
+});
+
+test("the checker leaves a run whose CI is still running", async () => {
+  const s = await waitingWith([pending]);
+  await s.engine.watch();
+  expect(isWoken(s)).toBe(false);
+});
+
+test("the checker is throttled to ciPollIntervalMs", async () => {
+  const s = await waitingWith([pending, greenCi("abc")]);
+  await s.engine.watch();
+  expect(isWoken(s)).toBe(false);
+  s.advance(500);
+  await s.engine.watch();
+  expect(isWoken(s)).toBe(false);
+  s.advance(600);
+  await s.engine.watch();
+  expect(isWoken(s)).toBe(true);
+});
+
+test("the checker does nothing in dry-run", async () => {
+  const s = await waitingWith([greenCi("abc")], {});
+  const dry = setup([ready()], undefined, [greenCi("abc")], { dryRun: true });
+  await dry.engine.watch();
+  expect(dry.world.calls.filter((c) => c.includes("gh pr view"))).toHaveLength(0);
+  expect(isWoken(s)).toBe(false);
+});
+
+test("a failed read is only logged, and signals nothing", async () => {
+  const s = await waitingWith([]);
+  s.world.fail.add("gh pr view");
+  await s.engine.watch();
+  expect(isWoken(s)).toBe(false);
+  expect(s.logs.some((l) => l.includes("ci watch"))).toBe(true);
 });
