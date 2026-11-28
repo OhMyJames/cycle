@@ -298,3 +298,63 @@ describe("reply", () => {
     expect(computeStats(await store.events()).operatorWakes).toBe(1);
   });
 });
+
+describe("scheduled inspection", () => {
+  const at = (minutes: number) => {
+    clock = new Date(clock.getTime() + minutes * 60_000);
+  };
+
+  test("by default it inspects once 60 minutes have passed since start, with stats in the prompt", async () => {
+    setup(["<diagnosis>返工率升高</diagnosis>"]);
+    at(59);
+    expect(await operator.tick()).toBe(false);
+    at(2);
+    expect(await operator.tick()).toBe(true);
+    expect(sessions.prompts[0]?.prompt).toContain("scheduled inspection");
+    expect(sessions.prompts[0]?.prompt).toContain("rework rate");
+    expect(operatorNotices()).toHaveLength(1);
+    expect(await events("operator_inspected")).toHaveLength(1);
+    // The inspection is a wake: the next one is an interval later.
+    at(30);
+    expect(await operator.tick()).toBe(false);
+  });
+
+  test("the configured interval applies", async () => {
+    setup(["<diagnosis>d</diagnosis>"], {
+      operator: { blockedThreshold: 3, inspectIntervalMinutes: 15 },
+    });
+    at(16);
+    expect(await operator.tick()).toBe(true);
+  });
+
+  test("a wake for another reason resets the interval", async () => {
+    setup(["<diagnosis>a</diagnosis>", "<diagnosis>b</diagnosis>"]);
+    await store.save(run("CYC-1"));
+    at(50);
+    stuck("CYC-1");
+    expect(await operator.tick()).toBe(true);
+    at(30); // 80 minutes since start, 30 since the wake
+    expect(await operator.tick()).toBe(false);
+    at(31);
+    expect(await operator.tick()).toBe(true);
+    expect(sessions.prompts[1]?.prompt).toContain("scheduled inspection");
+  });
+
+  test("it does not inspect while a session is running", async () => {
+    setup(["<diagnosis>a</diagnosis>"]);
+    at(61);
+    const first = operator.tick();
+    expect(await operator.tick()).toBe(false);
+    expect(await first).toBe(true);
+    expect(sessions.created).toHaveLength(1);
+  });
+
+  test("with nothing found it writes no Notice, only an operator_inspected event", async () => {
+    setup(["<diagnosis></diagnosis>"]);
+    at(61);
+    expect(await operator.tick()).toBe(true);
+    expect(operatorNotices()).toHaveLength(0);
+    expect(await events("operator_inspected")).toHaveLength(1);
+    expect(await events("operator_failed")).toHaveLength(0);
+  });
+});

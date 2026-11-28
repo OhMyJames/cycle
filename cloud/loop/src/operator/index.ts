@@ -7,6 +7,7 @@ import type { LoopApiHandler, ProjectApi } from "../api.ts";
 import { SqliteStore } from "../db/store.ts";
 import { parseOperatorReply } from "../parse/blocks.ts";
 import { type OperatorWake, operatorBrief } from "../prompts/operator.ts";
+import { computeStats } from "../stats.ts";
 import type { Config, Sessions } from "../types.ts";
 import { exportDirOf, writeExport } from "./export.ts";
 
@@ -28,6 +29,8 @@ export type OperatorDeps = {
 
 type Wake = { wake: OperatorWake; ref: string; runKeys: string[] };
 
+const MINUTE_MS = 60_000;
+
 export class Operator {
   readonly #d: OperatorDeps;
   #running = false;
@@ -36,9 +39,12 @@ export class Operator {
   #handled: Set<string> | null = null;
   /** The Blocked keys of the last Blocked wake: a wake needs one that is not among them. */
   #lastBlocked = new Set<string>();
+  /** When the operator was last woken, for any reason; before any wake, when this loop started. */
+  #lastWakeMs: number;
 
   constructor(deps: OperatorDeps) {
     this.#d = deps;
+    this.#lastWakeMs = deps.now().getTime();
   }
 
   get #store(): SqliteStore | null {
@@ -69,6 +75,8 @@ export class Operator {
     const handled = new Set<string>();
     for (const e of await store.events()) {
       if (e.kind !== "operator_woken") continue;
+      const at = Date.parse(e.ts);
+      if (Number.isFinite(at)) this.#lastWakeMs = Math.max(this.#lastWakeMs, at);
       const { reason, ref, keys } = e as unknown as Record<string, unknown>;
       if (typeof reason === "string" && typeof ref === "string") handled.add(`${reason}:${ref}`);
       if (reason === "blocked" && typeof keys === "string")
@@ -101,14 +109,28 @@ export class Operator {
     if (blocked.length < this.#d.config.operator.blockedThreshold) {
       // Below the line again: the next pile-up is a new cause.
       this.#lastBlocked = new Set();
-      return null;
+      return await this.#inspection(store);
     }
     // The same pile does not wake it twice; a Blocked ticket that was not in the last one does.
-    if (blocked.every((k) => this.#lastBlocked.has(k))) return null;
+    if (blocked.every((k) => this.#lastBlocked.has(k))) return await this.#inspection(store);
     return {
       wake: { reason: "blocked", keys: blocked },
       ref: blocked.join(","),
       runKeys: blocked,
+    };
+  }
+
+  /** A scheduled inspection, when a whole interval has passed since the operator was last woken, for any reason. */
+  async #inspection(store: SqliteStore): Promise<Wake | null> {
+    const nowMs = this.#d.now().getTime();
+    const minutes = this.#d.config.operator.inspectIntervalMinutes;
+    if (nowMs - this.#lastWakeMs < minutes * MINUTE_MS) return null;
+    const since = nowMs - minutes * MINUTE_MS;
+    const recent = (await store.events()).filter((e) => Date.parse(e.ts) >= since);
+    return {
+      wake: { reason: "inspect", sinceMinutes: minutes, stats: computeStats(recent) },
+      ref: new Date(nowMs).toISOString(),
+      runKeys: [],
     };
   }
 
@@ -118,6 +140,7 @@ export class Operator {
     const reason = found.wake.reason;
     // Recorded before the session: a crash or a failed session must not wake it again for the same cause.
     (await this.#handledSet(store)).add(`${reason}:${found.ref}`);
+    this.#lastWakeMs = now().getTime();
     if (found.wake.reason === "blocked") this.#lastBlocked = new Set(found.wake.keys);
     await store.event("operator", "operator_woken", {
       reason,
@@ -165,10 +188,17 @@ export class Operator {
       }
       const reply = parseOperatorReply(result.text);
       if (reply.actionIgnored) await store.event("operator", "operator_action_ignored", { reason });
+      if (reply.diagnosis === null && reason === "inspect" && result.text.includes("<diagnosis")) {
+        // Nothing found: no Notice, only the event.
+        await store.event("operator", "operator_inspected", { found: false });
+        return;
+      }
       if (reply.diagnosis === null) {
         await store.event("operator", "operator_failed", { reason, stop: "no_diagnosis" });
         return;
       }
+      if (reason === "inspect")
+        await store.event("operator", "operator_inspected", { found: true });
       store.notice(
         project.projectKey,
         "operator",
