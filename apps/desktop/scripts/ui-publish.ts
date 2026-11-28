@@ -3,10 +3,11 @@
 //
 //  - the archive goes up first, then the signature, then the manifest: the manifest is what an app reads to find the rest,
 //    so it is the last thing to change;
-//  - a bundle that is not newer than the one published for the same shell is not published (a run that waited its turn
-//    for a newer commit's run must not put its older page over it);
-//  - what is removed is the older archives of a shell (three are kept), and the bundles of a shell no recent release was
-//    built with and that nobody has published for a week.
+//  - a bundle that is not newer than the one published for the same contract major is not published (a run that waited
+//    its turn for a newer commit's run must not put its older page over it);
+//  - what is removed is the older archives of a line (three are kept), and the bundles of a line no recent release was
+//    built with and that nobody has published for a week. A line is a contract major (`ui-c<major>…`), or, for the
+//    apps before CYC-539, the hash of a shell (`ui-<hash>…`), to which nothing is published any more.
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { RELEASE_REPO } from "../src/shared/release.ts";
@@ -19,40 +20,48 @@ import {
 import { UI_OUT_DIR } from "./ui-package.ts";
 
 export const KEEP_ARCHIVES = 3;
-export const KEEP_UNUSED_SHELL_MS = 7 * 24 * 3600 * 1000;
+export const KEEP_UNUSED_LINE_MS = 7 * 24 * 3600 * 1000;
 
 export type Asset = { name: string; updatedAt: string };
 
-const NAME = /^ui-([0-9a-f]{32})(?:\.json|\.json\.sig|-(\d+)\.zip)$/;
+const NAME = /^ui-([0-9a-f]{32}|c\d+)(?:\.json|\.json\.sig|-(\d+)\.zip)$/;
+
+/** The line of the apps of a release, from what its manifest says (release-assets.ts). */
+export const lineOfRelease = (info: { contract?: unknown; shell?: unknown }): string | undefined =>
+  typeof info.contract === "number"
+    ? `c${info.contract}`
+    : typeof info.shell === "string"
+      ? info.shell
+      : undefined;
 
 /** The names of the assets to remove: see the top of this file. */
 export const assetsToDelete = (
   assets: readonly Asset[],
-  options: { keepShells: ReadonlySet<string>; now: number },
+  options: { keepLines: ReadonlySet<string>; now: number },
 ): string[] => {
-  const byShell = new Map<
+  const byLine = new Map<
     string,
     { name: string; updatedAt: number; version?: number; manifest: boolean }[]
   >();
   for (const asset of assets) {
     const match = NAME.exec(asset.name);
     if (match === null) continue;
-    const shell = match[1] as string;
-    const list = byShell.get(shell) ?? [];
+    const line = match[1] as string;
+    const list = byLine.get(line) ?? [];
     list.push({
       name: asset.name,
       updatedAt: Date.parse(asset.updatedAt),
       manifest: asset.name.endsWith(".json"),
       ...(match[2] !== undefined ? { version: Number(match[2]) } : {}),
     });
-    byShell.set(shell, list);
+    byLine.set(line, list);
   }
   const doomed: string[] = [];
-  for (const [shell, list] of byShell) {
+  for (const [line, list] of byLine) {
     const manifest = list.find((a) => a.manifest);
     const unused =
-      !options.keepShells.has(shell) &&
-      (manifest === undefined || options.now - manifest.updatedAt > KEEP_UNUSED_SHELL_MS);
+      !options.keepLines.has(line) &&
+      (manifest === undefined || options.now - manifest.updatedAt > KEEP_UNUSED_LINE_MS);
     if (unused) {
       doomed.push(...list.map((a) => a.name));
       continue;
@@ -83,7 +92,7 @@ export const publish = async (options: {
     await readFile(join(outDir, (await findManifestName(outDir)) as string)),
   );
   if (made === undefined) throw new Error("The manifest to publish is not valid.");
-  const { shell, uiVersion } = made;
+  const { contract, uiVersion } = made;
 
   // A pre-release, and not the latest: it is not an app, and must not be what the repository shows as one.
   await gh(["release", "view", tag, "--repo", repo]).catch(() =>
@@ -111,7 +120,7 @@ export const publish = async (options: {
     "--repo",
     repo,
     "-p",
-    uiManifestName(shell),
+    uiManifestName(contract),
     "-O",
     "-",
   ])
@@ -119,16 +128,16 @@ export const publish = async (options: {
     .catch(() => -1);
   if (published >= uiVersion) {
     log(
-      `Interface ${published} is already published for shell ${shell}; not publishing ${uiVersion}.`,
+      `Interface ${published} is already published for contract ${contract}; not publishing ${uiVersion}.`,
     );
     return { published: false, deleted: [] };
   }
-  for (const file of [made.file, uiSignatureName(shell), uiManifestName(shell)])
+  for (const file of [made.file, uiSignatureName(contract), uiManifestName(contract)])
     await gh(["release", "upload", tag, join(outDir, file), "--repo", repo, "--clobber"]);
-  log(`Published interface ${uiVersion} for shell ${shell}.`);
+  log(`Published interface ${uiVersion} for contract ${contract}.`);
 
-  // The shells of the last three releases are in use by someone.
-  const keep = new Set([shell]);
+  // The lines of the last three releases are in use by someone.
+  const keep = new Set([`c${contract}`]);
   const releases = JSON.parse(
     await gh([
       "release",
@@ -156,8 +165,8 @@ export const publish = async (options: {
       "-",
     ]).catch(() => "");
     try {
-      const value = (JSON.parse(text) as { shell?: unknown }).shell;
-      if (typeof value === "string") keep.add(value);
+      const line = lineOfRelease(JSON.parse(text) as { contract?: unknown; shell?: unknown });
+      if (line !== undefined) keep.add(line);
     } catch {}
   }
   const assets = (
@@ -165,7 +174,7 @@ export const publish = async (options: {
       assets: Asset[];
     }
   ).assets;
-  const deleted = assetsToDelete(assets, { keepShells: keep, now: options.now });
+  const deleted = assetsToDelete(assets, { keepLines: keep, now: options.now });
   for (const name of deleted)
     await gh(["release", "delete-asset", tag, name, "--repo", repo, "--yes"]);
   if (deleted.length > 0) log(`Removed ${deleted.join(", ")}.`);
@@ -174,7 +183,7 @@ export const publish = async (options: {
 
 const findManifestName = async (outDir: string): Promise<string | undefined> => {
   const { readdir } = await import("node:fs/promises");
-  return (await readdir(outDir)).find((n) => /^ui-[0-9a-f]{32}\.json$/.test(n));
+  return (await readdir(outDir)).find((n) => /^ui-c\d+\.json$/.test(n));
 };
 
 if (import.meta.main) {

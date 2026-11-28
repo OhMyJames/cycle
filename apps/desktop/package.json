@@ -14,6 +14,7 @@
     "react-dom": "19.3.1"
   },
   "devDependencies": {
+    "@agentclientprotocol/sdk": "catalog:",
     "@cycle/daemon": "workspace:*",
     "@electron/notarize": "3.1.2",
     "@electron/osx-sign": "2.7.2",
@@ -29,6 +30,7 @@
     "package": "bun scripts/package.ts",
     "ui-package": "bun scripts/ui-package.ts",
     "ui-publish": "bun scripts/ui-publish.ts",
+    "ui-contract": "bun scripts/ui-contract.ts",
     "sign": "bun scripts/sign.ts",
     "release-assets": "bun scripts/release-assets.ts",
     "start": "bun scripts/start.ts",

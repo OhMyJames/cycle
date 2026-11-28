@@ -116,19 +116,17 @@ export function UpdateNotice() {
 
 /**
  * A newer page is on this computer: it shows after a reload (the page loads again, the sessions stay) or the next start.
- * Not shown while the whole app has an update to install: that one carries the newest page too.
+ * Not shown while the whole app is being replaced (the person chose to): the new app carries its own page. An update that
+ * is only available may wait for days, and the page of this app's contract keeps coming meanwhile.
  */
 export function InterfaceNotice() {
   const store = useAppStore();
   const { t } = useI18n();
   const ready = useAppState((s) => s.interface?.ready);
-  const wholeAppWaiting = useAppState(
-    (s) =>
-      s.update?.kind === "available" ||
-      s.update?.kind === "downloading" ||
-      s.update?.kind === "installing",
+  const replacing = useAppState(
+    (s) => s.update?.kind === "downloading" || s.update?.kind === "installing",
   );
-  if (ready === undefined || wholeAppWaiting) return null;
+  if (ready === undefined || replacing) return null;
   return (
     <AppNotice
       tone="info"

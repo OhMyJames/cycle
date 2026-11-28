@@ -2,8 +2,8 @@
 # signed, so that an installed app can take it without a new version (docs/desktop.md, "Interface updates").
 #
 # The signing key is a secret of the environment `ui-release`, which only main may use (a rule of the environment), and
-# only the step that signs sees it. The job runs on the same kind of runner the release builds on: the page is for the
-# shell (main, preload) that was built there, and the hash of that has to come out the same on both.
+# only the step that signs sees it. A bundle is for the apps of the contract major it was built with
+# (apps/desktop/src/shared/contract.ts).
 name: ui-release
 
 on:

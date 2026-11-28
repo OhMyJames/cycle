@@ -1,4 +1,4 @@
-// Takes the newest interface bundle for this shell from the repository's `ui-latest` release: the manifest and its
+// Takes the newest interface bundle for this app's contract major from the repository's `ui-latest` release: the manifest and its
 // signature first, then the archive, and only what checks out at every step is installed (ui-store.ts). Everything that
 // goes wrong is quiet: the bundle in use stays, and the next check tries again.
 import { rm, writeFile } from "node:fs/promises";
@@ -26,8 +26,8 @@ export type UiUpdateState = {
 
 export type UiUpdaterDeps = {
   store: UiStore;
-  /** This app's shell (build.json), and so which bundles it may take. */
-  shell: string | undefined;
+  /** This app's contract major (build.json), and so which bundles it may take. */
+  contract: number;
   /** Whether any public key is built into the app. */
   hasKeys: boolean;
   verify: (bytes: Uint8Array, signature: string, keyId: string) => boolean;
@@ -39,7 +39,7 @@ export type UiUpdaterDeps = {
   extract: (zip: string, into: string) => Promise<void>;
   /** The version of the page the app was built with. */
   bundledVersion: number;
-  /** True while a whole-app update is waiting: it carries the newest page, so a bundle is not taken meanwhile. */
+  /** True while the app is being replaced: the new app carries its own page, so a bundle is not taken meanwhile. */
   holdOff?: () => boolean;
   emit: (state: UiUpdateState) => void;
   log?: (message: string) => void;
@@ -56,11 +56,7 @@ export class UiUpdater {
 
   constructor(deps: UiUpdaterDeps) {
     this.#d = deps;
-    const disabled = !deps.hasKeys
-      ? "This build takes no interface updates."
-      : deps.shell === undefined
-        ? "This is not an installed app."
-        : undefined;
+    const disabled = !deps.hasKeys ? "This build takes no interface updates." : undefined;
     this.#state = disabled !== undefined ? { disabled } : {};
   }
 
@@ -98,8 +94,8 @@ export class UiUpdater {
   }
 
   async check(): Promise<UiUpdateState> {
-    const { shell } = this.#d;
-    if (this.#state.disabled !== undefined || shell === undefined || this.#busy) return this.#state;
+    const { contract } = this.#d;
+    if (this.#state.disabled !== undefined || this.#busy) return this.#state;
     if (this.#d.holdOff?.() === true) return this.#state;
     this.#busy = true;
     const keep = (error?: string): UiUpdateState => {
@@ -114,7 +110,7 @@ export class UiUpdater {
         this.#d.baseUrl ??
         `https://github.com/${this.#d.repo}/releases/download/${UI_RELEASE_TAG}/`;
       const manifestResponse = await this.#get(
-        `${base}${uiManifestName(shell)}`,
+        `${base}${uiManifestName(contract)}`,
         this.#etag !== undefined ? { "If-None-Match": this.#etag } : {},
         SMALL_DEADLINE_MS,
       );
@@ -124,7 +120,7 @@ export class UiUpdater {
       const etag = manifestResponse.headers.get("etag") ?? undefined;
       const manifestBytes = new Uint8Array(await manifestResponse.arrayBuffer());
       const sigResponse = await this.#get(
-        `${base}${uiSignatureName(shell)}`,
+        `${base}${uiSignatureName(contract)}`,
         {},
         SMALL_DEADLINE_MS,
       );
@@ -142,7 +138,8 @@ export class UiUpdater {
       if (manifest === undefined) return settled("The interface manifest is not valid.");
       if (!this.#d.verify(manifestBytes, signature, manifest.keyId))
         return settled("The interface manifest's signature does not hold.");
-      if (manifest.shell !== shell) return settled("The interface bundle is for another shell.");
+      if (manifest.contract !== contract)
+        return settled("The interface bundle is for another contract major.");
       const known = await this.#d.store.readState();
       if (manifest.uiVersion <= Math.max(known.floor, this.#d.bundledVersion)) {
         this.#etag = etag;

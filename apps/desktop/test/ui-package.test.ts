@@ -8,7 +8,7 @@ import { verifySignature } from "../src/main/ui-crypto.ts";
 import { createUiStore, MANIFEST_FILE, SIGNATURE_FILE } from "../src/main/ui-store.ts";
 import { parseManifest } from "../src/shared/ui-bundle.ts";
 
-const SHELL = "a".repeat(32);
+const CONTRACT = 2;
 let dir: string;
 let renderer: string;
 beforeEach(async () => {
@@ -36,7 +36,7 @@ const fakeZip = async (_dir: string, archive: string) =>
 test("the manifest lists every file of the page with its hash, and names the archive made", async () => {
   const made = await makeUiBundle({
     rendererDir: renderer,
-    shell: SHELL,
+    contract: CONTRACT,
     uiVersion: 321,
     keyId: "k1",
     outDir: join(dir, "out"),
@@ -49,16 +49,16 @@ test("the manifest lists every file of the page with its hash, and names the arc
     "renderer.js",
   ]);
   expect(made.manifest).toMatchObject({
-    shell: SHELL,
+    contract: CONTRACT,
     uiVersion: 321,
-    file: `ui-${SHELL}-321.zip`,
+    file: `ui-c${CONTRACT}-321.zip`,
     size: 9,
   });
   expect(parseManifest(await readFile(made.manifestFile))).toEqual(made.manifest);
   expect(made.signatureFile).toBeUndefined();
   expect((await readdir(join(dir, "out"))).sort()).toEqual([
-    `ui-${SHELL}-321.zip`,
-    `ui-${SHELL}.json`,
+    `ui-c${CONTRACT}-321.zip`,
+    `ui-c${CONTRACT}.json`,
   ]);
 });
 
@@ -69,7 +69,7 @@ test("with a key the signature holds for the manifest's bytes, in the PEM form a
   ]) {
     const made = await makeUiBundle({
       rendererDir: renderer,
-      shell: SHELL,
+      contract: CONTRACT,
       uiVersion: 321,
       keyId: "k1",
       outDir: join(dir, "out"),
@@ -85,7 +85,7 @@ test("with a key the signature holds for the manifest's bytes, in the PEM form a
 test("a signature is accepted only for the key built in under the id, not for another key, an unknown id or no keys", async () => {
   const made = await makeUiBundle({
     rendererDir: renderer,
-    shell: SHELL,
+    contract: CONTRACT,
     uiVersion: 321,
     keyId: "k1",
     outDir: join(dir, "out"),
@@ -101,7 +101,7 @@ test("a signature is accepted only for the key built in under the id, not for an
   expect(await signatureHolds(made, {})).toBe(false);
   const unsigned = await makeUiBundle({
     rendererDir: renderer,
-    shell: SHELL,
+    contract: CONTRACT,
     uiVersion: 321,
     keyId: "k1",
     outDir: join(dir, "out2"),
@@ -119,7 +119,7 @@ test.skipIf(process.platform !== "darwin")(
     };
     const made = await makeUiBundle({
       rendererDir: renderer,
-      shell: SHELL,
+      contract: CONTRACT,
       uiVersion: 321,
       keyId: "k1",
       outDir: join(dir, "out"),
@@ -130,6 +130,7 @@ test.skipIf(process.platform !== "darwin")(
     const store = createUiStore({
       root: join(dir, "ui"),
       bundledVersion: 0,
+      contract: CONTRACT,
       verify: (b, s, id) => verifySignature(b, s, id, { k1: spki }),
     });
     const staging = await store.newStaging(321);

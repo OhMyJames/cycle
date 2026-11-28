@@ -8,6 +8,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { posthogSink } from "@cycle/analytics/posthog";
 import { app, safeStorage } from "electron";
+import { CONTRACT_MAJOR } from "../shared/contract.ts";
 import { POSTHOG_HOST } from "../shared/posthog.ts";
 import { RELEASE_REPO } from "../shared/release.ts";
 import { ssoClientFor } from "./account.ts";
@@ -24,7 +25,7 @@ import { localHome } from "./home.ts";
 import { BUILD_FILE, bundledDaemonDir, daemonCommand, loginShellPath } from "./layout.ts";
 import { filePreferencesStore } from "./preferences.ts";
 import { stopRefusal } from "./stop-refused.ts";
-import { shellOfBuild, verifySignature } from "./ui-crypto.ts";
+import { verifySignature } from "./ui-crypto.ts";
 import { UI_KEYS } from "./ui-keys.ts";
 import { createUiStore } from "./ui-store.ts";
 import { SWAP_SCRIPT, verifySameTeam } from "./updater.ts";
@@ -167,29 +168,20 @@ const main = async () => {
       chatCwd: join(dataHome ?? join(homedir(), ".cycle"), "ticket-chat"),
     },
     update: updateDeps(daemon, localEnv, dataRoot),
-    interface: interfaceOptions(userData, info),
+    ...interfaceOptions(userData, info),
     ...(hidden ? { show: false } : {}),
   });
 };
 
 /**
- * Interface updates (docs/desktop.md). The installed app takes bundles signed by the keys built into it, from the
- * repository's release, for the shell it was built with. A run from source has no build.json: its shell is taken from the
- * files it runs, and a test may name a key and a loopback address of its own (an installed app cannot be pointed
- * anywhere else, nor given a key).
+ * Interface updates (docs/desktop.md). The app takes bundles signed by the keys built into it, from the repository's
+ * release, for its contract major (shared/contract.ts). A run from source takes none, since its page is the one being
+ * worked on, unless a test names a loopback address and a key of its own (an installed app cannot be pointed anywhere
+ * else, nor given a key).
  */
 const interfaceOptions = (userData: string, info: ReturnType<typeof buildInfo>) => {
-  const shell =
-    info?.shell ??
-    (packaged
-      ? undefined
-      : (() => {
-          try {
-            return shellOfBuild(here);
-          } catch {
-            return undefined;
-          }
-        })());
+  if (!packaged && !env.CYCLE_UI_URL) return {};
+  const contract = info?.contract ?? CONTRACT_MAJOR;
   const testKeys = (() => {
     if (packaged || !env.CYCLE_UI_KEYS) return {};
     try {
@@ -214,27 +206,29 @@ const interfaceOptions = (userData: string, info: ReturnType<typeof buildInfo>) 
   const verify = (bytes: Uint8Array, signature: string, keyId: string) =>
     verifySignature(bytes, signature, keyId, keys);
   return {
-    store: createUiStore({
-      root: join(userData, "ui"),
-      verify,
+    interface: {
+      store: createUiStore({
+        root: join(userData, "ui"),
+        verify,
+        bundledVersion,
+        contract,
+        log: (message) => console.warn(`[interface] ${message}`),
+      }),
       bundledVersion,
-      ...(shell !== undefined ? { shell } : {}),
-      log: (message) => console.warn(`[interface] ${message}`),
-    }),
-    bundledVersion,
-    ...(!packaged && Number(env.CYCLE_UI_BOOT_MS) > 0
-      ? { bootMs: Number(env.CYCLE_UI_BOOT_MS) }
-      : {}),
-    updater: {
-      shell,
-      hasKeys: Object.keys(keys).length > 0,
-      verify,
-      repo: RELEASE_REPO,
-      ...(loopback !== undefined ? { baseUrl: loopback } : {}),
-      fetch,
-      extract: (zip: string, into: string) =>
-        run("/usr/bin/ditto", ["-x", "-k", zip, into], 300_000).then(() => {}),
-      log: (message: string) => console.warn(`[interface] ${message}`),
+      ...(!packaged && Number(env.CYCLE_UI_BOOT_MS) > 0
+        ? { bootMs: Number(env.CYCLE_UI_BOOT_MS) }
+        : {}),
+      updater: {
+        contract,
+        hasKeys: Object.keys(keys).length > 0,
+        verify,
+        repo: RELEASE_REPO,
+        ...(loopback !== undefined ? { baseUrl: loopback } : {}),
+        fetch,
+        extract: (zip: string, into: string) =>
+          run("/usr/bin/ditto", ["-x", "-k", zip, into], 300_000).then(() => {}),
+        log: (message: string) => console.warn(`[interface] ${message}`),
+      },
     },
   };
 };
@@ -243,7 +237,7 @@ const interfaceOptions = (userData: string, info: ReturnType<typeof buildInfo>) 
 const buildInfo = ():
   | {
       version: string;
-      shell?: string;
+      contract?: number;
       uiVersion?: number;
       daemonVersion?: string;
       posthogKey?: string;

@@ -2,38 +2,35 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assetsToDelete, type Gh, publish } from "../scripts/ui-publish.ts";
+import { assetsToDelete, type Gh, lineOfRelease, publish } from "../scripts/ui-publish.ts";
 
-const A = "a".repeat(32);
+// Lines: a contract major (the bundles of the apps since CYC-539) or a shell hash (of the apps before).
+const A = "c2";
 const B = "b".repeat(32);
 const C = "c".repeat(32);
 const DAY = 24 * 3600 * 1000;
 const NOW = Date.parse("2026-12-01T00:00:00Z");
 const ago = (days: number) => new Date(NOW - days * DAY).toISOString();
-const shellAssets = (shell: string, versions: number[], age: number) => [
+const lineAssets = (shell: string, versions: number[], age: number) => [
   { name: `ui-${shell}.json`, updatedAt: ago(age) },
   { name: `ui-${shell}.json.sig`, updatedAt: ago(age) },
   ...versions.map((v) => ({ name: `ui-${shell}-${v}.zip`, updatedAt: ago(age) })),
 ];
 
-test("of a shell in use only the three newest archives stay, and the manifest and signature always do", () => {
-  const doomed = assetsToDelete(shellAssets(A, [1, 2, 10, 3, 4], 0), {
-    keepShells: new Set([A]),
+test("of a line in use only the three newest archives stay, and the manifest and signature always do", () => {
+  const doomed = assetsToDelete(lineAssets(A, [1, 2, 10, 3, 4], 0), {
+    keepLines: new Set([A]),
     now: NOW,
   });
   expect(doomed.sort()).toEqual([`ui-${A}-1.zip`, `ui-${A}-2.zip`]);
 });
 
-test("a shell that no recent release has stays for a week after its last bundle, and then goes whole", () => {
-  const assets = [
-    ...shellAssets(A, [5], 0),
-    ...shellAssets(B, [3, 4], 2),
-    ...shellAssets(C, [1], 8),
-  ];
-  const doomed = assetsToDelete(assets, { keepShells: new Set([A]), now: NOW });
+test("a line that no recent release has stays for a week after its last bundle, and then goes whole", () => {
+  const assets = [...lineAssets(A, [5], 0), ...lineAssets(B, [3, 4], 2), ...lineAssets(C, [1], 8)];
+  const doomed = assetsToDelete(assets, { keepLines: new Set([A]), now: NOW });
   expect(doomed.sort()).toEqual([`ui-${C}-1.zip`, `ui-${C}.json`, `ui-${C}.json.sig`].sort());
   // One a release was built with stays however old.
-  expect(assetsToDelete(shellAssets(C, [1], 100), { keepShells: new Set([C]), now: NOW })).toEqual(
+  expect(assetsToDelete(lineAssets(C, [1], 100), { keepLines: new Set([C]), now: NOW })).toEqual(
     [],
   );
 });
@@ -43,7 +40,7 @@ test("assets that are not bundles are left alone", () => {
     { name: "notes.txt", updatedAt: ago(100) },
     { name: "ui-latest.json", updatedAt: ago(100) },
   ];
-  expect(assetsToDelete(assets, { keepShells: new Set(), now: NOW })).toEqual([]);
+  expect(assetsToDelete(assets, { keepLines: new Set(), now: NOW })).toEqual([]);
 });
 
 let dir: string;
@@ -52,13 +49,13 @@ beforeEach(async () => {
 });
 afterEach(() => rm(dir, { recursive: true, force: true }));
 
-const manifestText = (uiVersion: number, shell = A) =>
+const manifestText = (uiVersion: number) =>
   JSON.stringify({
-    v: 1,
-    shell,
+    v: 2,
+    contract: 2,
     uiVersion,
     keyId: "k1",
-    file: `ui-${shell}-${uiVersion}.zip`,
+    file: `ui-c2-${uiVersion}.zip`,
     size: 5,
     sha256: "a".repeat(64),
     files: { "index.html": "a".repeat(64) },
@@ -146,19 +143,20 @@ test("a bundle that is not newer than the one published is not published", async
   ).toBe(true);
 });
 
-test("after publishing, old archives and the bundles of shells no recent release has are removed", async () => {
+test("after publishing, old archives and the bundles of lines no recent release has are removed", async () => {
   await prepare(100);
   const f = fakeGh({
     exists: true,
     published: manifestText(90),
     releases: {
-      "v0.3.32": JSON.stringify({ shell: B }),
+      "v0.3.42": JSON.stringify({ contract: 2 }),
+      "v0.3.40": JSON.stringify({ shell: B }),
       "v0.3.31": JSON.stringify({ version: "0.3.31" }),
     },
     assets: [
-      ...shellAssets(A, [1, 2, 3, 100], 0),
-      ...shellAssets(B, [7], 30),
-      ...shellAssets(C, [8], 30),
+      ...lineAssets(A, [1, 2, 3, 100], 0),
+      ...lineAssets(B, [7], 30),
+      ...lineAssets(C, [8], 30),
     ],
   });
   const result = await publish({
@@ -173,4 +171,10 @@ test("after publishing, old archives and the bundles of shells no recent release
     [`ui-${A}-1.zip`, `ui-${C}-8.zip`, `ui-${C}.json`, `ui-${C}.json.sig`].sort(),
   );
   expect(names(f.calls, "delete-asset")).toHaveLength(4);
+});
+
+test("the line of a release is its contract major, or the shell of a release before CYC-539", () => {
+  expect(lineOfRelease({ contract: 2, shell: B })).toBe("c2");
+  expect(lineOfRelease({ shell: B })).toBe(B);
+  expect(lineOfRelease({ version: "0.3.31" } as never)).toBeUndefined();
 });

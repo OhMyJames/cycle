@@ -1,9 +1,10 @@
 // `bun run ui-package`: the page of the built app (`dist/renderer`) as an interface bundle, ready to publish to the
-// `ui-latest` release: an archive of the page's files, the manifest that lists them (and which shell they are for),
+// `ui-latest` release: an archive of the page's files, the manifest that lists them (and which contract major they are
+// for, shared/contract.ts),
 // and, when UI_SIGNING_KEY is set, the signature of the manifest. Without the key the bundle is unsigned, which is
 // for trying the format; no app takes it.
 //
-//   build/ui/{ui-<shell>-<uiVersion>.zip, ui-<shell>.json, ui-<shell>.json.sig}
+//   build/ui/{ui-c<major>-<uiVersion>.zip, ui-c<major>.json, ui-c<major>.json.sig}
 //
 // UI_SIGNING_KEY is an Ed25519 private key, PKCS#8, as PEM or as base64 of its DER. UI_SIGNING_KEY_ID names its public
 // key in the app (default k1).
@@ -11,8 +12,9 @@ import { createPrivateKey, type KeyObject, sign } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { sha256Hex, shellOfBuild, type UiKeys, verifySignature } from "../src/main/ui-crypto.ts";
+import { sha256Hex, type UiKeys, verifySignature } from "../src/main/ui-crypto.ts";
 import { UI_KEYS } from "../src/main/ui-keys.ts";
+import { CONTRACT_MAJOR } from "../src/shared/contract.ts";
 import {
   parseManifest,
   type UiManifest,
@@ -56,26 +58,26 @@ export type MadeBundle = {
 /** Makes the bundle of `rendererDir` in `outDir`. `zip` writes the archive of a folder's contents (at its root). */
 export const makeUiBundle = async (options: {
   rendererDir: string;
-  shell: string;
+  contract: number;
   uiVersion: number;
   keyId: string;
   outDir: string;
   zip: (dir: string, archive: string) => Promise<void>;
   signingKey?: KeyObject;
 }): Promise<MadeBundle> => {
-  const { rendererDir, shell, uiVersion, keyId, outDir } = options;
+  const { rendererDir, contract, uiVersion, keyId, outDir } = options;
   await rm(outDir, { recursive: true, force: true });
   await mkdir(outDir, { recursive: true });
   const files: Record<string, string> = {};
   for (const path of await listFiles(rendererDir))
     files[path] = sha256Hex(await readFile(join(rendererDir, path)));
-  const file = uiArchiveName(shell, uiVersion);
+  const file = uiArchiveName(contract, uiVersion);
   const archive = join(outDir, file);
   await options.zip(rendererDir, archive);
   const bytes = await readFile(archive);
   const manifest: UiManifest = {
-    v: 1,
-    shell,
+    v: 2,
+    contract,
     uiVersion,
     keyId,
     file,
@@ -87,11 +89,11 @@ export const makeUiBundle = async (options: {
   // What an app reads is checked the way an app checks it, so a bundle that no app would take is not made.
   if (parseManifest(text) === undefined)
     throw new Error("The manifest made is not one an app takes.");
-  const manifestFile = join(outDir, uiManifestName(shell));
+  const manifestFile = join(outDir, uiManifestName(contract));
   await writeFile(manifestFile, text);
   let signatureFile: string | undefined;
   if (options.signingKey !== undefined) {
-    signatureFile = join(outDir, uiSignatureName(shell));
+    signatureFile = join(outDir, uiSignatureName(contract));
     await writeFile(
       signatureFile,
       `${sign(null, Buffer.from(text), options.signingKey).toString("base64")}\n`,
@@ -146,11 +148,10 @@ if (import.meta.main) {
   const dist = join(DESKTOP, "dist");
   if (!existsSync(join(dist, "renderer/index.html")))
     throw new Error("The app is not built. Run `bun run build` in apps/desktop.");
-  const shell = shellOfBuild(dist);
   const key = process.env.UI_SIGNING_KEY;
   const made = await makeUiBundle({
     rendererDir: join(dist, "renderer"),
-    shell,
+    contract: CONTRACT_MAJOR,
     uiVersion: commitCount(),
     keyId: process.env.UI_SIGNING_KEY_ID || "k1",
     outDir: UI_OUT_DIR,
@@ -162,6 +163,11 @@ if (import.meta.main) {
       `The signature is not one the apps take: no key ${made.manifest.keyId} built into them (src/main/ui-keys.ts) matches UI_SIGNING_KEY.`,
     );
   console.log(
-    JSON.stringify({ ...made, manifest: undefined, shell, uiVersion: made.manifest.uiVersion }),
+    JSON.stringify({
+      ...made,
+      manifest: undefined,
+      contract: CONTRACT_MAJOR,
+      uiVersion: made.manifest.uiVersion,
+    }),
   );
 }

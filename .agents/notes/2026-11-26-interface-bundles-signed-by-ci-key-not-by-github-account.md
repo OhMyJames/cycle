@@ -28,3 +28,7 @@ A page is loaded only if its manifest carries an Ed25519 signature made by a key
 - A leak of the signing key lets its holder run a page in every app that trusts it, until a release removes the key: rotate by adding a new `keyId` in a release, signing with it, then dropping the old one.
 - Anyone who can write to the user's `<userData>/ui/` can at worst make the app fall back to the bundled page; a changed file fails its hash. Same-user code is out of scope, as it can change the app itself.
 - If a build of the shell stops being byte-identical between the release runner and `ui-release`, bundles are silently not found. The release workflow warns (does not fail) when `ui-latest` has no manifest for the shell it just built, using the shell recorded in the release manifest.
+
+## Related
+
+- [Interface bundles go to every app of the same contract major](2026-11-27-interface-bundles-go-to-every-app-of-the-same-contract-major.md): from CYC-539 a bundle is matched by contract major, not by shell hash, and the "separate API version" rejected above is adopted with a type check that keeps it honest; the signing and publishing decided here still hold.

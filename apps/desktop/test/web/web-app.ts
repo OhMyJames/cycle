@@ -51,6 +51,8 @@ export type WebAppOptions = {
   folder?: string;
   /** Start signed out, at the sign-in page. Default: signed in (to a stand-in provider of the test's own). */
   signedOut?: boolean;
+  /** Methods the bridge does not have, as on an older app of the same contract major (renderer/bridge.ts). */
+  withoutMethods?: readonly string[];
 };
 
 export type WebApp = {
@@ -58,6 +60,8 @@ export type WebApp = {
   manager: ConnectionManager;
   /** What the page put on the clipboard through the app (`copyText`). */
   copied: string[];
+  /** The errors the page did not catch, from its first script on. */
+  pageErrors: string[];
   /** The login, and the stand-in provider it signs in with: its browser is `idp.browse`, which nothing else opens. */
   account: Account;
   idp: MockIdp;
@@ -196,6 +200,7 @@ export const startWebApp = async (options: WebAppOptions): Promise<WebApp> => {
   };
 
   let browser: Browser | undefined;
+  const pageErrors: string[] = [];
   try {
     browser = await chromium.launch();
     const context = await browser.newContext({ viewport: { width: 1200, height: 800 } });
@@ -205,7 +210,11 @@ export const startWebApp = async (options: WebAppOptions): Promise<WebApp> => {
     await page.exposeBinding("__cycleCall", (_source, method: string, args: unknown[]) =>
       call(method, args),
     );
-    await page.addInitScript({ content: bridgeScript(API_METHODS) });
+    page.on("pageerror", (error) => pageErrors.push(String(error)));
+    const without = new Set(options.withoutMethods ?? []);
+    await page.addInitScript({
+      content: bridgeScript(API_METHODS.filter((method) => !without.has(method))),
+    });
     await page.goto(`http://127.0.0.1:${server.port}/`);
     // Every location is connected from here, as main.ts does once the page is loaded (once signed in).
     connectWhenOpen = true;
@@ -224,6 +233,7 @@ export const startWebApp = async (options: WebAppOptions): Promise<WebApp> => {
     page,
     manager,
     copied,
+    pageErrors,
     account,
     idp,
     close: async () => {
