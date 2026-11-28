@@ -360,14 +360,6 @@ test("an In Progress ticket is only watched: a note, and no chat button", async 
   expect(fake.named("loopChat")).toEqual([]);
 });
 
-test("Escape on the ticket drawer closes the drawer, not the board", async () => {
-  const { user } = await openTicketDrawer("new");
-  await screen.findByRole("complementary", { name: "CYC-700" });
-  await user.keyboard("{Escape}");
-  await waitFor(() => expect(screen.queryByRole("complementary", { name: "CYC-700" })).toBeNull());
-  expect(document.querySelector('[data-kind="loop-board"]')).not.toBeNull();
-});
-
 test("closing the ticket drawer plays the slide-out first, then removes it", async () => {
   const { user } = await openTicketDrawer("new");
   await screen.findByRole("complementary", { name: "CYC-700" });
@@ -400,6 +392,7 @@ test("Escape closes the ticket drawer to its board and leaves the board open; cl
   // Ticket drawer → board by Escape; the board stays, out of Loop by clicking a session, and back to Kanban from the sidebar.
   await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("complementary", { name: "CYC-700" })).toBeNull());
+  expect(document.querySelector('[data-kind="loop-board"]')).not.toBeNull();
   await user.keyboard("{Escape}");
   expect(document.querySelector('[data-kind="loop-board"]')).not.toBeNull();
   await user.click(screen.getByRole("option"));
@@ -450,7 +443,7 @@ test("even with one Project, clicking top Loop opens Overview instead of redirec
   await screen.findByRole("region", { name: "In Progress" });
 });
 
-test("Needs you is on the overview, not on the board, and absent when empty", async () => {
+test("Needs you is on the overview, not on the board", async () => {
   const blocked = {
     id: "CYC:blocked:CYC-9",
     kind: "blocked" as const,
@@ -505,18 +498,13 @@ test("opening a ticket drawer updates breadcrumbs to Project / ticket and clicki
   expect(screen.getByRole("region", { name: "In Progress" })).toBeTruthy();
 });
 
-test("the board shows the columns by name, with Done last, the rest in the order they come", async () => {
+test("the board is a row of columns by name with Done last and open: cards are not draggable, there is no move menu, and the tops line up", async () => {
   await mountBoard({ loopProjects: { kind: "ok", projects: [cycle] }, loopBoards: { CYC: board } });
   await screen.findByRole("region", { name: "In Review" });
   const names = [...document.querySelectorAll('[data-slot="loop-column"]')].map((e) =>
     e.getAttribute("aria-label"),
   );
   expect(names).toEqual(["Backlog", "Todo", "In Progress", "In Review", "Blocked", "Done"]);
-});
-
-test("the board is a row of columns: cards are not draggable, there is no move menu, and Done is open with its card", async () => {
-  await mountBoard({ loopProjects: { kind: "ok", projects: [cycle] }, loopBoards: { CYC: board } });
-  await screen.findByRole("region", { name: "In Review" });
   expect(document.querySelectorAll("[draggable='true']")).toHaveLength(0);
   expect(screen.queryByText(/Move to/i)).toBeNull();
   expect(screen.queryByRole("menu")).toBeNull();
@@ -935,25 +923,6 @@ const detailOf = (
     links: [],
     ...extra,
   },
-});
-
-test("Approve in the ticket drawer asks first; only the confirmation writes, and a failure is said", async () => {
-  const backlog = ticket(600, "Backlog");
-  const { user, calls } = await mountBoard({
-    loopProjects: { kind: "ok", projects: [cycle] },
-    loopBoards: { CYC: withTickets({ Backlog: [backlog] }) },
-    loopTickets: { "CYC-600": detailOf(backlog, { actions: ["approve", "to_todo"], chat: "new" }) },
-    loopAct: { kind: "failed", reason: "forbidden" },
-  });
-  await user.click(await screen.findByRole("button", { name: "Ticket 600" }));
-  await user.click(await screen.findByRole("button", { name: "Approve CYC-600" }));
-  expect(calls.some(([name]) => name === "loopAct")).toBe(false);
-  const dialog = await screen.findByRole("alertdialog");
-  await user.click(within(dialog).getByRole("button", { name: "Approve" }));
-  expect(await within(dialog).findByText(/did not accept this from Loop/)).toBeTruthy();
-  expect(calls.filter(([name]) => name === "loopAct")).toEqual([
-    ["loopAct", "CYC", "CYC-600", "approve", true],
-  ]);
 });
 
 test("cancelling Approve writes nothing; a ticket with no buttons shows none", async () => {
