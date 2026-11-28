@@ -739,6 +739,15 @@ export class StoreOps {
       .run(this.now().toISOString(), id);
   }
 
+  /** Puts a finished task back to pending so it is reviewed again (a person sent an escalated ticket back). */
+  reopenReviewTask(id: number): void {
+    this.db
+      .query(
+        "UPDATE review_tasks SET status = 'pending', updated_at = ? WHERE id = ? AND status = 'done'",
+      )
+      .run(this.now().toISOString(), id);
+  }
+
   /** Appends the session id of one attempt. */
   addReviewSession(id: number, sessionId: string): void {
     const row = this.db.query("SELECT sessions FROM review_tasks WHERE id = ?").get(id) as {
@@ -1090,6 +1099,9 @@ export class SqliteStore implements LoopStore {
   }
   releaseReviewTask(id: number) {
     this.#ops.releaseReviewTask(id);
+  }
+  reopenReviewTask(id: number) {
+    this.#ops.reopenReviewTask(id);
   }
   addReviewSession(id: number, sessionId: string) {
     this.#ops.addReviewSession(id, sessionId);

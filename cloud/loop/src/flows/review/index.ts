@@ -132,7 +132,13 @@ export async function commentOnce(
 export async function reviewTask(h: FlowHost, input: ReviewInput): Promise<ReviewResult> {
   const { config, store } = h.d;
   const { repo, pr, headSha, key } = input;
-  const task = store.transaction((tx) => tx.reviewTask(repo, pr, headSha, input.origin));
+  let task = store.transaction((tx) => tx.reviewTask(repo, pr, headSha, input.origin));
+  // A ticket sent back by a person after an escalation is reviewed again on the same commit, with a fresh conclusion.
+  if (task.status === "done" && task.decision === "escalate" && input.origin.startsWith("dev:")) {
+    const id = task.id;
+    store.transaction((tx) => tx.reopenReviewTask(id));
+    task = store.transaction((tx) => tx.reviewTask(repo, pr, headSha, input.origin));
+  }
 
   // The cwd of the commands on GitHub: the worktree when there is one, the main checkout otherwise.
   const cwd = input.worktree ?? config.repoRoot;
