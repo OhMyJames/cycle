@@ -379,7 +379,8 @@ export function LoopMain({
       <div
         data-slot="page-body"
         data-kind="loop-body"
-        data-full={chosen !== undefined ? "" : undefined}
+        // The board is a fixed frame whose columns scroll; the Timeline is a long page that scrolls as a whole.
+        data-full={chosen !== undefined && !isTimeline ? "" : undefined}
       >
         {chosen !== undefined && isTimeline ? (
           <LoopTimeline

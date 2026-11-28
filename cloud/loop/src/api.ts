@@ -1008,6 +1008,7 @@ export class LoopApiHandler {
             finishedAt: node.finishedAt,
             summary: node.summary,
             error: node.lastError,
+            dependsOn: node.dependsOn.map((dep) => `node:${dep}`),
           });
         }
       }
@@ -1039,6 +1040,7 @@ export class LoopApiHandler {
           finishedAt: null,
           summary: null,
           error: null,
+          dependsOn: [],
         });
       }
       entries.push({

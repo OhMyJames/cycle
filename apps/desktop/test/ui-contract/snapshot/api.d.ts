@@ -1219,6 +1219,7 @@ export type LoopTimelineStep = {
     finishedAt: string | null;
     summary: string | null;
     error: string | null;
+    dependsOn?: string[];
 };
 export type LoopTimelineRunEntry = {
     entryKind: "run";

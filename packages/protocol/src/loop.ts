@@ -500,6 +500,8 @@ export const LoopTimelineStepSchema = z.object({
   finishedAt: z.string().min(1).nullable(),
   summary: z.string().nullable(),
   error: z.string().nullable(),
+  /** Ids of the steps this one waits for; only Task Graph nodes have any. */
+  dependsOn: z.array(z.string().min(1)).default([]),
 });
 export type LoopTimelineStep = z.infer<typeof LoopTimelineStepSchema>;
 
