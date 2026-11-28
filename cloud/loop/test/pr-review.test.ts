@@ -47,6 +47,9 @@ const setup = async (
     // What the pull request looks like from the second read on (the merge-time recheck), set by a test.
     laterHead: undefined as { isDraft?: boolean; baseBranch?: string; fails?: boolean } | undefined,
     headReads: 0,
+    // Comments from this one on fail (1 = the first), set by a test.
+    failCommentsFrom: undefined as number | undefined,
+    commentCalls: 0,
   };
   const calls: string[] = [];
   const comments: string[] = [];
@@ -88,6 +91,9 @@ const setup = async (
       return { ok: true };
     },
     comment: async (_a: unknown, _ref: string, path: string) => {
+      state.commentCalls += 1;
+      if (state.failCommentsFrom !== undefined && state.commentCalls >= state.failCommentsFrom)
+        return { ok: false, error: "boom" };
       if (opts.commentFails) return { ok: false, error: "boom" };
       comments.push(await readFile(path, "utf8"));
       return { ok: true };
@@ -334,4 +340,22 @@ test("with draft and base branch unchanged the reviewed commit is merged; an unr
   expect(bad.calls.some((c) => c.startsWith("merge"))).toBe(false);
   expect(bad.comments.length).toBe(1);
   expect(bad.store.waits("pr:o/r#7").length).toBe(1);
+});
+
+test("when the explanation comment cannot be posted at the merge-time recheck, nothing is merged or settled and it is said on the retry", async () => {
+  const t = await setup({ review: MERGE_REVIEW });
+  t.state.laterHead = { isDraft: true };
+  t.state.failCommentsFrom = 2;
+  const r = await t.pipeline.step();
+  expect(r).toMatchObject({ status: "pr_step", outcome: "comment-failed" });
+  expect(t.calls.some((c) => c.startsWith("merge"))).toBe(false);
+  expect(t.comments.length).toBe(1);
+  expect(t.store.waits("pr:o/r#7").length).toBe(1);
+  // GitHub is reachable again: the retry is the merge again and now says why
+  t.state.failCommentsFrom = undefined;
+  t.advance(10 * 60_000);
+  expect(await t.pipeline.step()).toMatchObject({ status: "pr_step", outcome: "merge-draft" });
+  expect(t.calls.some((c) => c.startsWith("merge"))).toBe(false);
+  expect(t.comments.filter((c) => c.includes("PR 已是草稿")).length).toBe(1);
+  expect(t.sessions.created.length).toBe(1);
 });

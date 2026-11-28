@@ -350,11 +350,6 @@ export class PrFlow {
       // An input that could not be read is not a refusal: the conclusion is kept and the merge is tried again.
       if (!head.ok || !perm.ok || !ci.ok || !paths.ok)
         return this.#retryLater(key, sha, "gate-unreadable");
-      if (head.state !== "OPEN") {
-        db(store).clearWaits(key);
-        this.#settled.add(`${key}@${sha}`);
-        return done("closed");
-      }
       if (head.sha !== sha) {
         // A newer commit: this conclusion belongs to the old one, the new one is looked at as its own.
         this.#settled.add(`${key}@${sha}`);
@@ -371,13 +366,14 @@ export class PrFlow {
       if (changed !== undefined) {
         await store.event(key, "pr_merge_changed", { reason: changed.kind });
         // Comment first: if GitHub is out of reach the retry is the merge again, not a new review.
-        await commentOnce(
+        const said = await commentOnce(
           h,
           input,
           config.repoRoot,
           `merge-${changed.kind}`,
           `评审结论为合并，但${changed.text}，Loop 不合并。PR 恢复后会作为新的一次审阅再看。`,
         );
+        if (!said.ok) return this.#retryLater(key, sha, "comment-failed");
         // The review of this commit is not kept as finished: once the pull request is back it is reviewed anew,
         // and a second change after that is said again. Settled until the next poll: a draft or moved pull request
         // is dropped from the open list there, which clears the mark; without it every tick would review again.
