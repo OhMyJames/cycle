@@ -20,6 +20,7 @@ import type {
   LocationConfig,
   LocationStatus,
 } from "../api.ts";
+import { useAgentSetup } from "./agent-setup.ts";
 import { ConfigForm, RuntimeConfigForm, type RuntimeFieldText } from "./config-form.tsx";
 import { StorageGroup } from "./harness-storage.tsx";
 import { useI18n } from "./i18n.tsx";
@@ -198,86 +199,29 @@ function HarnessLocationBody({
 }) {
   const { t } = useI18n();
   const store = useAppStore();
-  const setupRevision = useAppState((s) => s.agentSetupRevision[`${location.id}:${agentId}`] ?? 0);
-
-  const [snapshot, setSnapshot] = useState<AgentSetupSnapshot | undefined>(undefined);
   // Whether the agent is listed, not the listing itself: a new agents list (a reconnect) is not a reason to read again.
   const hasAgent = agentInfo !== undefined;
-  const [loading, setLoading] = useState(supportsSetup && hasAgent);
-  const [refreshing, setRefreshing] = useState(false);
-  const [loadError, setLoadError] = useState<string | undefined>(undefined);
   const [runtimeBusyKey, setRuntimeBusyKey] = useState<string | undefined>(undefined);
   const [runtimeProblem, setRuntimeProblem] = useState<
     { kind: "conflict" } | { kind: "error"; reason?: string | undefined } | undefined
   >(undefined);
   const [copiedPath, setCopiedPath] = useState(false);
   const [defaultsAttempt, setDefaultsAttempt] = useState(0);
-  const mountedRef = useRef(true);
-  const seenSetupRevisionRef = useRef(setupRevision);
-  const fetchSeqRef = useRef(0);
-  /** The newest read (or save) whose answer is on screen: an older answer arriving later is dropped. */
-  const appliedSeqRef = useRef(0);
-  const pendingLoudRef = useRef(0);
+  const {
+    snapshot,
+    setSnapshot,
+    loading,
+    refreshing,
+    loadError,
+    read: fetchSetup,
+    supersede,
+    mounted: mountedRef,
+  } = useAgentSetup(location.id, agentId, supportsSetup && hasAgent, () =>
+    setRuntimeProblem(undefined),
+  );
   const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      clearTimeout(copyTimer.current);
-    };
-  }, []);
-
-  const fetchSetup = useCallback(
-    async (opts: { forceRefresh?: boolean; refreshUsage?: boolean; silent?: boolean }) => {
-      if (!supportsSetup || !hasAgent) return;
-      // Each read is numbered; an answer is kept only if no newer one (or a save) has been kept since. The spinner
-      // belongs to the visible reads still out, so a silent read that overtakes a visible one cannot leave it spinning.
-      const seq = ++fetchSeqRef.current;
-      const loud = opts.silent !== true;
-      if (loud) {
-        pendingLoudRef.current += 1;
-        if (opts.forceRefresh) setRefreshing(true);
-        else setLoading(true);
-        setLoadError(undefined);
-      }
-      try {
-        const result = await store.readAgentSetup(location.id, agentId, {
-          ...(opts.forceRefresh ? { forceRefresh: true } : {}),
-          ...(opts.refreshUsage ? { refreshUsage: true } : {}),
-        });
-        if (!mountedRef.current || seq <= appliedSeqRef.current) return;
-        appliedSeqRef.current = seq;
-        setSnapshot(result);
-        setLoadError(undefined);
-        setRuntimeProblem(undefined);
-      } catch (error) {
-        if (!mountedRef.current || seq <= appliedSeqRef.current) return;
-        if (loud) setLoadError(error instanceof Error ? error.message : String(error));
-      } finally {
-        if (loud && mountedRef.current) {
-          pendingLoudRef.current -= 1;
-          if (pendingLoudRef.current === 0) {
-            setLoading(false);
-            setRefreshing(false);
-          }
-        }
-      }
-    },
-    [supportsSetup, hasAgent, store, location.id, agentId],
-  );
-
-  useEffect(() => {
-    if (!supportsSetup || !hasAgent) return;
-    void fetchSetup({ refreshUsage: agentId === "codex" });
-  }, [fetchSetup, supportsSetup, hasAgent, agentId]);
-
-  useEffect(() => {
-    if (setupRevision === seenSetupRevisionRef.current) return;
-    seenSetupRevisionRef.current = setupRevision;
-    if (!supportsSetup || !hasAgent) return;
-    void fetchSetup({ silent: true });
-  }, [setupRevision, fetchSetup, supportsSetup, hasAgent]);
+  useEffect(() => () => clearTimeout(copyTimer.current), []);
 
   const patchRuntime = useCallback(
     async (patch: Record<string, AgentRuntimePatchValue>) => {
@@ -295,8 +239,7 @@ function HarnessLocationBody({
         if (!mountedRef.current) return;
         if (answer === undefined) return;
         if (answer.saved) {
-          // Every read already sent is older than this save: none of their answers may replace it.
-          appliedSeqRef.current = fetchSeqRef.current;
+          supersede();
           setSnapshot((prev) =>
             prev === undefined
               ? prev
@@ -336,7 +279,16 @@ function HarnessLocationBody({
         if (mountedRef.current) setRuntimeBusyKey(undefined);
       }
     },
-    [snapshot, runtimeBusyKey, store, location.id, agentId],
+    [
+      snapshot,
+      runtimeBusyKey,
+      store,
+      location.id,
+      agentId,
+      supersede,
+      setSnapshot,
+      mountedRef.current,
+    ],
   );
 
   const describeRuntime = useCallback(
