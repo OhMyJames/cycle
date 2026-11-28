@@ -3,7 +3,7 @@
 // (attention.ts) already does, and a second one would repeat it. Only a Notice that was not there at the last read is
 // told, and the first read of a Project says nothing (it is what was already there), as `attentionOf` does for sessions.
 import type { LoopNotice, LoopNoticesAnswer, LoopProjectInfo } from "@cycle/ui/api";
-import type { NotificationLike, NotifyWindow } from "./attention.ts";
+import { BackgroundNotifications, type NotificationHost } from "./background-notifications.ts";
 
 export type Alertable = LoopNotice & { kind: "blocked" | "review" | "stuck" | "intent_stuck" };
 
@@ -97,41 +97,25 @@ export const noticePoller = (deps: PollDeps) => {
   };
 };
 
-export type AlertDeps = {
-  window: () => NotifyWindow | undefined;
-  supported: () => boolean;
-  create: (options: { title: string; body: string }) => NotificationLike;
-  activate: () => void;
+export type AlertDeps = NotificationHost & {
   say: (kind: Alertable["kind"]) => string;
   open: (projectKey: string, identifier: string) => void;
   track: (kind: Alertable["kind"]) => void;
 };
 
-const held = new Set<NotificationLike>();
+const held = new BackgroundNotifications();
 
 /** The system notification for one Notice, only while the window is not in front: on the page the Notice is seen. */
 export const showAlert = (deps: AlertDeps) => (projectKey: string, notice: Alertable) => {
-  const window = deps.window();
-  if (window === undefined || window.isDestroyed() || window.isFocused()) return false;
-  if (!deps.supported()) return undefined;
-  // Only the ticket's number: a Notice's text is the Loop server's words about it, not for a notification.
-  const title = Array.from(notice.identifier).slice(0, 80).join("");
-  const notification = deps.create({ title, body: deps.say(notice.kind) });
-  held.add(notification);
-  const done = () => void held.delete(notification);
-  notification.on("close", done);
-  notification.on("failed", done);
-  notification.on("click", () => {
-    done();
-    const target = deps.window();
-    if (target === undefined || target.isDestroyed()) return;
-    if (target.isMinimized()) target.restore();
-    target.show();
-    target.focus();
-    deps.activate();
-    deps.open(projectKey, notice.identifier);
-  });
-  notification.show();
-  deps.track(notice.kind);
-  return true;
+  const shown = held.show(
+    deps,
+    () => ({
+      // The ticket number identifies the Notice without exposing its text.
+      title: Array.from(notice.identifier).slice(0, 80).join(""),
+      body: deps.say(notice.kind),
+    }),
+    () => deps.open(projectKey, notice.identifier),
+  );
+  if (shown) deps.track(notice.kind);
+  return shown;
 };

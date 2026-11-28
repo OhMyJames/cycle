@@ -39,3 +39,5 @@ Loop 的节点和整单验证现在各创建一次 verificationPass。每次验�
 Codex 与 agy 曾以互不导入为由复制审批前缀函数。迁移前比较了实现和测试，去除注释、空白后实现一致，测试样例完全一致。共享包只提供纯函数，两个适配器保留各自的权限请求与会话级测试。见[审批规则所有权决定](../.agents/notes/2026-11-27-shared-command-prefix-policy.md)。
 
 埋点门禁按 AST 的 typeOnly 信息检查页面导入。事件字典可以出现在类型位置，混合导入、重导出值、动态加载、相对路径直达 analytics 和直接加载 PostHog 都有回归覆盖。
+
+Electron 通知由 BackgroundNotifications 管理窗口检查、保活、释放与前台恢复。attention.ts 保留会话标题和目标，loop-alerts.ts 保留工单去重、暂缓重试及点击目标。两处均通过既有测试验证。
