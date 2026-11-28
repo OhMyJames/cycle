@@ -2,6 +2,8 @@
 
 状态:草稿
 
+各 workspace 的依赖、核心状态的写入者和待确认的设计取舍见[架构治理进度](architecture-governance.md)。
+
 ## 分层
 
 ```
