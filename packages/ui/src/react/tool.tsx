@@ -293,10 +293,10 @@ const isAdvisor = (tool: ToolItem): boolean => tool.name === "advisor";
  * after a pause), or that it could not answer. It opens to the advice when the API gives it in the clear, else to why
  * there is none to read: encrypted (newer advisor models), or the error's code.
  */
-function AdvisorCard({ tool }: { tool: ToolItem }) {
+function AdvisorCard({ tool, openState }: { tool: ToolItem; openState?: OpenState | undefined }) {
   const { t } = useI18n();
   const scope = useStartScope();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useRowOpen(openState);
   const status = tool.status ?? "pending";
   const going = isLive(tool);
   const failed = status === "failed" || status === "cancelled";
@@ -343,15 +343,27 @@ function AdvisorCard({ tool }: { tool: ToolItem }) {
 }
 
 /** One call as its row: the advisor's own, or any other's. */
-export function ToolCard({ tool }: { tool: ToolItem }) {
-  return isAdvisor(tool) ? <AdvisorCard tool={tool} /> : <CallCard tool={tool} />;
+export function ToolCard({ tool, openState }: { tool: ToolItem; openState?: OpenState }) {
+  return isAdvisor(tool) ? (
+    <AdvisorCard tool={tool} openState={openState} />
+  ) : (
+    <CallCard tool={tool} openState={openState} />
+  );
+}
+
+/** An open flag held by a parent, so it outlives the row when the parent draws it in another place. */
+export type OpenState = readonly [boolean, (open: boolean) => void];
+
+function useRowOpen(held: OpenState | undefined): OpenState {
+  const own = useState(false);
+  return held ?? own;
 }
 
 /**
  * One call, as one quiet line: what it did and on what. The verb's tense says whether it is going; a failure says so in
  * a word as well as in red. It opens to what it was given and what came back.
  */
-function CallCard({ tool }: { tool: ToolItem }) {
+function CallCard({ tool, openState }: { tool: ToolItem; openState?: OpenState | undefined }) {
   const { t } = useI18n();
   const store = useAppStore();
   // A file it read or changed, inside the session's folder: it can be shown in the Files tab. Not one it deleted or moved
@@ -375,7 +387,7 @@ function CallCard({ tool }: { tool: ToolItem }) {
   const going = isLive(tool);
   // Every row starts closed, whatever its state: the head says in red words how one ended badly, and opening it is the
   // person's choice.
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useRowOpen(openState);
   const streams = streamsOf(tool);
   const output = tool.content.length > 0 ? streams.out : stringify(tool.rawOutput);
   const command = commandOf(tool);

@@ -273,13 +273,19 @@ const checkDirective = (section: string, entry: string): string | undefined => {
   if (section === "include" || section === "includeif" || section === "filter") {
     return `git config contains forbidden directive in [${section}]`;
   }
+  if (section === "diff" && (key === "external" || key === "textconv" || key === "command")) {
+    return key === "external"
+      ? "git config contains forbidden key diff.external"
+      : `git config contains forbidden key diff.*.${key}`;
+  }
   return undefined;
 };
 
 /**
  * Checks a git config file for directives that can redirect remotes, include arbitrary files, or run commands on
- * fetch/push (CYC-478): `include.*`, `includeIf.*`, `filter.*`, `url.*.insteadOf`, `remote.*.pushurl`,
- * `core.sshCommand`, `remote.*.uploadpack`, `remote.*.receivepack`.
+ * fetch/push/diff (CYC-478): `include.*`, `includeIf.*`, `filter.*`, `diff.external`, `diff.*.textconv`,
+ * `diff.*.command`, `url.*.insteadOf`, `remote.*.pushurl`, `core.sshCommand`, `remote.*.uploadpack`,
+ * `remote.*.receivepack`.
  */
 export const inspectGitConfig = (
   text: string,
@@ -549,10 +555,10 @@ export const gitWorkspace = (deps: {
       return r.code === 0 ? { ok: true, sha: r.output.trim() } : { ok: false, error: r.output };
     },
     async diff(at, base) {
-      return (await git(at, ["diff", `${base}...HEAD`])).output;
+      return (await git(at, ["diff", "--no-ext-diff", "--no-textconv", `${base}...HEAD`])).output;
     },
     async changedFiles(at, base) {
-      const r = await git(at, ["diff", "--name-only", `${base}...HEAD`]);
+      const r = await git(at, ["diff", "--no-ext-diff", "--name-only", `${base}...HEAD`]);
       return r.output.split("\n").filter((line) => line.trim() !== "");
     },
     async log(at, base) {
@@ -591,7 +597,9 @@ export const gitWorkspace = (deps: {
       return (await git(at, ["merge-base", "--is-ancestor", ref, "HEAD"])).code === 0;
     },
     async unmergedFiles(at) {
-      return lines((await git(at, ["diff", "--name-only", "--diff-filter=U"])).output);
+      return lines(
+        (await git(at, ["diff", "--no-ext-diff", "--name-only", "--diff-filter=U"])).output,
+      );
     },
     async theirCommits(at, preMergeSha, base, files) {
       return lines(

@@ -28,6 +28,7 @@ import { MARK_STYLE, StatusDot } from "./status.tsx";
 import { useSteady } from "./steady.ts";
 import { useAppState, useAppStore } from "./store-context.tsx";
 import {
+  type OpenState,
   statusWord,
   ToolCard,
   toolDescription,
@@ -53,12 +54,39 @@ export function Notice({ severity, title }: { severity: string; title: string })
  * many failed.
  */
 export function WorkBlock({ tools, live }: { tools: readonly ToolItem[]; live: boolean }) {
+  // The open flags live here, not in the rows: one call becoming several swaps the row for a card, and what the person
+  // opened stays open (the card opens too, to show it). Never opened, the card starts closed.
+  const [rows, setRows] = useState<Readonly<Record<string, boolean>>>({});
+  const [card, setCard] = useState<boolean | undefined>(undefined);
+  const rowState = (id: string): OpenState => [
+    rows[id] === true,
+    (open) => setRows((was) => (was[id] === open ? was : { ...was, [id]: open })),
+  ];
   const only = tools[0];
-  if (tools.length === 1 && only !== undefined) return <ToolCard tool={only} />;
-  return <WorkCard tools={tools} live={live} />;
+  if (tools.length === 1 && only !== undefined)
+    return <ToolCard tool={only} openState={rowState(only.id)} />;
+  // Becoming a card with a row the person opened: the card is opened, once, and from then on it is the card's own state,
+  // so closing that row later does not close the card.
+  if (card === undefined && tools.some((tool) => rows[tool.id] === true)) setCard(true);
+  const cardOpen = card ?? false;
+  return (
+    <WorkCard tools={tools} live={live} open={cardOpen} setOpen={setCard} rowState={rowState} />
+  );
 }
 
-function WorkCard({ tools, live }: { tools: readonly ToolItem[]; live: boolean }) {
+function WorkCard({
+  tools,
+  live,
+  open,
+  setOpen,
+  rowState,
+}: {
+  tools: readonly ToolItem[];
+  live: boolean;
+  open: boolean;
+  setOpen: (open: boolean) => void;
+  rowState: (id: string) => OpenState;
+}) {
   const { t, list, locale } = useI18n();
   const failed = tools.filter((tool) => tool.status === "failed").length;
   const kinds = activityCounts(tools);
@@ -70,7 +98,6 @@ function WorkCard({ tools, live }: { tools: readonly ToolItem[]; live: boolean }
       : "";
   const goingTip = goingDetail || undefined;
   const scope = useStartScope();
-  const [open, setOpen] = useState(false);
   // Asked to show one of its calls (from the Overview): the card opens to it; also when it mounts while that is still
   // asked, since the request may be what moved the window to it.
   useRevealOpen(
@@ -129,7 +156,7 @@ function WorkCard({ tools, live }: { tools: readonly ToolItem[]; live: boolean }
       </CollapsibleTrigger>
       <CollapsiblePanel>
         {tools.map((tool) => (
-          <ToolCard key={tool.id} tool={tool} />
+          <ToolCard key={tool.id} tool={tool} openState={rowState(tool.id)} />
         ))}
       </CollapsiblePanel>
     </Collapsible>

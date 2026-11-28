@@ -1652,6 +1652,8 @@ export type LoopTimelineStep = {
   finishedAt: string | null;
   summary: string | null;
   error: string | null;
+  /** Ids of the steps this one waits for; only Task Graph nodes have any. Absent from an older app. */
+  dependsOn?: string[];
 };
 
 export type LoopTimelineRunEntry = {

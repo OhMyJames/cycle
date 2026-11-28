@@ -35,6 +35,39 @@ export const outputHead = (text: string): string => {
   return `${text.slice(0, end)}\n… ${count(text.slice(end))} more characters not shown`;
 };
 
+/**
+ * An MCP result's content blocks: text blocks as text (joined by a line), images as images, and any other block
+ * (a resource, a link) as its JSON, so none is dropped.
+ */
+const mcpResult = (
+  content: unknown,
+): {
+  text: string;
+  images: { type: "content"; content: { type: "image"; data: string; mimeType: string } }[];
+} => {
+  const texts: string[] = [];
+  const images: { type: "content"; content: { type: "image"; data: string; mimeType: string } }[] =
+    [];
+  if (!Array.isArray(content)) {
+    if (content !== null && content !== undefined) texts.push(JSON.stringify(content));
+    return { text: texts.join("\n"), images };
+  }
+  for (const block of content as Record<string, unknown>[]) {
+    if (block?.type === "text" && typeof block.text === "string") texts.push(block.text);
+    else if (
+      block?.type === "image" &&
+      typeof block.data === "string" &&
+      typeof block.mimeType === "string"
+    )
+      images.push({
+        type: "content",
+        content: { type: "image", data: block.data, mimeType: block.mimeType },
+      });
+    else texts.push(JSON.stringify(block));
+  }
+  return { text: texts.join("\n"), images };
+};
+
 const changeWord = (change: FileUpdateChange): string =>
   change.kind.type === "add" ? "added" : change.kind.type === "delete" ? "deleted" : "updated";
 
@@ -122,6 +155,8 @@ export function itemUpdate(
   let title: string | undefined;
   let name: string, kind: "execute" | "edit" | "search" | "other", output: string | undefined;
   let rawInput: unknown;
+  let images: { type: "content"; content: { type: "image"; data: string; mimeType: string } }[] =
+    [];
   let locations: { path: string }[] | undefined;
   let meta: Record<string, unknown> | undefined;
   switch (item.type) {
@@ -143,11 +178,17 @@ export function itemUpdate(
     }
     case "mcpToolCall":
       name = `${item.server}/${item.tool}`;
+      title = `${item.server} · ${item.tool}`;
       kind = "other";
       if (item.arguments !== null && item.arguments !== undefined) rawInput = item.arguments;
-      output = completed
-        ? outputHead(JSON.stringify(item.error?.message ?? item.result?.content) ?? "")
-        : undefined;
+      if (completed) {
+        if (item.error) output = outputHead(item.error.message);
+        else {
+          const result = mcpResult(item.result?.content);
+          output = result.text ? outputHead(result.text) : undefined;
+          images = result.images;
+        }
+      }
       break;
     case "fileChange":
       name = "Edit files";
@@ -174,7 +215,16 @@ export function itemUpdate(
     status: completed ? (failed ? "failed" : "completed") : "in_progress",
     ...(rawInput !== undefined ? { rawInput } : {}),
     ...(locations !== undefined ? { locations } : {}),
-    ...(output ? { content: [{ type: "content", content: { type: "text", text: output } }] } : {}),
+    ...(output || images.length > 0
+      ? {
+          content: [
+            ...(output
+              ? [{ type: "content" as const, content: { type: "text" as const, text: output } }]
+              : []),
+            ...images,
+          ],
+        }
+      : {}),
     ...(meta !== undefined ? { _meta: meta } : {}),
   };
 }

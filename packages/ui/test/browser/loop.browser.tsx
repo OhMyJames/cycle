@@ -1987,6 +1987,97 @@ test("a Project-level Notice shows no ticket number and opens no ticket", async 
   expect(fake.named("loopTicket")).toEqual([]);
 });
 
+test("escalated In Review ticket shows review conclusion and marks In review as awaiting review, not Done", async () => {
+  const user = userEvent.setup();
+  const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+  const escalated: LoopTicket = {
+    ...ticket(517, "In Review"),
+    title: "Codex MCP readable title",
+  };
+  const fake = fakeBridge({
+    connected: true,
+    loopProjects: { kind: "ok", projects: [cycle] },
+    workspaceRepos: { "/work": cycle.repo.displayName },
+    loopBoards: { CYC: withTickets({ "In Review": [escalated] }) },
+    loopTickets: {
+      "CYC-517": detailOf(escalated, {
+        body: "Escalated ticket body",
+        attention: {
+          kind: "review",
+          text: "Needs human sign-off on scope",
+          prUrl: "https://github.com/OhMyJames/cycle/pull/401",
+        },
+        links: ["https://github.com/OhMyJames/cycle/pull/401"],
+      }),
+    },
+    loopRunDetails: {
+      "CYC-517": {
+        kind: "ok",
+        run: {
+          key: "CYC-517",
+          title: "Codex MCP readable title",
+          kind: "dev",
+          phase: "done",
+          state: "done",
+          round: 0,
+          startedAt: ago(30),
+          updatedAt: ago(5),
+          blockedReason: null,
+          sessions: [
+            { kind: "dev", id: "sess-dev" },
+            { kind: "qa", id: "sess-qa" },
+            { kind: "review", id: "sess-rev" },
+          ],
+          prUrl: "https://github.com/OhMyJames/cycle/pull/401",
+          events: [
+            { ts: ago(30), kind: "claimed" },
+            { ts: ago(5), kind: "delivered" },
+          ],
+          heartbeat: null,
+        },
+      },
+    },
+  });
+  await renderApp(fake.bridge);
+  await user.click(await screen.findByRole("button", { name: "Kanban" }));
+  await user.click(await screen.findByRole("button", { name: "Codex MCP readable title" }));
+  const drawer = await screen.findByRole("complementary", { name: "CYC-517" });
+
+  // Review conclusion card and PR link appear above workflow progress.
+  await within(drawer).findByText("Review conclusion");
+  expect(within(drawer).getByText("Needs human sign-off on scope")).toBeTruthy();
+  expect(
+    within(drawer).getAllByRole("link", { name: "https://github.com/OhMyJames/cycle/pull/401" })
+      .length,
+  ).toBeGreaterThanOrEqual(1);
+
+  // In review is highlighted as `attention` (Awaiting review) with aria-current="step", and Done stays `pending`.
+  const steps = [...drawer.querySelectorAll('[data-slot="loop-run-step"]')];
+  const byLabel = Object.fromEntries(
+    steps.map((el) => [
+      el.querySelector('[data-slot="loop-run-step-label"]')?.textContent ?? "",
+      el.getAttribute("data-state"),
+    ]),
+  );
+  expect(byLabel).toEqual({
+    Developing: "done",
+    Verifying: "done",
+    QA: "done",
+    "Opening PR": "done",
+    "Waiting on CI": "done",
+    "In review": "attention",
+    Done: "pending",
+  });
+  const reviewStep = steps.find(
+    (el) => el.querySelector('[data-slot="loop-run-step-label"]')?.textContent === "In review",
+  );
+  const doneStep = steps.find(
+    (el) => el.querySelector('[data-slot="loop-run-step-label"]')?.textContent === "Done",
+  );
+  expect(reviewStep?.getAttribute("aria-current")).toBe("step");
+  expect(doneStep?.getAttribute("aria-current")).toBeNull();
+});
+
 test("board alert strip, sidebar notice badge, intent retry, and loop-activity live refresh work together", async () => {
   const user = userEvent.setup();
   const fake = fakeBridge({
@@ -2311,4 +2402,89 @@ test("CYC-534: Timeline shows inline alert when a session is unavailable and ren
   await user.click(screen.getByRole("button", { name: /Switch workspace/ }));
   await user.click(await screen.findByRole("menuitem", { name: /docs/ }));
   expect(await screen.findByText("Could not load the timeline")).toBeTruthy();
+});
+
+test("Timeline: a Task Graph is drawn as a graph, the page scrolls, and the search box keeps its icon inside", async () => {
+  const nowIso = new Date().toISOString();
+  const user = userEvent.setup();
+  const node = (id: string, label: string, dependsOn: string[]) => ({
+    id: `node:${id}`,
+    label,
+    role: "dev" as const,
+    status: "passed" as const,
+    sessionId: null,
+    startedAt: nowIso,
+    finishedAt: nowIso,
+    summary: `${label} done`,
+    error: null,
+    dependsOn: dependsOn.map((d) => `node:${d}`),
+  });
+  const fake = fakeBridge({
+    connected: true,
+    loopProjects: { kind: "ok", projects: [cycle] },
+    workspaceRepos: { "/work": cycle.repo.displayName },
+    loopTimelines: {
+      CYC: {
+        kind: "ok",
+        project: "CYC",
+        entries: [
+          {
+            entryKind: "run",
+            id: "run:CYC-527",
+            key: "CYC-527",
+            title: "Graph run",
+            kind: "dev",
+            phase: "dev",
+            state: "active",
+            round: 1,
+            startedAt: nowIso,
+            updatedAt: nowIso,
+            prUrl: null,
+            blockedReason: null,
+            graph: null,
+            steps: [
+              node("n1", "Schema", []),
+              node("n2", "Store", ["n1"]),
+              node("n3", "Tests", ["n1"]),
+              node("n4", "Docs", ["n2", "n3"]),
+            ],
+          },
+        ],
+        hasMore: false,
+        nextBefore: null,
+        knownSessionIds: [],
+      },
+    },
+  });
+  await renderApp(fake.bridge);
+  await user.click(await screen.findByRole("button", { name: "Timeline" }));
+  await screen.findByText("Graph run");
+
+  // Four nodes in three columns, one arrow per dependency.
+  const graph = await screen.findByRole("list", { name: "Task graph" });
+  expect(within(graph).getAllByRole("listitem")).toHaveLength(4);
+  expect(graph.parentElement?.querySelectorAll('[data-slot="loop-dag-edge"]')).toHaveLength(4);
+  // The state is in words as well as in the colour of the dot.
+  expect(within(graph).getAllByText(/\(Passed\)/)).toHaveLength(4);
+  expect(within(graph).getAllByText(/Waits for: Store, Tests\./)).toHaveLength(1);
+  const left = (name: string) =>
+    Number.parseFloat(within(graph).getByText(name).closest("li")?.style.left ?? "NaN");
+  expect(left("Schema")).toBeLessThan(left("Store"));
+  expect(left("Store")).toBe(left("Tests"));
+  expect(left("Tests")).toBeLessThan(left("Docs"));
+
+  // The search icon is inside the field, on the same line as the input.
+  const field = document.querySelector('[data-slot="search-field"]') as HTMLElement;
+  const icon = field.querySelector("svg") as SVGElement;
+  const input = field.querySelector("input") as HTMLInputElement;
+  expect(icon.getBoundingClientRect().top).toBeLessThan(input.getBoundingClientRect().bottom);
+  expect(icon.getBoundingClientRect().bottom).toBeGreaterThan(input.getBoundingClientRect().top);
+  expect(icon.getBoundingClientRect().right).toBeLessThanOrEqual(
+    input.getBoundingClientRect().left + 1,
+  );
+
+  // The page body scrolls as a whole instead of clipping what does not fit.
+  const body = document.querySelector('[data-slot="page-body"]') as HTMLElement;
+  expect(body.hasAttribute("data-full")).toBe(false);
+  expect(getComputedStyle(body).overflowY).toBe("auto");
 });
