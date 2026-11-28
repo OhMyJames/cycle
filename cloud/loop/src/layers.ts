@@ -15,6 +15,7 @@ export const testLayers = (changedFiles: string[]): string[][] => {
     file.startsWith("packages/protocol/") ||
     file.startsWith("packages/client/") ||
     file.startsWith("packages/line-rpc/") ||
+    file.startsWith("packages/command-permissions/") ||
     file.startsWith("apps/daemon/") ||
     file.startsWith("harness/") ||
     (file.startsWith("apps/desktop/") && !file.startsWith("apps/desktop/src/renderer/"));
