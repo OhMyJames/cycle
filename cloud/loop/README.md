@@ -63,7 +63,7 @@ PR 与 main 冲突时，Loop 自己处理，每个工单最多处理 1 次：
 | `maxQaRetries`                                           | 2          | 0–10   |
 | `maxNetworkRetries`                                      | 3          | 0–10   |
 | `networkRetryDelaysSeconds`（数组，1–10 项，每项 1–600） | 10, 30, 60 | —      |
-| `ciPollIntervalSeconds`                                  | 30         | 5–600  |
+| `ciPollIntervalSeconds`（等 CI 检查器的间隔）            | 30         | 5–600  |
 | `ciTimeoutMinutes`                                       | 30         | 1–240  |
 | `mergePollIntervalSeconds`                               | 30         | 5–600  |
 | `mergeTimeoutMinutes`                                    | 10         | 1–240  |
@@ -258,11 +258,19 @@ Loop 推进一张工单时，把当前阶段和进入时间写进工单的两个
 
 ### 等待与唤醒
 
-CI 没跑完时，流程登记等待并结束这一步，**不占 worker**：`waits` 记「谁（`pr:<仓库>#<编号>`）在等什么主题（`ci:<仓库>@<sha>`）」和复查时间（`tuning.ciPollIntervalSeconds` 之后）。信号（`signals`，来源现在只有 `poll`，以后有 `webhook`）写入和唤醒等待在同一个事务里，按 `dedupe` 去重，重复信号只算一次。轮询读到 CI 不再是 `pending` 就发信号；没有信号时到复查时间也会再检查。唤醒只表示「可以重新检查」，动作前一律从 GitHub 重读。登记等待的工作写 `deadline: null` 的心跳，守护者不把它当作卡住。
+CI 没跑完时，流程登记等待并结束这一步，**不占 worker**，worker 立刻去领别的工单或空闲。开发工单（CYC-550）和人开 PR 共用同一套 `waits`、`signals`：`waits` 记「谁在等什么主题」和复查时间，主题都是 `ci:<仓库>@<sha>`；开发工单的 owner 是运行的 key（如 `CYC-550`），人开 PR 的 owner 是 `pr:<仓库>#<编号>`，所以同一主题上的一个信号能同时唤醒两边。信号（`signals`，来源现在只有 `poll`，以后有 `webhook`）写入和唤醒等待在同一个事务里，按 `dedupe` 去重，重复信号只算一次。唤醒只表示「可以重新检查」，动作前一律从 GitHub 重读。
 
-事件写在 `pr:<仓库>#<编号>` 下：`pr_review_started`、`pr_waiting_ci`、`pr_merged`、`pr_merge_refused`、`pr_merge_changed` 等；`stats` 不变。
+**开发工单。** `ci` 阶段每次只读一次 CI：通过、失败、PR 冲突就按原规则走；超过 `ciTimeoutMinutes`（从开始等的时间算，被唤醒不重新计时）转 Blocked；仍在进行中就登记等待并返回 `waiting`。开始等的提交、开始时间和刚重跑的失败任务记在运行状态 `ciWait` 里，跟着 `loop.db` 撑过重启：重启后继续等，不重置超时，也不重复重跑失败任务。推送了新提交就按新提交重新等、重新计时。引擎跳过还没被唤醒、也没到复查时间的运行；到期后先清掉等待、写 `woken` 事件，再继续这张单（不写 `recovered`）。等待期间人移动了工单、合并或关掉了 PR，下次唤醒时按现有规则停下或计为交付。升级前停在 `ci` 阶段、没有等待登记的运行，继续后按新流程登记等待。
 
-SQLite 只加表（`review_tasks`、`waits`、`signals`、`pr_reviews`），旧版本代码能打开新库。本期不做：webhook 和迁主机（CYC-543）、开发流程 `ci` 阶段改成登记等待、处理人开 PR 的合并冲突或改它的代码。
+**检查器。** Loop server 里每个 Project 一个，不占 worker，也不拿选单锁；定时器每 5 秒调一次，实际频率按 `tuning.ciPollIntervalSeconds` 节流（这个值现在是检查器的间隔）。它只读登记了等 CI 的开发运行的 CI 状态，读到不再是进行中（通过、失败、PR 冲突）就在主题上写一个信号；不重跑、不改运行状态、不移动工单。读失败只记日志，由兜底复查补上。dry-run 和 `--once` 下不工作；停机时定时器被清掉。
+
+**兜底复查。** 每个等待的复查时间是 `min(开始等 + ciTimeoutMs, 现在 + 10 分钟)`，检查器没工作、信号丢了，到时间引擎也会恢复这张单，重读 CI，所以超时最迟在截止时间被判定。
+
+登记等待的工作写心跳 `waitingOn: "ci"`，截止时间从开始等的时间算（加 5 分钟），不因唤醒后移，守护者在超过时才提示卡住。
+
+事件：人开 PR 写在 `pr:<仓库>#<编号>` 下：`pr_review_started`、`pr_waiting_ci`、`pr_merged`、`pr_merge_refused`、`pr_merge_changed` 等；开发工单每个提交第一次登记等待写 `ci_waiting`，每次被唤醒或到复查时间写 `woken`；`stats` 不变。
+
+SQLite 只加表（`review_tasks`、`waits`、`signals`、`pr_reviews`），旧版本代码能打开新库；`ciWait` 是运行状态里多出的字段，旧代码会忽略，回滚安全。本期不做：webhook 和迁主机（CYC-543）、迁移人开 PR 的流程（它仍在领单步骤里轮询）、处理人开 PR 的合并冲突或改它的代码、等合并阶段（`review` 开启自动合并后的等待）、等待中取消运行（CYC-399）。
 
 ## 网络错误（CYC-444）
 
