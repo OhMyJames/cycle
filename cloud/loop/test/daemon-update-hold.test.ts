@@ -107,3 +107,106 @@ test("a daemon that cannot say is taken as having nothing waiting", async () => 
   });
   expect(await pipeline.step()).toEqual({ status: "idle" });
 });
+
+function holdRig(dir: string, holdMinutes: number) {
+  const cfg = config({ stateDir: dir, daemonUpdateHoldMinutes: holdMinutes });
+  const sessions = new FakeSessions({
+    dev: [done("<progress>done: x\nnext: y</progress>")],
+    qa: [],
+  });
+  const state: { pending: string | null } = { pending: "0.3.1060" };
+  sessions.updatePending = async () => state.pending;
+  const world: World = {
+    fail: new Set(),
+    calls: [],
+    dirty: true,
+    qaWrites: false,
+    headSha: "abc",
+    ciResponses: [],
+    ciLogs: {},
+    prState: "OPEN",
+    prMerge: [["MERGED", "UNKNOWN"]],
+    mergeTreeOutput: "",
+    ignoredDirs: "",
+  };
+  let at = new Date("2026-11-25T00:00:00Z").getTime();
+  const clock = { now: () => new Date(at) };
+  const store = SqliteStore.open(cfg.stateDir, () => clock.now());
+  const logged: string[] = [];
+  const pipeline = new Pipeline({
+    config: cfg,
+    tracker: new FakeTracker([issue({ description: readyDescription })]),
+    sessions,
+    exec: makeExec(world),
+    store,
+    clock,
+    log: (line) => logged.push(line),
+    env: { PATH: "/bin", GH_TOKEN: "secret", AUTO_LOOP_PLAN_KEY: "k" },
+    sleep: async () => {},
+    stopped: () => false,
+  });
+  return {
+    state,
+    logged,
+    advance: (minutes: number) => {
+      at += minutes * 60_000;
+    },
+    /** One step; true when it took the work item. */
+    async took() {
+      const result = await pipeline.step().catch(() => ({ status: "error" }));
+      return (result as { status: string }).status !== "idle";
+    },
+    waited: () => logged.filter((l) => l.includes("daemon update waited")),
+  };
+}
+
+test("within the hold new work items wait; past it they are taken, with one log line", async () => {
+  const rig = holdRig(dir, 10);
+  expect(await rig.took()).toBe(false);
+  rig.advance(9);
+  expect(await rig.took()).toBe(false);
+  expect(rig.waited()).toEqual([]);
+  rig.advance(1);
+  expect(await rig.took()).toBe(true);
+  expect(rig.waited()).toEqual([
+    "daemon update waited 10 min: taking new work items; it switches when idle",
+  ]);
+  await rig.took();
+  expect(rig.waited().length).toBe(1);
+});
+
+test("the same version is not held again once its hold has run out", async () => {
+  const rig = holdRig(dir, 10);
+  await rig.took();
+  rig.advance(11);
+  expect(await rig.took()).toBe(true);
+  rig.advance(30);
+  expect(await rig.took()).toBe(true); // same version: still not held
+});
+
+test("a newer pending version restarts the hold", async () => {
+  const rig = holdRig(dir, 10);
+  expect(await rig.took()).toBe(false);
+  rig.advance(8);
+  rig.state.pending = "0.3.1061";
+  expect(await rig.took()).toBe(false);
+  rig.advance(8); // 16 min since the first version, 8 since the second
+  expect(await rig.took()).toBe(false);
+  rig.advance(2);
+  expect(await rig.took()).toBe(true);
+});
+
+test("when pending goes away the state clears, so the next one is held again", async () => {
+  const rig = holdRig(dir, 10);
+  expect(await rig.took()).toBe(false);
+  rig.advance(9);
+  rig.state.pending = null;
+  expect(await rig.took()).toBe(true);
+  expect(rig.logged.some((l) => l.includes("daemon update done"))).toBe(true);
+});
+
+test("a hold of 0 does not wait and logs nothing about waiting", async () => {
+  const rig = holdRig(dir, 0);
+  expect(await rig.took()).toBe(true);
+  expect(rig.logged.filter((l) => l.includes("daemon update"))).toEqual([]);
+});
