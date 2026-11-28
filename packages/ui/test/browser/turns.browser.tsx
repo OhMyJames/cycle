@@ -890,6 +890,24 @@ test("a call the person opened stays open when a second call makes it a card", a
   );
 });
 
+test("closing the carried-over row leaves the card open, and the card closes by its own line", async () => {
+  const { user, log, emit } = await open(
+    you("u1"),
+    state({ state: "running" }),
+    ...tool("a", "Bash", "completed", { command: "make lint" }),
+  );
+  await user.click(await screen.findByRole("button", { name: /make lint/ }));
+  await emit(...tool("b", "Bash", "completed", { command: "make test" }));
+  await waitFor(() => expect(log.querySelector('[data-kind="work"]')).not.toBeNull());
+  const expanded = (sel: string) =>
+    log.querySelector(`${sel} > button`)?.getAttribute("aria-expanded");
+  await user.click(log.querySelector('[data-item-id="a"] > button') as HTMLElement);
+  expect(expanded('[data-item-id="a"]')).toBe("false");
+  expect(expanded('[data-kind="work"]')).toBe("true");
+  await user.click(log.querySelector('[data-kind="work"] > button') as HTMLElement);
+  expect(expanded('[data-kind="work"]')).toBe("false");
+});
+
 test("a call never opened is closed, and so is its card, when a second call joins it", async () => {
   const { log, emit } = await open(
     you("u1"),

@@ -65,7 +65,10 @@ export function WorkBlock({ tools, live }: { tools: readonly ToolItem[]; live: b
   const only = tools[0];
   if (tools.length === 1 && only !== undefined)
     return <ToolCard tool={only} openState={rowState(only.id)} />;
-  const cardOpen = card ?? tools.some((tool) => rows[tool.id] === true);
+  // Becoming a card with a row the person opened: the card is opened, once, and from then on it is the card's own state,
+  // so closing that row later does not close the card.
+  if (card === undefined && tools.some((tool) => rows[tool.id] === true)) setCard(true);
+  const cardOpen = card ?? false;
   return (
     <WorkCard tools={tools} live={live} open={cardOpen} setOpen={setCard} rowState={rowState} />
   );
