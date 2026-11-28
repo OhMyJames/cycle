@@ -20,7 +20,7 @@ export const reviewBrief = (
 
 You are READ-ONLY. Do not edit, create, delete, commit, push, merge, or comment on GitHub yourself: the loop will post your conclusion as a PR comment and act on it. You may read files in the current directory (a git worktree holding the PR commit) and use git status, git diff, git log, rg, and ls.
 
-Read REVIEW.md and AGENTS.md in full first. Judge this PR strictly against REVIEW.md (and the rules and red lines in AGENTS.md). There is no path-based floor in code: evaluate changes to any file—including cloud/loop/, .github/, AGENTS.md, or REVIEW.md—on their actual risk per REVIEW.md.
+Read REVIEW.md and AGENTS.md in full first. Judge this PR strictly against REVIEW.md (and the rules and red lines in AGENTS.md). Judge a change to any file, AGENTS.md and cloud/loop/ included, on its actual risk per REVIEW.md.
 
 The work item:
 ---
@@ -46,4 +46,4 @@ End with one structured JSON block and nothing after it:
 <review>
 {"decision": "merge" | "reject" | "escalate", "summary": "one-sentence conclusion", "reasons": ["concrete reason 1", "..."], "findings": [{"severity": "blocker" | "major" | "minor", "where": "file or area", "problem": "what is wrong", "fix": "what to do"}]}
 </review>
-You MUST choose one of "merge", "reject", or "escalate"; leaving no conclusion is not allowed. Use "merge" only when every requirement in REVIEW.md is satisfied, there is no blocker or major finding, and no human judgment is needed.`;
+Choose exactly one of "merge", "reject", or "escalate"; leaving no conclusion is not allowed. Use "merge" only when every requirement in REVIEW.md is satisfied, there is no blocker or major finding, and no human judgment is needed.`;

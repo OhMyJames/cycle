@@ -137,7 +137,7 @@ the whole new description, in Markdown
 what you changed, on what grounds (the original, a comment, a file), and what is 「待确认」
 </notes>
 
-2. A split, ONLY when the work exceeds one PR's capacity or can be scheduled and shipped independently: 2 to ${f.maxSplit} parts, each an independently shippable Level-1 work item (1 item = 1 PR, with its own opening paragraph, sections and 「验收标准」) of type "Feature" or "Bug". Do not split a single 1-PR full-stack requirement into technical-layer sub-tickets (use Form 1 rewrite instead; Loop executes internal layers via its Level-2 Task Graph).
+2. A split, only when the work exceeds one PR's capacity or can be scheduled and shipped independently: 2 to ${f.maxSplit} parts, each an independently shippable Level-1 work item (1 item = 1 PR, with its own opening paragraph, sections and 「验收标准」) of type "Feature" or "Bug".
 <split>
 <part type="${f.type}" title="...">
 the part's description
