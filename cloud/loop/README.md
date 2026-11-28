@@ -247,7 +247,7 @@ Loop 推进一张工单时，把当前阶段和进入时间写进工单的两个
 
 CI 没跑完时，流程登记等待并结束这一步，**不占 worker**：`waits` 记「谁（`pr:<仓库>#<编号>`）在等什么主题（`ci:<仓库>@<sha>`）」和复查时间（`tuning.ciPollIntervalSeconds` 之后）。信号（`signals`，来源现在只有 `poll`，以后有 `webhook`）写入和唤醒等待在同一个事务里，按 `dedupe` 去重，重复信号只算一次。轮询读到 CI 不再是 `pending` 就发信号；没有信号时到复查时间也会再检查。唤醒只表示「可以重新检查」，动作前一律从 GitHub 重读。登记等待的工作写 `deadline: null` 的心跳，守护者不把它当作卡住。
 
-事件写在 `pr:<仓库>#<编号>` 下：`pr_review_started`、`pr_waiting_ci`、`pr_merged`、`pr_merge_refused` 等；`stats` 不变。
+事件写在 `pr:<仓库>#<编号>` 下：`pr_review_started`、`pr_waiting_ci`、`pr_merged`、`pr_merge_refused`、`pr_merge_changed` 等；`stats` 不变。
 
 SQLite 只加表（`review_tasks`、`waits`、`signals`、`pr_reviews`），旧版本代码能打开新库。本期不做：webhook 和迁主机（CYC-543）、开发流程 `ci` 阶段改成登记等待、处理人开 PR 的合并冲突或改它的代码。
 

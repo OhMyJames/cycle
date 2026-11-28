@@ -751,12 +751,24 @@ export class StoreOps {
   }
 
   /** Puts a finished task back to pending so it is reviewed again (a person sent an escalated ticket back). */
-  reopenReviewTask(id: number): void {
+  reopenReviewTask(id: number, forget: readonly string[] = []): void {
     this.db
       .query(
         "UPDATE review_tasks SET status = 'pending', updated_at = ? WHERE id = ? AND status = 'done'",
       )
       .run(this.now().toISOString(), id);
+    if (forget.length === 0) return;
+    // Comment marks the caller wants said again the next time (the task was reviewed anew).
+    const row = this.db.query("SELECT commented FROM review_tasks WHERE id = ?").get(id) as {
+      commented: string;
+    } | null;
+    if (row === null) return;
+    const kept = (JSON.parse(row.commented) as string[]).filter(
+      (e) => !forget.some((f) => e.endsWith(`:${f}`)),
+    );
+    this.db
+      .query("UPDATE review_tasks SET commented = ? WHERE id = ?")
+      .run(JSON.stringify(kept), id);
   }
 
   /** Appends the session id of one attempt. */
@@ -1111,8 +1123,8 @@ export class SqliteStore implements LoopStore {
   releaseReviewTask(id: number) {
     this.#ops.releaseReviewTask(id);
   }
-  reopenReviewTask(id: number) {
-    this.#ops.reopenReviewTask(id);
+  reopenReviewTask(id: number, forget: readonly string[] = []) {
+    this.#ops.reopenReviewTask(id, forget);
   }
   addReviewSession(id: number, sessionId: string) {
     this.#ops.addReviewSession(id, sessionId);

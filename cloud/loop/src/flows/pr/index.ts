@@ -25,6 +25,8 @@ const db = (store: LoopStore) => ({
     store.transaction((tx) => tx.findReviewTask(repo, pr, sha)),
   reviewTask: (repo: string, pr: number, sha: string, origin: string) =>
     store.transaction((tx) => tx.reviewTask(repo, pr, sha, origin)),
+  reopenReviewTask: (id: number, forget: readonly string[]) =>
+    store.transaction((tx) => tx.reopenReviewTask(id, forget)),
   signal: (dedupe: string, subject: string, source: string) =>
     store.transaction((tx) => tx.signal(dedupe, subject, source)),
   clearWaits: (owner: string) => store.transaction((tx) => tx.clearWaits(owner)),
@@ -352,6 +354,34 @@ export class PrFlow {
         // A newer commit: this conclusion belongs to the old one, the new one is looked at as its own.
         this.#settled.add(`${key}@${sha}`);
         return done("head-moved");
+      }
+      // The pull request may have changed while it was reviewed. Not merged, said once, and not settled: when it is
+      // back (ready, or into the base branch again) it is looked at as a new review.
+      const base = baseBranchOf(config.baseRef);
+      const changed = head.isDraft
+        ? { kind: "draft", text: "PR 已是草稿" }
+        : head.baseBranch !== base
+          ? { kind: "base", text: `目标分支已不是 ${base}` }
+          : undefined;
+      if (changed !== undefined) {
+        await store.event(key, "pr_merge_changed", { reason: changed.kind });
+        // Comment first: if GitHub is out of reach the retry is the merge again, not a new review.
+        const said = await commentOnce(
+          h,
+          input,
+          config.repoRoot,
+          `merge-${changed.kind}`,
+          `评审结论为合并，但${changed.text}，Loop 不合并。PR 恢复后会作为新的一次审阅再看。`,
+        );
+        if (!said.ok) return this.#retryLater(key, sha, "comment-failed");
+        // The review of this commit is not kept as finished: once the pull request is back it is reviewed anew,
+        // and a second change after that is said again. Settled until the next poll: a draft or moved pull request
+        // is dropped from the open list there, which clears the mark; without it every tick would review again.
+        const slug = this.#slug();
+        const task = slug === null ? undefined : db(store).findReviewTask(slug, number, sha);
+        if (task !== undefined) db(store).reopenReviewTask(task.id, ["merge-draft", "merge-base"]);
+        this.#settled.add(`${key}@${sha}`);
+        return done(`merge-${changed.kind}`);
       }
       if (ci.status.state === "pending") {
         db(store).wait(
