@@ -61,13 +61,14 @@ type Old = {
   gone(): Promise<void>;
 };
 const sorts: Record<string, true> = {
-  // Added: a method, an optional argument, a field of the answer. Removed: a method. None breaks.
+  // Added: a method, an optional argument, a field of the answer. None breaks.
   additions: true as Same<
     Incompatible<
       Old,
       {
         list(): Promise<{ items: string[]; more?: boolean; total?: number }>;
         open(id: string, options?: { focus: boolean }): Promise<void>;
+        gone(): Promise<void>;
         added(): Promise<void>;
       }
     >,
@@ -75,12 +76,32 @@ const sorts: Record<string, true> = {
   >,
   // A required argument the older app does not take.
   newArgument: true as Same<
-    Incompatible<Old, { open(id: string, force: boolean): Promise<void>; gone(): Promise<void> }>,
+    Incompatible<
+      Old,
+      {
+        list(): Promise<{ items: string[] }>;
+        open(id: string, force: boolean): Promise<void>;
+        gone(): Promise<void>;
+      }
+    >,
     "open"
+  >,
+  // A method removed: the page does not call it, but one added back later under the name would not be checked against
+  // the apps that still have the old one.
+  removed: true as Same<
+    Incompatible<Old, { list(): Promise<{ items: string[] }>; open(id: string): Promise<void> }>,
+    "gone"
   >,
   // An answer the older app does not give: a field it does not send.
   newAnswer: true as Same<
-    Incompatible<Old, { list(): Promise<{ items: string[]; total: number }> }>,
+    Incompatible<
+      Old,
+      {
+        list(): Promise<{ items: string[]; total: number }>;
+        open(id: string): Promise<void>;
+        gone(): Promise<void>;
+      }
+    >,
     "list"
   >,
   // A union the page sends that grew: the older app does not know the new member.

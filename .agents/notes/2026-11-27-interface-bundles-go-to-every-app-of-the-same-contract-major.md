@@ -11,7 +11,7 @@ Matching bundles to apps by a hash of the preload and the API's source means any
 ## Decision
 
 - An app takes bundles of its contract major (`CONTRACT_MAJOR`, recorded in `build.json` as `contract`), whatever app version built them, published as `ui-c<major>.json` (manifest `v: 2`). The shell hash is gone. Signing, keys, the per-file checks, the boot check and the fallback stay as in the earlier note.
-- Only "page as new as the app or newer" ever happens (a bundle at or below the app's own page is refused). So within a major, a change is allowed when the older app can serve the newer page: for methods in both, the new arguments are accepted by the old ones (extra arguments only optional, at the end), and the old answers are accepted by the new type; every old event variant is accepted by the new event type. Added methods and events are allowed; removed methods are allowed.
+- Only "page as new as the app or newer" ever happens (a bundle at or below the app's own page is refused). So within a major, a change is allowed when the older app can serve the newer page: for methods in both, the new arguments are accepted by the old ones (extra arguments only optional, at the end), and the old answers are accepted by the new type; every old event variant is accepted by the new event type. Added methods and events are allowed. Removing a method is a break although the page no longer calls it, because the check compares with the last commit only (see Consequences).
 - The check is a TypeScript type comparison in `bun run typecheck` between the current `api.ts` and a committed declaration snapshot of the previous one (`apps/desktop/test/ui-contract/`). A test requires the snapshot to be current and its imports to resolve. The snapshot only moves through `bun run --cwd apps/desktop ui-contract`, which refuses an incompatible change unless the major was raised, and refuses a change of the protocol SDK version or of the preload source (which the type check cannot judge) unless the major was raised or a reason is given.
 - The page fills in methods the older app lacks with ones that reject (`renderer/bridge.ts`), so a call fails like a refused call instead of throwing a `TypeError`. Every API method must return a promise; the check enforces it.
 - Page updates pause only while the app is being downloaded or installed, not while an update is merely available.
@@ -29,8 +29,9 @@ Matching bundles to apps by a hash of the preload and the API's source means any
 
 - Page-only commits, and commits that only add to the API, reach installed apps of the same major between releases.
 - A change in what the main process does for an unchanged type is invisible to the check; the person making it must raise the major. The 15 s boot check and fallback remain the safety net.
-- The snapshot chain compares each commit with the one before. A method removed in one commit and re-added later with an incompatible type skips the comparison with apps that still have the old type; this is documented rather than guarded.
-- Arguments added at the end as optional are taken by older apps, which ignore them: a page must not rely on an older app honouring them.
+- The snapshot chain compares each commit with the one before. Breaks spread over two compatible-looking steps would pass: for methods this is closed by counting a removal as a break; for fields (one removed, then added back with another type) it is documented rather than guarded (`shared/contract.ts`: give it a new name). Keeping every snapshot of a major and checking against each was the alternative; it was not done for its size.
+- Arguments added at the end as optional, and fields added to what the page sends (required or not), are ignored by older apps: a page must not rely on an older app honouring them.
+- Some compatible changes are flagged (making an optional parameter required, removing a trailing optional one): they cost a major bump, which is safe.
 - The type comparison is only as good as its inputs: an import of the snapshot that does not resolve turns types into an error type that passes everything, so the resolution test is part of the gate, not optional.
 
 ## Related

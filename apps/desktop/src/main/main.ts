@@ -180,7 +180,6 @@ const main = async () => {
  * else, nor given a key).
  */
 const interfaceOptions = (userData: string, info: ReturnType<typeof buildInfo>) => {
-  if (!packaged && !env.CYCLE_UI_URL) return {};
   const contract = info?.contract ?? CONTRACT_MAJOR;
   const testKeys = (() => {
     if (packaged || !env.CYCLE_UI_KEYS) return {};
@@ -203,6 +202,7 @@ const interfaceOptions = (userData: string, info: ReturnType<typeof buildInfo>) 
       return undefined;
     }
   })();
+  if (!packaged && loopback === undefined) return {};
   const verify = (bytes: Uint8Array, signature: string, keyId: string) =>
     verifySignature(bytes, signature, keyId, keys);
   return {

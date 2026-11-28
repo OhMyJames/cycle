@@ -6,8 +6,11 @@
 //    after them are optional, which the older app does not read;
 //  - what the older app answers must be what the page expects: the old result goes where the new one does.
 // And every event the older app sends must be one the page takes. A method the source added is not here: the page
-// finds it missing (renderer/bridge.ts). A method the source removed is not called by the page. Each side is in a
-// tuple, so that a union is compared as a whole and not member by member.
+// finds it missing (renderer/bridge.ts). A method removed counts as a break, although the page no longer calls it: this
+// compares with the last commit only, and a method removed and later added back with other types would go unchecked
+// against the apps that still have the old ones. (The same holds for a field removed and added back with another type:
+// that the check cannot see, so give it a new name instead.) Each side is in a tuple, so that a union is compared as a
+// whole and not member by member.
 import type { AppApi as NewApi, AppEvent as NewEvent } from "@cycle/ui/api";
 import type { CONTRACT_MAJOR } from "../../src/shared/contract.ts";
 import type { AppApi as OldApi, AppEvent as OldEvent } from "./snapshot/api";
@@ -26,10 +29,12 @@ export type Breaks<O, N> = [Fn<N>["args"]] extends [[...Fn<O>["args"], ...unknow
     : true
   : true;
 
-/** The methods of both that a page typed `N` cannot call on an app typed `O`. */
-export type Incompatible<O, N> = {
-  [K in keyof O & keyof N]-?: Breaks<O[K], N[K]> extends true ? K : never;
-}[keyof O & keyof N];
+/** The methods of both that a page typed `N` cannot call on an app typed `O`, and those `N` no longer has. */
+export type Incompatible<O, N> =
+  | {
+      [K in keyof O & keyof N]-?: Breaks<O[K], N[K]> extends true ? K : never;
+    }[keyof O & keyof N]
+  | Exclude<keyof O, keyof N>;
 
 /** True when an app sending `O` may send an event a page taking `N` does not know. */
 export type EventsBreak<O, N> = [O] extends [N] ? false : true;
@@ -54,7 +59,7 @@ type Verdict = [NotPromised<NewApi>] extends [never]
             fix: "raise CONTRACT_MAJOR in apps/desktop/src/shared/contract.ts";
           }
       : {
-          problem: "an app of this major cannot serve these methods as the page calls them";
+          problem: "these methods were removed, or an app of this major cannot serve them as the page calls them";
           methods: Incompatible<OldApi, NewApi>;
           fix: "raise CONTRACT_MAJOR in apps/desktop/src/shared/contract.ts";
         }

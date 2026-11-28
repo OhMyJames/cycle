@@ -2,7 +2,10 @@
  * The major version of what the page may rely on the app (main and preload) for (docs/desktop.md "界面更新"): an
  * interface bundle is taken by every app of the same major, whichever of them it was built after. Within one major a
  * change may only add: a method, an event, an optional field the page sends, a field or a variant of a union the page is
- * sent... (test/ui-contract.test.ts checks the API's types against the last snapshot of them, in `bun run check`).
+ * sent... (test/ui-contract/compat.ts checks the API's types against the last snapshot of them, in `bun run check`).
+ * Removing a method is a break too. A field removed may not come back with another type within a major: the check
+ * compares with the last commit only and cannot see it; give it a new name. A field the page adds to what it sends is
+ * not read by an older app, required or not: the page must not rely on an older app honouring it.
  *
  * Raise this by one, and take a new snapshot (`bun run --cwd apps/desktop ui-contract`), when:
  *  - the API's types change in a way an older app could not serve (the check says which methods);
