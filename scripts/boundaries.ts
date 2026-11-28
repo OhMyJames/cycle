@@ -30,29 +30,45 @@ export const zoneOf = (file: string): Zone[] => {
 };
 
 /** Literal module references, including types checked at the model and bridge boundaries. */
-export const importsOf = (text: string, file = "source.ts"): string[] => {
-  const names: string[] = [];
-  const collect = (source: Argument | null | undefined) => {
-    if (source?.type === "Literal" && typeof source.value === "string") names.push(source.value);
-    if (source?.type === "TemplateLiteral" && source.expressions.length === 0) {
-      const value = source.quasis[0]?.value.cooked;
-      if (typeof value === "string") names.push(value);
-    }
+export const moduleReferences = (text: string, file = "source.ts") => {
+  const references: { name: string; typeOnly: boolean }[] = [];
+  const collect = (source: Argument | null | undefined, typeOnly = false) => {
+    const name =
+      source?.type === "Literal"
+        ? source.value
+        : source?.type === "TemplateLiteral" && source.expressions.length === 0
+          ? source.quasis[0]?.value.cooked
+          : undefined;
+    if (typeof name === "string") references.push({ name, typeOnly });
   };
   new Visitor({
-    ImportDeclaration: (node) => collect(node.source),
-    ExportNamedDeclaration: (node) => collect(node.source),
-    ExportAllDeclaration: (node) => collect(node.source),
+    ImportDeclaration: (node) =>
+      collect(
+        node.source,
+        node.importKind === "type" ||
+          (node.specifiers.length > 0 &&
+            node.specifiers.every((s) => s.type === "ImportSpecifier" && s.importKind === "type")),
+      ),
+    ExportNamedDeclaration: (node) =>
+      collect(
+        node.source,
+        node.exportKind === "type" ||
+          (node.specifiers.length > 0 && node.specifiers.every((s) => s.exportKind === "type")),
+      ),
+    ExportAllDeclaration: (node) => collect(node.source, node.exportKind === "type"),
     ImportExpression: (node) => collect(node.source),
-    TSImportType: (node) => collect(node.source),
-    TSExternalModuleReference: (node) => collect(node.expression),
+    TSImportType: (node) => collect(node.source, true),
+    TSImportEqualsDeclaration: (node) => {
+      if (node.moduleReference.type === "TSExternalModuleReference")
+        collect(node.moduleReference.expression, node.importKind === "type");
+    },
     CallExpression: (node) => {
       if (node.callee.type === "Identifier" && node.callee.name === "require") {
         collect(node.arguments[0]);
       }
     },
   }).visit(parseSync(file, text).program);
-  return names;
+  return references;
 };
 
 const NODE = /^(?:node:|bun(?::|$)|electron(?:\/|$))/;
@@ -62,8 +78,7 @@ const BUILTINS = builtinModules.filter((m) => !m.startsWith("_"));
 const isBuiltin = (name: string) => BUILTINS.some((m) => name === m || name.startsWith(`${m}/`));
 // Packages that run in the daemon or the main process: the page has no business with them.
 // The analytics package may be reached for its dictionary (`@cycle/analytics/events`, for types), not for PostHog.
-const BACKEND =
-  /^@cycle\/(?:daemon|client|protocol|desktop|oidc)(?:\/|$)|^@cycle\/harness-|^@cycle\/analytics(?:$|\/posthog)/;
+const BACKEND = /^@cycle\/(?:daemon|client|protocol|desktop|oidc)(?:\/|$)|^@cycle\/harness-/;
 
 const isRelative = (name: string) => name.startsWith(".");
 
@@ -72,7 +87,10 @@ const inModel = (resolved: string) =>
   resolved.startsWith("packages/ui/src/model/") ||
   resolved.replace(/\.tsx?$/, "") === "packages/ui/src/api";
 
-const forbidden: Record<Zone, (name: string, file: string) => string | undefined> = {
+const forbidden: Record<
+  Zone,
+  (name: string, file: string, typeOnly: boolean) => string | undefined
+> = {
   model: (name, file) => {
     if (name === "@agentclientprotocol/sdk/experimental/v2") return undefined;
     if (isRelative(name)) {
@@ -81,7 +99,12 @@ const forbidden: Record<Zone, (name: string, file: string) => string | undefined
     }
     return "the model is pure TypeScript: it may import only its own files and @agentclientprotocol/sdk/experimental/v2";
   },
-  renderer: (name) => {
+  renderer: (name, file, typeOnly) => {
+    if (name === "@cycle/analytics/events" && typeOnly) return undefined;
+    const resolved = isRelative(name) ? posix.join(posix.dirname(file), name) : name;
+    if (/^(?:@cycle\/analytics|packages\/analytics|posthog-node|posthog-js)(?:\/|$)/.test(resolved))
+      return "the page may import only types from @cycle/analytics/events; the main process owns analytics";
+
     if (NODE.test(name) || isBuiltin(name))
       return "the page runs in a browser: no Node, Bun or Electron module";
     if (BACKEND.test(name))
@@ -127,10 +150,10 @@ export const violations = (file: string, text: string): string[] => {
   const zones = zoneOf(file);
   const out: string[] = [];
   if (zones.length > 0) {
-    const names = importsOf(text, file);
+    const references = moduleReferences(text, file);
     for (const zone of zones)
-      for (const name of names) {
-        const why = forbidden[zone](name, file);
+      for (const { name, typeOnly } of references) {
+        const why = forbidden[zone](name, file, typeOnly);
         if (why) out.push(`${file}: ${zone} imports "${name}" (${why})`);
       }
   }

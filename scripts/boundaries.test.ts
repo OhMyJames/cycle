@@ -1,11 +1,13 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { importsOf, violations, zoneOf } from "./boundaries.ts";
+import { moduleReferences, violations, zoneOf } from "./boundaries.ts";
 
 const root = new URL("..", import.meta.url).pathname;
 
-describe("importsOf", () => {
+const importsOf = (text: string, file?: string) => moduleReferences(text, file).map((r) => r.name);
+
+describe("module references", () => {
   test("finds static, type, side-effect, re-export, multi-line, dynamic and require", () => {
     const text = [
       'import a from "a";',
@@ -143,6 +145,25 @@ const cases: [string, string, boolean][] = [
   ["packages/ui/src/react/app.tsx", 'import { api } from "@cycle/ui/api";', false],
   ["packages/ui/src/react/app.tsx", 'import { createRoot } from "react-dom/client";', false],
   ["packages/ui/src/store/store.ts", 'import { applyUpdate } from "../model/index.ts";', false],
+  [
+    "packages/ui/src/react/x.tsx",
+    'import type { AgentWord } from "@cycle/analytics/events";',
+    false,
+  ],
+  [
+    "packages/ui/src/react/x.tsx",
+    'export { type AgentWord } from "@cycle/analytics/events";',
+    false,
+  ],
+  [
+    "packages/ui/src/react/x.tsx",
+    'import { type AgentWord, agentOf } from "@cycle/analytics/events";',
+    true,
+  ],
+  ["packages/ui/src/react/x.tsx", 'export * from "@cycle/analytics/events";', true],
+  ["packages/ui/src/react/x.tsx", 'await import("@cycle/analytics/events");', true],
+  ["packages/ui/src/react/x.tsx", 'require("posthog-node");', true],
+  ["packages/ui/src/react/x.tsx", 'import "../../../analytics/src/events.ts";', true],
   // The preload
   ["apps/desktop/src/preload/preload.ts", 'import { x } from "@cycle/daemon";', true],
   ["apps/desktop/src/preload/preload.ts", 'import { x } from "@cycle/daemon/src/daemon.ts";', true],
