@@ -3,7 +3,7 @@
 // daemon gives against the hardcoded allowlist (agent-auth-guard.ts), and opens one only when the person clicks.
 import { agentOf } from "@cycle/analytics/events";
 import type { ClientEvents, CycleClient } from "@cycle/client";
-import { CycleErrorCode } from "@cycle/protocol";
+import { AgentAuthFailureReasonSchema, CycleErrorCode } from "@cycle/protocol";
 import type {
   AgentAuthLogoutAnswer,
   AgentAuthProblemReason,
@@ -14,15 +14,28 @@ import type {
   AgentSetupSnapshot,
   AgentSignInMode,
 } from "@cycle/ui";
-import { AGENT_AUTH_PROBLEM_REASONS } from "@cycle/ui/api";
 import { selectAgentSignInMode, validateAgentAuthUrl } from "./agent-auth-guard.ts";
 import type { Runtime } from "./runtime.ts";
 
 type AgentAuthCompleted = Parameters<NonNullable<ClientEvents["agentAuthCompleted"]>>[0];
 
-const authProblemReasonOf = (error: unknown): AgentAuthProblemReason => {
+// Keep the installed shell's bridge definition stable. The compiler checks the runtime
+// vocabulary against it, including the failure reasons the daemon protocol already owns.
+const authProblemReasons = Object.values({
+  ...AgentAuthFailureReasonSchema.enum,
+  unsupported_mode: "unsupported_mode",
+  untrusted_url: "untrusted_url",
+  flow_not_found: "flow_not_found",
+  flow_forbidden: "flow_forbidden",
+  flow_consumed: "flow_consumed",
+  flow_not_active: "flow_not_active",
+  disconnected: "disconnected",
+  failed: "failed",
+} as const satisfies { [Reason in AgentAuthProblemReason]: Reason });
+
+export const authProblemReasonOf = (error: unknown): AgentAuthProblemReason => {
   const reason = (error as { data?: { reason?: unknown } } | null)?.data?.reason;
-  return AGENT_AUTH_PROBLEM_REASONS.find((known) => known === reason) ?? "failed";
+  return authProblemReasons.find((known) => known === reason) ?? "failed";
 };
 
 export class AgentAuthFlows {
