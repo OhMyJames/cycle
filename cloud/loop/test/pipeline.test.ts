@@ -933,6 +933,14 @@ test("review retries on session error, timeout, abnormal end, unparseable output
       },
       { stateDir: dir3, maxReviewRetries: 2 },
     );
+    // The fix is a new commit: a conclusion belongs to one commit, so the fix gets its own review.
+    const turn3 = multiRetry.sessions.turn.bind(multiRetry.sessions);
+    let devTurns3 = 0;
+    multiRetry.sessions.turn = async (id, prompt, ctx) => {
+      const out = await turn3(id, prompt, ctx);
+      if (ctx.role === "dev") multiRetry.world.headSha = `sha-${++devTurns3}`;
+      return out;
+    };
     const r3 = await multiRetry.pipeline.step();
     expect(r3).toEqual({
       status: "delivered",

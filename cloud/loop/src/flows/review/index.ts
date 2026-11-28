@@ -34,6 +34,10 @@ export type ReviewInput = {
   context: ReviewContext;
   /** The comment for a conclusion, when the caller has more to say than the default. */
   render?: (what: RenderInput) => string;
+  /** False when the caller writes the comment itself (with `commentOnce`), for example to put a note of its own in it. */
+  comment?: boolean;
+  /** True when the caller has seen CI green on this commit itself, so GitHub is not asked again. */
+  ciKnownGreen?: boolean;
 };
 
 export type RenderInput = {
@@ -149,7 +153,10 @@ export async function reviewTask(h: FlowHost, input: ReviewInput): Promise<Revie
         : {}),
       sessionId: lastSession,
     });
-    const posted = await commentOnce(h, input, cwd, c.decision, body);
+    const posted =
+      input.comment === false
+        ? ({ ok: true } as const)
+        : await commentOnce(h, input, cwd, c.decision, body);
     return {
       kind: "concluded",
       headSha,
@@ -165,21 +172,23 @@ export async function reviewTask(h: FlowHost, input: ReviewInput): Promise<Revie
   if (task.status === "done") return finish(task);
 
   // CI first: a commit whose required checks are not all green is not reviewed.
-  const read = await h.net(
-    key,
-    "gh pr view",
-    () => h.d.forge.ciStatus(at(h, cwd), input.prRef, headSha, config.ciChecks),
-    (r) => (r.ok ? undefined : r.error),
-  );
-  if (!read.ok) {
-    return { kind: "unavailable", reason: `读取 CI 状态失败：${tail(read.error)}` };
-  }
-  if (read.status.state !== "passed") {
-    return {
-      kind: "ci_not_green",
-      reason: `CI 状态未全绿（当前为 ${read.status.state}）。`,
-      state: read.status.state,
-    };
+  if (input.ciKnownGreen !== true) {
+    const read = await h.net(
+      key,
+      "gh pr view",
+      () => h.d.forge.ciStatus(at(h, cwd), input.prRef, headSha, config.ciChecks),
+      (r) => (r.ok ? undefined : r.error),
+    );
+    if (!read.ok) {
+      return { kind: "unavailable", reason: `读取 CI 状态失败：${tail(read.error)}` };
+    }
+    if (read.status.state !== "passed") {
+      return {
+        kind: "ci_not_green",
+        reason: `CI 状态未全绿（当前为 ${read.status.state}）。`,
+        state: read.status.state,
+      };
+    }
   }
 
   if (!store.transaction((tx) => tx.claimReviewTask(task.id))) return { kind: "busy" };
