@@ -107,6 +107,9 @@ const locationsSummary = (tool: ToolItem): string | undefined => {
   return unique.length > 1 ? `${unique[0]} +${unique.length - 1}` : unique[0];
 };
 
+/** A command that ran at least this long shows how long on its card. */
+const LONG_COMMAND_MS = 10_000;
+
 /** What a call acted on: its command, path, pattern, address or query. Shown, never run. */
 export const toolSummary = (tool: ToolItem): string => {
   // A command that only searches, reads or lists, with no sentence of the agent's for it: what it searched or read,
@@ -460,7 +463,11 @@ function CallCard({ tool, openState }: { tool: ToolItem; openState?: OpenState |
         >
           {summary}
         </span>{" "}
-        {subagent !== undefined ? <SubagentFacts subagent={subagent} /> : <Facts facts={facts} />}{" "}
+        {subagent !== undefined ? (
+          <SubagentFacts subagent={subagent} />
+        ) : (
+          <Facts facts={facts} command={command !== undefined} />
+        )}{" "}
         {/* How long it has been at work, counted from when the page first saw it: the row drawn again goes on. */}
         {working ? (
           <Elapsed since={startedAt(`${scope}:tool:${tool.id}`)} slot="tool-elapsed" />
@@ -559,7 +566,7 @@ function CallCard({ tool, openState }: { tool: ToolItem; openState?: OpenState |
 }
 
 /** The numbers after a call's summary: what an edit changed, which lines a read read, what a search found. */
-function Facts({ facts }: { facts: ToolFacts }) {
+function Facts({ facts, command }: { facts: ToolFacts; command: boolean }) {
   const i18n = useI18n();
   const { t } = i18n;
   const { edit, read, search } = facts;
@@ -594,7 +601,7 @@ function Facts({ facts }: { facts: ToolFacts }) {
     );
   }
   if (facts.run !== undefined) {
-    const { interrupted, timedOutMs, background, exitCode } = facts.run;
+    const { interrupted, timedOutMs, background, exitCode, durationMs } = facts.run;
     const text = interrupted
       ? t("tool.facts.interrupted")
       : exitCode !== undefined && exitCode !== 0
@@ -604,7 +611,13 @@ function Facts({ facts }: { facts: ToolFacts }) {
           : background
             ? t("tool.facts.background")
             : undefined;
-    return text === undefined ? null : <span data-slot="tool-facts">{text}</span>;
+    // Only a command that ran long says how long; a quick one, or a tool that is not a command, stays quiet.
+    const took =
+      command && durationMs !== undefined && durationMs >= LONG_COMMAND_MS
+        ? t("tool.facts.took", { duration: durationOf(i18n, durationMs) })
+        : undefined;
+    const shown = [text, took].filter((part) => part !== undefined).join(" · ");
+    return shown === "" ? null : <span data-slot="tool-facts">{shown}</span>;
   }
   if (read !== undefined) {
     // Past the end of the file (or an empty one): no lines were read, and there is no range to give.

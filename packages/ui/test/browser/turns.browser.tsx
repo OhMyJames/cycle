@@ -1215,6 +1215,35 @@ test("a command opens to itself and its output apart from its errors; a long out
   ]);
 });
 
+test("a command shows how long it ran only from 10 seconds; a quick one, one without a time, or another tool does not", async () => {
+  const ran = (id: string, name: string, input: object, run: object) =>
+    finished(id, name, input, {
+      content: [],
+      _meta: { "cycle/toolResult": { run } },
+    });
+  const factsOf = async (
+    name: string,
+    input: { command?: string; file_path?: string },
+    run: object,
+  ) => {
+    cleanup();
+    await open(
+      you("u1"),
+      ...ran("c", name, { ...input, description: "The call" }, run),
+      state({ state: "idle", stopReason: "end_turn" }),
+    );
+    return (await screen.findByRole("button", { name: /The call|a\.txt/ })).textContent ?? "";
+  };
+  expect(await factsOf("Bash", { command: "make" }, { durationMs: 12000 })).toContain(
+    "took 12 sec",
+  );
+  expect(await factsOf("Bash", { command: "ls" }, { durationMs: 9000 })).not.toContain("took");
+  expect(await factsOf("Bash", { command: "pwd" }, {})).not.toContain("took");
+  expect(await factsOf("Read", { file_path: "/a.txt" }, { durationMs: 30000 })).not.toContain(
+    "took",
+  );
+});
+
 test("a shell command is coloured as bash in the code theme's colours, and is the same words and copy as plain text", async () => {
   const command = 'git show :2:a.md | grep "x" > /tmp/o.txt; n=$(wc -l < a.md) && echo "$n"';
   const { user, log, script } = await open(

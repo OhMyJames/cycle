@@ -402,6 +402,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "tool.facts.exitCode": "退出码 {code}",
   "tool.facts.timedOut": "运行超过 {duration}，已转到后台",
   "tool.facts.background": "在后台",
+  "tool.facts.took": "耗时 {duration}",
   "session.dismissBackground": "把 {count} 个未确认的后台任务标记为已结束",
   "review.title": "代码评审",
   "review.none": "没有发现问题",
