@@ -6,11 +6,13 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { type Tuning, tuningToConfig } from "../config-file.ts";
 import { CriteriaBook } from "../criteria.ts";
 import type { PlanFlow } from "../flows/plan.ts";
+import type { PrFlow } from "../flows/pr/index.ts";
 import { isNetworkError } from "../network.ts";
 import type { At } from "../ports/forge.ts";
 import { applyPatch, type RunRecord } from "../store.ts";
 import type { Config, ExecResult, Issue, LoopPhase, SessionRole, TurnResult } from "../types.ts";
 import { runCleanup } from "./cleanup.ts";
+import { DaemonUpdateHold } from "./daemon-hold.ts";
 import {
   Blocked,
   branchOf,
@@ -31,6 +33,7 @@ import { deadlineFor, recordHeartbeat, WORKER_BEAT_KEY } from "./heartbeat.ts";
 import { stopIfMoved, waitingForBlockers } from "./person.ts";
 import { Reconciler, writeIntent } from "./reconcile.ts";
 import { putBackRun } from "./reread.ts";
+import { waitStateOf, wake } from "./waiting.ts";
 
 /** What the engine runs with beyond `Deps`: the flows and intakes, made with the host they may use. */
 export type Wiring = {
@@ -39,6 +42,8 @@ export type Wiring = {
   todo: Intake;
   /** The planning node (CYC-322): asked after `Todo`, and only when it is on. */
   plan: PlanFlow;
+  /** Pull requests a person opened (CYC-540): asked last, and only when the Project turned it on. */
+  pr: PrFlow;
 };
 
 export class Engine {
@@ -46,6 +51,7 @@ export class Engine {
   readonly #flows: Record<RunKind, Flow>;
   readonly #todo: Intake;
   readonly #plan: PlanFlow;
+  readonly #pr: PrFlow;
   /** The `tuning` in force for new steps: the last one that was read and valid. */
   #tuning: Tuning;
   #lastTuningProblem: string | null = null;
@@ -53,11 +59,12 @@ export class Engine {
   readonly #stepConfig = new AsyncLocalStorage<Config>();
   /** Keys of the runs some step is working on now. */
   readonly #active = new Set<string>();
-  /** Whether the last look found the daemon waiting to switch versions: said in the log only when it changes. */
-  #heldForDaemon = false;
+  /** The wait on a daemon update, at most `daemonUpdateHoldMinutes` per version (CYC-561). */
+  readonly #daemonHold = new DaemonUpdateHold();
   /** In-flight session id per run key, for supervisor `loop/run/cancel` (CYC-484). */
   readonly #activeSessions = new Map<string, string>();
   #lock: Promise<void> = Promise.resolve();
+  #watching = false;
   readonly #reconcile = new Reconciler(() => this.#d);
 
   constructor(deps: Deps, wire: (host: FlowHost) => Wiring) {
@@ -67,11 +74,16 @@ export class Engine {
     this.#flows = wiring.flows;
     this.#todo = wiring.todo;
     this.#plan = wiring.plan;
+    this.#pr = wiring.pr;
   }
 
   /** Where new runs come from, asked in order: `Todo` first (approved work), then the planning node when it is on. */
   #intakes(config: Config): Intake[] {
-    return config.planning === null ? [this.#todo] : [this.#todo, this.#plan.intake()];
+    return [
+      this.#todo,
+      ...(config.planning === null ? [] : [this.#plan.intake()]),
+      ...(config.prReview === null ? [] : [this.#pr.intake()]),
+    ];
   }
 
   /** What a flow may use. `d` is a getter: the config is the one of the step that calls. */
@@ -148,6 +160,25 @@ export class Engine {
     return this.#stepConfig.run(this.#configNow(), () => this.#step());
   }
 
+  /** Lets each flow look at the runs waiting on the outside (CYC-550). One at a time; no lock, no session, no move. */
+  async watch(): Promise<void> {
+    if (this.#watching || this.#deps.config.dryRun) return;
+    this.#watching = true;
+    try {
+      await this.#stepConfig.run(this.#configNow(), async () => {
+        for (const flow of Object.values(this.#flows)) {
+          try {
+            await flow.watch?.();
+          } catch (error) {
+            this.#d.log(`watch failed: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }
+      });
+    } finally {
+      this.#watching = false;
+    }
+  }
+
   async #step(): Promise<StepResult> {
     if (this.#d.config.dryRun) return this.#dryRun();
     // What an earlier step could not write to the tracker, before anything new is taken.
@@ -165,7 +196,12 @@ export class Engine {
     try {
       if ("own" in chosen) return await this.#goOwn(chosen.own);
       if (chosen.resume !== undefined) {
-        return await this.#resume(chosen.resume.run, chosen.resume.issue, chosen.resume.byPerson);
+        return await this.#resume(
+          chosen.resume.run,
+          chosen.resume.issue,
+          chosen.resume.byPerson,
+          chosen.resume.woken,
+        );
       }
       return await this.#drive(chosen.run, chosen.issue, chosen.book, false);
     } finally {
@@ -208,7 +244,10 @@ export class Engine {
    */
   async #choose(): Promise<
     | { result: StepResult }
-    | { key: string; resume: { run: RunRecord; issue: Issue; byPerson: boolean } }
+    | {
+        key: string;
+        resume: { run: RunRecord; issue: Issue; byPerson: boolean; woken: boolean };
+      }
     | { key: string; resume?: undefined; run: RunRecord; issue: Issue; book: CriteriaBook }
     | { key: string; own: OwnRun }
   > {
@@ -222,24 +261,30 @@ export class Engine {
       // A kind turned off with a run under way: the run waits in the state directory until it is on again. Still
       // held below, so its work item is not claimed afresh.
       if (!flow.enabled(config)) continue;
+      // Waiting and not woken: left alone, the work item is not even read.
+      const waiting = waitStateOf(store, run.key);
+      if (waiting === "waiting") continue;
       const wanted = await flow.stillWanted(run);
       if (wanted === undefined) continue;
       if (wanted.byPerson && (await waitingForBlockers(this.#d, run, wanted.issue))) continue;
+      if (waiting === "due") await wake(store, run.key, run.phase);
       this.#active.add(run.key);
-      return { key: run.key, resume: { run, issue: wanted.issue, byPerson: wanted.byPerson } };
+      return {
+        key: run.key,
+        resume: { run, issue: wanted.issue, byPerson: wanted.byPerson, woken: waiting === "due" },
+      };
     }
 
     if (this.#d.stopped?.() === true) return { result: { status: "idle" } };
     // The daemon has a new version waiting for it to be idle: nothing new is taken until it has switched (CYC-538).
-    const daemonUpdating = (await this.#d.sessions.updatePending?.().catch(() => false)) === true;
-    if (daemonUpdating !== this.#heldForDaemon)
-      this.#d.log(
-        daemonUpdating
-          ? "daemon update waiting: not taking new work items until it has switched"
-          : "daemon update done: taking new work items again",
-      );
-    this.#heldForDaemon = daemonUpdating;
-    if (daemonUpdating) return { result: { status: "idle" } };
+    if (
+      this.#daemonHold.holds(
+        await this.#d.sessions.updatePending?.().catch(() => null),
+        config,
+        this.#d,
+      )
+    )
+      return { result: { status: "idle" } };
     const held = new Set([...this.#active, ...unfinished.map((r) => r.key)]);
     for (const intake of this.#intakes(config)) {
       const want = await intake.want(held);
@@ -342,7 +387,12 @@ export class Engine {
     return { status: "idle" };
   }
 
-  async #resume(run: RunRecord, issue: Issue, byPerson: boolean): Promise<StepResult> {
+  async #resume(
+    run: RunRecord,
+    issue: Issue,
+    byPerson: boolean,
+    woken: boolean,
+  ): Promise<StepResult> {
     const { store } = this.#d;
     let book = await store.loadCriteria(run.key);
     let current = run;
@@ -352,6 +402,9 @@ export class Engine {
       );
       if ("rejected" in back) return { status: "rejected", key: run.key, reasons: back.rejected };
       ({ run: current, book } = back);
+    } else if (woken) {
+      // Woken from a wait: not a recovery, nothing to check again; the phase reads what it waited for afresh.
+      return this.#drive(current, issue, book, false);
     } else {
       await store.event(run.key, "recovered", { phase: run.phase });
     }

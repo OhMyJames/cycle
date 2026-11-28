@@ -129,8 +129,12 @@ function GraphNode({
     !liveDuration && node.startedAt !== null && node.finishedAt !== null
       ? formatSpan(Date.parse(node.startedAt), Date.parse(node.finishedAt), t)
       : undefined;
+  const isQa = node.role === "qa";
+  const readOnlyRole = node.role === "research" || node.role === "design" ? node.role : undefined;
   const shortSha = node.commitSha !== null ? node.commitSha.slice(0, 7) : undefined;
   const hasMeta =
+    isQa ||
+    readOnlyRole !== undefined ||
     node.origin === "fix" ||
     node.rounds > 0 ||
     liveDuration ||
@@ -139,6 +143,7 @@ function GraphNode({
   const detail = [
     ["goal", node.goal],
     ["summary", node.summary],
+    ["report", node.report ?? null],
     ["lastError", node.lastError],
   ] as const;
 
@@ -159,11 +164,20 @@ function GraphNode({
           <span data-slot="loop-graph-dot" aria-hidden="true" />
           {t(`loop.graph.status.${node.status}`)}
         </span>
+        {isQa && node.verdict != null ? (
+          <span data-slot="loop-graph-verdict" data-verdict={node.verdict}>
+            {t(`loop.graph.verdict.${node.verdict}`)}
+          </span>
+        ) : null}
       </div>
 
       {hasMeta ? (
         <div data-slot="loop-graph-meta">
-          {node.origin === "fix" ? (
+          {isQa ? <span data-slot="loop-graph-tag">{t("loop.graph.qaSession")}</span> : null}
+          {readOnlyRole !== undefined ? (
+            <span data-slot="loop-graph-tag">{t(`loop.graph.${readOnlyRole}Session`)}</span>
+          ) : null}
+          {node.origin === "fix" && !isQa ? (
             <span data-slot="loop-graph-tag">{t("loop.graph.fix")}</span>
           ) : null}
           {node.rounds > 0 ? <span>{t("loop.run.round", { count: node.rounds })}</span> : null}
@@ -208,16 +222,18 @@ function GraphNode({
               </dd>
             </div>
           ) : null}
-          <div data-slot="loop-graph-field" data-field="verify">
-            <dt>{t("loop.graph.verify")}</dt>
-            <dd>
-              <ul data-slot="loop-graph-mono-list">
-                {keyed(node.verify).map(({ key, item }) => (
-                  <li key={key}>{item}</li>
-                ))}
-              </ul>
-            </dd>
-          </div>
+          {node.verify.length > 0 ? (
+            <div data-slot="loop-graph-field" data-field="verify">
+              <dt>{t("loop.graph.verify")}</dt>
+              <dd>
+                <ul data-slot="loop-graph-mono-list">
+                  {keyed(node.verify).map(({ key, item }) => (
+                    <li key={key}>{item}</li>
+                  ))}
+                </ul>
+              </dd>
+            </div>
+          ) : null}
         </dl>
       ) : null}
 
@@ -360,8 +376,9 @@ export function ExecutionGraph({
     .filter((line) => line !== "");
   const titleValid = trimmedTitle !== "" && trimmedTitle.length <= NODE_TITLE_MAX;
   const goalValid = trimmedGoal !== "" && trimmedGoal.length <= NODE_GOAL_MAX;
+  const verifyMayBeEmpty = editing?.role === "research" || editing?.role === "design";
   const verifyValid =
-    parsedVerify.length > 0 &&
+    (parsedVerify.length > 0 || verifyMayBeEmpty) &&
     parsedVerify.length <= NODE_VERIFY_MAX &&
     parsedVerify.every((line) => line.length <= NODE_VERIFY_LINE_MAX);
   const changedEdits: LoopGraphNodeEdits = {};

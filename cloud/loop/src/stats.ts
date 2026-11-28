@@ -162,7 +162,7 @@ const rate = (part: number, whole: number): number => (whole === 0 ? 0 : part / 
  * research runs has none and is a dev run.
  */
 const isResearch = (list: LoopEvent[]): boolean =>
-  list.find((e) => e.kind === "claimed")?.runKind === "research";
+  ["research", "design"].includes(String(list.find((e) => e.kind === "claimed")?.runKind));
 
 /** The metrics of the initiative, from the event log (docs: cloud/loop/README.md). */
 export const computeStats = (events: LoopEvent[]): Stats => {

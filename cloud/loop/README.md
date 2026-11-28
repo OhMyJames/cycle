@@ -22,7 +22,7 @@ bun cloud/loop/src/pipeline-cli.ts stats       # 自主完成率（只算 Loop �
 
 前提：Cycle daemon 在运行（`$CYCLE_HOME/daemon.sock`），`agy` 与 `claude` 已登录，`gh` 已登录，能推 `origin`。
 
-配置文件可选字段：`planUrl`、`autoLabel`（默认 `auto`）、`featureType`、`bugType`（默认 `Feature`、`Bug`，按名字在 `get_project` 里找类型 id）、`devAgent`、`qaAgent`、`reviewAgent`（默认 `claude`）。`devModel`、`qaModel`、`reviewModel`、`devEffort`、`qaEffort`、`reviewEffort`（可选，非空字符串）：按角色指定会话的模型和思考强度，创建会话后通过 `setConfig` 设置；省略表示沿用 agent 默认配置，空白串校验失败。必填项缺失时启动报错并指出缺哪一项。不再读 `AUTO_LOOP_*` 环境变量；`CYCLE_HOME`、`CYCLE_SOCKET` 仍用于找 daemon。`workers`（正整数，可选）：该 Project 的 worker 数，命令行 `--workers N` 优先，都没有为 1；写错时启动报错并指出是哪个 Project。改配置后重启生效。
+配置文件可选字段：`planUrl`、`autoLabel`（默认 `auto`）、`featureType`、`bugType`（默认 `Feature`、`Bug`，按名字在 `get_project` 里找类型 id）、`devAgent`、`qaAgent`、`reviewAgent`（默认 `claude`）。`devModel`、`qaModel`、`reviewModel`、`devEffort`、`qaEffort`、`reviewEffort`（可选，非空字符串）：按角色指定会话的模型和思考强度，创建会话后通过 `setConfig` 设置；省略表示沿用 agent 默认配置，空白串校验失败。必填项缺失时启动报错并指出缺哪一项。不再读 `AUTO_LOOP_*` 环境变量；`CYCLE_HOME`、`CYCLE_SOCKET` 仍用于找 daemon。`daemonUpdateHoldMinutes`（CYC-561，默认 10，范围 0–60 的整数，0 表示不等）：daemon 下载好新版本、等空闲再切换时，Loop 最多这么多分钟不领新单，超过就照常领单，daemon 等下一个空档再切。默认值比 daemon 的排空时间（`update.drainAfterMinutes`，15 分钟）短，所以 Loop 会在 daemon 排空之前恢复领单；超出范围或不是整数时启动报错并写明字段名。`workers`（正整数，可选）：该 Project 的 worker 数，命令行 `--workers N` 优先，都没有为 1；写错时启动报错并指出是哪个 Project。改配置后重启生效。
 
 ## 把旧状态导入 SQLite（CYC-476）
 
@@ -63,7 +63,7 @@ PR 与 main 冲突时，Loop 自己处理，每个工单最多处理 1 次：
 | `maxQaRetries`                                           | 2          | 0–10   |
 | `maxNetworkRetries`                                      | 3          | 0–10   |
 | `networkRetryDelaysSeconds`（数组，1–10 项，每项 1–600） | 10, 30, 60 | —      |
-| `ciPollIntervalSeconds`                                  | 30         | 5–600  |
+| `ciPollIntervalSeconds`（等 CI 检查器的间隔）            | 30         | 5–600  |
 | `ciTimeoutMinutes`                                       | 30         | 1–240  |
 | `mergePollIntervalSeconds`                               | 30         | 5–600  |
 | `mergeTimeoutMinutes`                                    | 10         | 1–240  |
@@ -93,6 +93,7 @@ PR 与 main 冲突时，Loop 自己处理，每个工单最多处理 1 次：
 - 卡住（Blocked）时保留 worktree 和会话；处理后把工单放回 Todo，会在原会话里继续（会话丢失则新开会话，凭 criteria + 进度 + git log 接手）。
 - verify 防抖（CYC-438）：检查命令（测试层或验收命令）非超时失败时，先原地重跑该命令，默认最多重试 1 次（内置默认值 `maxVerifyRetries = 1`，目前不在 `tuning` 可配字段中，写入 `tuning` 会被配置校验拒绝），每次重跑记 `verify_retried` 事件（`round`、`command`、`attempt`、`passed`）。重跑通过则按通过处理，不记 `round_failed`、不扣修复轮数、不唤醒 Dev；重试用完仍失败才按原流程回 Dev。超时的命令不重跑。
 - 无人值守的权限请求（CYC-471、CYC-472）：Claude 的 Dev 会话运行在 `auto` 模式，不走 Loop 的命令白名单；对 Claude 以外的 agent 以及 QA / Review / Research / Planning 等角色，由 `policy.ts` 按整条命令形状白名单放行（多余参数与未加引号通配均不放行），其余留在会话里等人在桌面端批准（只读角色直接拒绝）。
+- 开启自动合并遇 clean status（CYC-544）：GitHub 对已可直接合并（`mergeStateStatus` 为 `CLEAN`）的 PR 拒绝 `gh pr merge --auto`，错误含 `is in clean status`。评审结论为合并、CI 全绿、未碰路径底线时，Loop 改为 `gh pr merge <pr> --squash --match-head-commit <评审过的 head SHA>`（不带 `--auto`），合并后照旧确认合并并交付为自动合并；head 已变 GitHub 拒绝，不重试，按 `merge_failed` 转人。其他失败原因仍记 `merge_failed`、转 In Review。
 - 路径底线（CYC-481）：改到 `cloud/loop/src/supervisor/`、`cloud/loop/src/guard/`、`REVIEW.md` 或 `.github/` 的 PR，无论评审结论为何都不开启自动合并，强制升级给人合并并记 `floor_hit`。
 - 守护者起停与自更新（CYC-484、CYC-485）：常驻运行推荐使用守护者进程 `bun cloud/loop/src/supervisor/main.ts`（通过 `bun cloud/loop/src/supervisor/install.ts` 安装 launchd / systemd user unit，用 `bun cloud/loop/src/supervisor/ctl.ts status|stop|start|restart` 查看状态与启停）。守护者按心跳保活 Work loop（心跳停超 10 分钟重启、run 超期首次取消回合、二次升格 `stuck` Notice），并从 `~/.cycle/loop-runtime/`（`repo.git`、`versions/<sha>`、`current`/`previous`）每 5 分钟检查更新：安装依赖、自检、排空切换，2 分钟内无心跳自动回滚到 `previous` 且不再重试该 sha；改动碰到 `supervisor/` 时发 Notice 提醒人重启守护者。手工回退办法：先 `ctl.ts stop` 停守护者 → 用备份的 `stateDir`（`loop.db.bak-*`）和上一版本或旧脚本启动旧版本。
 - 清理（CYC-379、CYC-449、CYC-473）：每轮选单前检查 Done 和 Blocked 的 run（正在被某个 step 处理的不动）。工单为 Done 且 PR 已合并（调研 run 没有 PR，只看工单在 Done），或工单在 Canceled 时，删除它自己的 worktree、本地分支以及该 run 的临时 HOME（`<stateDir>/home/<key>`）。不强删：有未提交改动则只记一次 `cleanup_skipped_dirty` 事件留给人；不动会话和远端分支，不动人手工开的 worktree。Done 但 PR 被关闭未合并：记一次 `cleanup_skipped_unmerged`，不删。Blocked 超过 `blockedReminderDays`（按最后一次写 run 的时间算）：记一次 `blocked_stale` 事件，只提醒不删；放回 Todo 后重新计时。
@@ -202,6 +203,74 @@ Loop 推进一张工单时，把当前阶段和进入时间写进工单的两个
 **事件**（不记正文）：`plan_started`（候选数）、`plan_triaged`（候选数，`can`、`ask`、`split`、`unfit` 各几张，`queued`）、`plan_priority_changed`（`from`、`to`）、`plan_asked`（问题数）、`plan_shaped`（`form`：rewrite 或 split，`parts`、`rounds`，`keys`：等批准的各张）、`plan_shape_stopped`、`plan_abandoned`（`why`：edited、moved、skip、pending、gone）、`plan_finished`（`outcome`，各状态张数）；另有 `triage_turn`、`shape_turn`、`shape_qa_turn`、`qa_retry`、`secrets_found`、`recovered`。
 
 **stats** 的 `planning` 一节单独计：轮数、盘点停下的轮数、各归类张数、改优先级和提问的次数、加工、停下、放弃的张数、平均修复轮次，以及批准率：加工后等批准的各张里，后来被开发 run 领走（有 `claimed` 事件）的比例。只看事件：已批准但还没被领走的算作还没批准。
+
+## 执行图里的 QA 节点和返工（CYC-542）
+
+开发工单有执行图时，QA 和返工由图安排（决定见 `.agents/notes/2026-11-28-loop-runs-one-role-graph-per-requirement.md`，协议见 `docs/protocol.md` §17）：
+
+- **节点有四种角色**：`role` 是 `dev`、`qa`、`research` 或 `design`。Plan 里没写 `role` 的节点、旧库里的节点都是 `dev`；QA 节点只由 Loop 追加，id 为 `qa-<n>`（Plan 里不能用 `qa-` 开头的 id，和 `fix-` 一样是保留前缀）。`research`、`design` 是只读角色：不改代码、不打 checkpoint 提交，产出写在节点的 `summary`、`report`，`verify` 可以为空；检查的是产出的规则（缺摘要或报告、问题没逐条回答，在同一节点、同一会话里补）。
+- **完成与结论分开**：`status` 只表示「这次执行是否完成」，`verdict`（`pass` / `fail` / 空）才是 QA 的结论，`report` 是结论原文（未通过时含发现）。QA 给出可用结论就是 `passed`，不论通过还是未通过；QA 系统故障（重试用完仍没有可用结论）才是 `blocked`，工单转 Blocked。Dev 节点的 `verdict` 为空。
+- **何时追加 QA 节点**：Dev 节点全部完成、整单验证通过后，Loop 在图末尾追加 `qa-n`（依赖最后一个 Dev 节点，`origin` 随它：跟在规划节点后为 `planned`，跟在返工后为 `fix`），进入 `qa` 阶段并执行。每次执行都新开一个 QA 会话，会话 id 记在节点上；提示词带上上一个 QA 节点的报告，让它确认上一轮的问题是否解决，并写明命令已在工作区里运行、不要用 `cd`、管道、`&&` 等 shell 写法。QA 不通过或通过，节点都记下它验过的提交（`commitSha`）。
+- **返工**：结论 `fail` 时图追加 Dev 返工节点 `fix-<n>`（目标是 QA 报告），它完成并通过整单验证后再追加下一个 QA 节点，轮数计入 `maxFixRounds`，到上限转 Blocked。结论 `pass` 进入交付（开 PR、CI、评审）。整单验证、CI、评审打回追加的 `fix-<n>` 不变，完成后同样要经过一个新的 QA 节点。
+- **Dev 自测**：Dev 节点的局部验证失败时，仍在同一个节点、同一个会话里修，不追加节点。
+- **节点上限**：`MAX_TOTAL_NODES`（12）数所有非 QA 节点（开发、调研、返工），QA 节点不计入；规划节点（含调研节点）上限 8；修复轮数上限先于节点上限起作用。
+- **放回和升级**：Blocked 后放回，若当前节点是 `blocked` 的 QA 节点，重置后新开会话重跑。升级时停在 `qa` 阶段、图里还没有 QA 节点的工单，进入 `qa` 阶段时补一个再执行；没有执行图的旧工单照旧走单会话流程（同样每轮新开 QA 会话）。
+- **存储**：`graph_nodes` 只加列（`role`、`verdict`、`report`），旧版本代码能打开新库。桌面端执行图里 QA 节点显示为「QA 会话」，并显示通过 / 未通过；调研节点显示为「调研会话」、设计节点显示为「设计会话」，详情里可看报告。
+
+### 功能图里的调研节点（CYC-545）
+
+- Plan 的执行图里节点可以写 `"role": "research"`；写 `design` 或 `qa` 预检不通过（功能图里只允许调研节点，QA 节点由 Loop 追加）。
+- 调研节点以自己的 `goal` 代替「要回答的问题」做规则检查；输出的后续工单建议忽略（功能图里不往 tracker 写东西）。会话开在这张单的开发工作区里，按调研的只读规则执行，执行前后工作区有变化转 Blocked。
+- 依赖调研节点的 Dev 节点，提示词带上该节点的完整报告（上限 12000 字符，超出截断并注明全文在哪个节点）；整单 QA 的输入带上图中所有调研节点的报告。调研节点之后不单独加 QA 节点。报告记在节点上，在桌面端执行图里看，不另建 tracker 文档。
+
+### 独立调研和设计工单：单节点图（CYC-545）
+
+- Research 工单领取后建一张只有一个 `research` 节点的图；Design 工单（配置 `design` 段打开时才领）建一个 `design` 节点。节点通过规则检查后，Loop 追加 QA 节点（每次新会话），QA 未通过时追加同角色的返工节点 `fix-<n>`（新会话，提示词带上一份报告和 QA 的发现），返工后再追加新的 QA 节点；轮数计入 `maxFixRounds`，到上限转 Blocked。QA 通过后发布（文档、「结论」、后续工单、Done）。
+- 设计工单：配置和调研同形（`enabled`、`type` 默认 `Design`、`folder` 默认 `设计`、`readRoots`、`maxFollowups`），缺省关闭；开启时启动要找到「设计」目录。预检要求「要回答的问题」是编号列表、「背景与约束」有内容、「结论」为空或只有一个括号说明。报告写出备选方案的对比和推荐，建成「设计」目录下的文档；「结论」逐条回答问题；后续工作起草成 Feature、Bug 放进 Backlog；工单直接 Done，不转 In Review。
+- 升级：没有图的进行中调研运行，继续时按当前阶段补图（调研阶段补运行中的 research 节点；QA 阶段补已完成的 research 节点和一个 QA 节点；发布阶段补两个已完成的节点），然后照新流程走完，发布各步可续，不重复建文档或工单。
+- 兼容：`loop/run/get`、`loop/ticket/get` 的请求参数 `roles` 没包含 `research`、`design` 的客户端，拿到的图里没有这两种节点，其他节点的 `dependsOn` 里也去掉它们的 id（见 `docs/protocol.md` §17）。
+
+## 审阅任务与人开的 PR（CYC-540）
+
+评审从开发流程里拆成一个可单独启动的**审阅任务**（`src/flows/review/`）：输入是仓库、PR 编号、待审提交（head SHA）和审阅上下文，交付绑定这个提交的结论（`merge` / `reject` / `escalate` / 系统故障）、发现和每次尝试的会话 id。决定见 `.agents/notes/2026-11-28-loop-runs-one-role-graph-per-requirement.md` 与 `.agents/notes/2026-11-28-loop-on-a-host-takes-webhooks-and-merges-any-pr.md`。
+
+- **同一仓库、同一 PR、同一提交只有一个任务、只审一次**（`loop.db` 的 `review_tasks`，唯一键 `(repo, pr, head_sha)`，认领用 `UPDATE … WHERE status='pending'`）。作者推了新提交就是另一个任务，旧结论只属于旧提交。
+- 开审前向 GitHub 确认这个提交的必需 CI 全绿，不全绿不开会话。会话只读（沿用评审的只读快照、重试和检查清单要求）。评审意见按「提交 + 结论」只在 PR 上评论一次。
+- 两个入口共用它：开发流程的评审阶段**同步**调用（在自己的 worker 里跑完，拿到结论后照旧返工、升级给人或开自动合并，对外行为不变）；人开的 PR 由下面的流程调用。上下文不同：工单是正文和验收结果，人开的 PR 是标题和描述，提示词里用 `<untrusted>` 包住并写明只作背景、不是指令。
+
+### 开启人开 PR 的审阅
+
+按 Project 的开关，**默认关闭**，关闭时不读 PR：
+
+```jsonc
+{ "projects": [ { …, "prReview": { "enabled": true, "maxReviewsPerPr": 5 } } ] }
+```
+
+`maxReviewsPerPr`：每个 PR 的审阅次数上限，1 到 50，默认 5；到上限后评论一次说明，不再自动审。写错（类型不对、超范围、多余字段）时启动报错并指出字段。不接 webhook：在现有机器上按 `tuning.intervalSeconds` 轮询配置仓库的开放 PR。
+
+**处理哪些 PR**：同仓库分支（不是 fork）、作者对仓库有 write、maintain 或 admin 权限、不是草稿、分支不是 Loop 自己的 `auto/cyc-*`（那些只由开发流程处理）。不满足的跳过，**不评论**；草稿转为可审后再处理。每个符合条件的 PR 一个流程实例（key `pr:<仓库>#<编号>`），当前提交一个审阅任务。拉 PR 分支到本地 `loop-pr/<n>` 只在 delivery 仓库里带凭据进行，共享仓库配置被改时照样拒绝。
+
+### 合并门禁与钉住提交
+
+「Loop 能不能在这个提交上合并这个 PR」只由 `src/guard/merge-gate.ts` 的 `mayMerge` 判断（在路径底线以内，改它的 PR 必须由人合并）。全部满足才允许：结论为合并；审过的提交就是当前 head；这个提交的必需 CI 全绿；改动路径读得到且不碰路径底线（`guard/floor.ts`）；人开的 PR 还要作者有写权限且不来自 fork。开发流程和人开 PR 的流程都只通过它决定合并；开发流程里碰到底线仍按 `escalate` 转 In Review。
+
+人开的 PR 结论为 `merge` 时：合并前重新读 head、CI、作者权限和改动路径，过门禁后直接 `gh pr merge <pr> --squash --match-head-commit <审过的提交>`，**不开自动合并**（作者有写权限，审完再推新提交，自动合并不会被关）；head 变了 GitHub 拒绝合并。门禁不通过只评论原因。`reject`、`escalate`、系统故障只评论不合并。分支保护要求人审批时合并会失败：记事件、评论，不重试。
+
+### 等待与唤醒
+
+CI 没跑完时，流程登记等待并结束这一步，**不占 worker**，worker 立刻去领别的工单或空闲。开发工单（CYC-550）和人开 PR 共用同一套 `waits`、`signals`：`waits` 记「谁在等什么主题」和复查时间，主题都是 `ci:<仓库>@<sha>`；开发工单的 owner 是运行的 key（如 `CYC-550`），人开 PR 的 owner 是 `pr:<仓库>#<编号>`，所以同一主题上的一个信号能同时唤醒两边。信号（`signals`，来源现在只有 `poll`，以后有 `webhook`）写入和唤醒等待在同一个事务里，按 `dedupe` 去重，重复信号只算一次。唤醒只表示「可以重新检查」，动作前一律从 GitHub 重读。
+
+**开发工单。** `ci` 阶段每次只读一次 CI：通过、失败、PR 冲突就按原规则走；超过 `ciTimeoutMinutes`（从开始等的时间算，被唤醒不重新计时）转 Blocked；仍在进行中就登记等待并返回 `waiting`。开始等的提交、开始时间和刚重跑的失败任务记在运行状态 `ciWait` 里，跟着 `loop.db` 撑过重启：重启后继续等，不重置超时，也不重复重跑失败任务。推送了新提交就按新提交重新等、重新计时。引擎跳过还没被唤醒、也没到复查时间的运行；到期后先清掉等待、写 `woken` 事件，再继续这张单（不写 `recovered`）。等待期间人移动了工单、合并或关掉了 PR，下次唤醒时按现有规则停下或计为交付。升级前停在 `ci` 阶段、没有等待登记的运行，继续后按新流程登记等待。
+
+**检查器。** Loop server 里每个 Project 一个，不占 worker，也不拿选单锁；定时器每 5 秒调一次，实际频率按 `tuning.ciPollIntervalSeconds` 节流（这个值现在是检查器的间隔）。它只读登记了等 CI 的开发运行的 CI 状态，读到不再是进行中（通过、失败、PR 冲突）就在主题上写一个信号；不重跑、不改运行状态、不移动工单。读失败只记日志，由兜底复查补上。dry-run 和 `--once` 下不工作；停机时定时器被清掉。
+
+**兜底复查。** 每个等待的复查时间是 `min(开始等 + ciTimeoutMs, 现在 + 10 分钟)`，检查器没工作、信号丢了，到时间引擎也会恢复这张单，重读 CI，所以超时最迟在截止时间被判定。
+
+登记等待的工作写心跳 `waitingOn: "ci"`，截止时间从开始等的时间算（加 5 分钟），不因唤醒后移，守护者在超过时才提示卡住。
+
+事件：人开 PR 写在 `pr:<仓库>#<编号>` 下：`pr_review_started`、`pr_waiting_ci`、`pr_merged`、`pr_merge_refused`、`pr_merge_changed` 等；开发工单每个提交第一次登记等待写 `ci_waiting`，每次被唤醒或到复查时间写 `woken`；`stats` 不变。
+
+SQLite 只加表（`review_tasks`、`waits`、`signals`、`pr_reviews`），旧版本代码能打开新库；`ciWait` 是运行状态里多出的字段，旧代码会忽略，回滚安全。本期不做：webhook 和迁主机（CYC-543）、迁移人开 PR 的流程（它仍在领单步骤里轮询）、处理人开 PR 的合并冲突或改它的代码、等合并阶段（`review` 开启自动合并后的等待）、等待中取消运行（CYC-399）。
 
 ## 网络错误（CYC-444）
 

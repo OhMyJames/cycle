@@ -185,12 +185,16 @@ describe("the dictionary", () => {
     expect(isUiEvent("prompt_sent")).toBe(false);
     expect(isUiEvent("session_deleted")).toBe(false);
     expect(isUiEvent("mention_picked")).toBe(true);
+    expect(isUiEvent("session_opened_from_mention")).toBe(true);
   });
 
   test("a mention picked says what kind of thing it was, and nothing of which", () => {
     expect(EVENTS.mention_picked.safeParse({ kind: "session" }).success).toBe(true);
     expect(EVENTS.mention_picked.safeParse({ kind: "src/main.ts" }).success).toBe(false);
     expect(EVENTS.mention_picked.safeParse({ kind: "session", title: "Fix" }).success).toBe(false);
+    expect(EVENTS.session_opened_from_mention.safeParse({}).success).toBe(true);
+    expect(EVENTS.session_opened_from_mention.safeParse({ sessionId: "s2" }).success).toBe(false);
+    expect(EVENTS.session_opened_from_mention.safeParse({ title: "Fix" }).success).toBe(false);
   });
 
   test("the graph events take words and numbers only, and drop text that rides along", () => {

@@ -1,9 +1,11 @@
-import { expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { renderReviewComment } from "../src/pr.ts";
 import { formatReviewFindings, parseReviewVerdict } from "../src/prompts/index.ts";
+import { REVIEWED_SHA, runReviewCase } from "./review-case.ts";
 
 const repoRoot = resolve(import.meta.dir, "../../..");
 const reviewDocPath = resolve(repoRoot, "REVIEW.md");
@@ -190,4 +192,58 @@ test("renderReviewComment formats merge, reject, escalate, and review system err
   expect(systemErrorComment).toContain("非代码问题");
   expect(systemErrorComment).toContain("3 次");
   expect(systemErrorComment).toContain("评审会话单回合超时被取消");
+});
+
+let dir: string;
+beforeEach(async () => {
+  dir = await mkdtemp(join(tmpdir(), "loop-review-"));
+});
+afterEach(async () => {
+  await rm(dir, { recursive: true, force: true });
+});
+
+const CLEAN = "GraphQL: Pull request Pull request is in clean status (enablePullRequestAutoMerge)";
+const OK_PATHS = "packages/client/src/a.ts\n";
+const merges = (calls: string[]) => calls.filter((c) => c.includes("gh pr merge"));
+
+test("auto-merge refused for a clean PR merges directly, pinned to the reviewed head, and delivers auto-merged (CYC-544)", async () => {
+  const { result, tracker, world, events } = await runReviewCase(dir, OK_PATHS, {
+    autoError: CLEAN,
+  });
+  expect(result).toMatchObject({ status: "delivered", autoMerge: true });
+  const direct = merges(world.calls).filter((c) => !c.includes("--auto"));
+  expect(direct).toHaveLength(1);
+  expect(direct[0]).toContain("--squash");
+  expect(direct[0]).toContain(`--match-head-commit ${REVIEWED_SHA}`);
+  expect(events.find((e) => e.kind === "delivered")).toMatchObject({ autoMerge: true });
+  expect(events.some((e) => e.kind === "merge_failed")).toBe(false);
+  expect(tracker.moves).not.toContain("CYC-1:inReview");
+  expect(tracker.comments.some((c) => c.includes("直接合并"))).toBe(true);
+});
+
+test("a failed pinned merge is not retried and hands the ticket to a person (CYC-544)", async () => {
+  const { result, tracker, world } = await runReviewCase(dir, OK_PATHS, {
+    autoError: CLEAN,
+    directError: "Head branch was modified. Review and try the merge again.",
+  });
+  expect(result).toMatchObject({ status: "delivered", autoMerge: false });
+  expect(merges(world.calls).filter((c) => !c.includes("--auto"))).toHaveLength(1);
+  expect(tracker.moves).toContain("CYC-1:inReview");
+  expect(tracker.comments.some((c) => c.includes("直接合并失败"))).toBe(true);
+});
+
+test("an auto-merge failure for another reason still fails without merging directly (CYC-544)", async () => {
+  const { result, tracker, world } = await runReviewCase(dir, OK_PATHS, {
+    autoError: "GraphQL: Auto merge is not allowed for this repository",
+  });
+  expect(result).toMatchObject({ status: "delivered", autoMerge: false });
+  expect(merges(world.calls).every((c) => c.includes("--auto"))).toBe(true);
+  expect(tracker.moves).toContain("CYC-1:inReview");
+  expect(tracker.comments.some((c) => c.includes("开启 GitHub 自动合并失败"))).toBe(true);
+});
+
+test("a floor hit merges nothing, even when auto-merge would be refused as clean (CYC-544)", async () => {
+  const { result, world } = await runReviewCase(dir, "REVIEW.md\n", { autoError: CLEAN });
+  expect(result).toMatchObject({ status: "delivered", autoMerge: false });
+  expect(merges(world.calls)).toHaveLength(0);
 });

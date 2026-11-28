@@ -46,11 +46,18 @@ const applyToView = (view: SessionView, event: SessionEvent): SessionView => {
   };
 };
 
+export type SessionTarget = { locationId: string; sessionId: string };
+
 export class SessionsSlice {
   readonly #kit: StoreKit;
   /** Events about a session that is still being opened, held until its snapshot is in. */
   readonly #held = new Map<string, SessionEvent[]>();
   readonly #acks = new WeakSet<Returned>();
+  /** View keys, least recently used first: a view is used when it is set or its session is selected. */
+  #recent: string[] = [];
+  /** The latest read started for each session: an older one that comes back later is dropped. */
+  readonly #latestLoad = new Map<string, number>();
+  #loads = 0;
   /**
    * Sessions whose box holds a message put back to send again, with what the box then held: whether it went as it was
    * is counted when it is sent. Forgotten when the box is emptied without sending it.
@@ -69,10 +76,14 @@ export class SessionsSlice {
   }
 
   /** The session in view, if one is. */
-  #open(): { locationId: string; sessionId: string } | undefined {
+  #open(): SessionTarget | undefined {
     const { selectedLocation: locationId, selectedSession: sessionId } = this.#kit.state();
     if (locationId === undefined || sessionId === undefined) return undefined;
     return { locationId, sessionId };
+  }
+
+  #target(explicit?: SessionTarget): SessionTarget | undefined {
+    return explicit ?? this.#open();
   }
 
   /** An event of a session's view, as main told it. True when it was applied to a view that is up to date. */
@@ -100,6 +111,53 @@ export class SessionsSlice {
   #setView(key: string, view: SessionView): void {
     this.#takeBack(key, view);
     this.#kit.set((s) => ({ views: { ...s.views, [key]: view } }));
+    this.#touch(key);
+  }
+
+  /** Marks a view as just used, then drops the least recently used ones beyond the cap. */
+  #touch(key: string): void {
+    this.#recent = [...this.#recent.filter((k) => k !== key), key];
+    this.#evict();
+  }
+
+  /**
+   * Keeps at most `maxViews` views. Never dropped: the selected session's, and one still being read (its read would
+   * only put it back). Among the rest the least recently used goes first, but a view with a permission request waiting
+   * is kept for as long as any other can go instead: the request would be lost with it. If only such views are left
+   * over the cap, the oldest of them goes: the cap is a promise about memory. A dropped session is read again when
+   * selected; an event for it is ignored meanwhile (`onEvent` finds no view).
+   */
+  #evict(): void {
+    const { views, selectedLocation, selectedSession } = this.#kit.state();
+    this.#recent = this.#recent.filter((k) => views[k] !== undefined);
+    let over = Object.keys(views).length - this.#kit.maxViews;
+    if (over <= 0) return;
+    const selected =
+      selectedLocation !== undefined && selectedSession !== undefined
+        ? viewKey(selectedLocation, selectedSession)
+        : undefined;
+    const known = new Set(this.#recent);
+    // A view somehow without a place in the order is the oldest.
+    const order = [...Object.keys(views).filter((k) => !known.has(k)), ...this.#recent];
+    const candidates = order.filter((k) => k !== selected && views[k]?.loading !== true);
+    const dropped = new Set<string>();
+    for (const waiting of [false, true]) {
+      for (const key of candidates) {
+        if (over <= 0) break;
+        if ((views[key]?.permissions.length ?? 0) > 0 !== waiting) continue;
+        dropped.add(key);
+        over--;
+      }
+    }
+    if (dropped.size === 0) return;
+    for (const key of dropped) {
+      this.#held.delete(key);
+      this.#latestLoad.delete(key);
+    }
+    this.#recent = this.#recent.filter((k) => !dropped.has(k));
+    this.#kit.set((s) => ({
+      views: Object.fromEntries(Object.entries(s.views).filter(([k]) => !dropped.has(k))),
+    }));
   }
 
   /**
@@ -126,10 +184,32 @@ export class SessionsSlice {
     }
   }
 
-  /** Reads a session from main whole, then applies the events that came while it was being read. */
-  async #load(locationId: string, sessionId: string): Promise<void> {
+  /**
+   * Reads a session from main whole, then applies the events that came while it was being read. A read that was
+   * started by a newer one for the same session is dropped; so is, with `onlyIfSelected`, one whose session is no longer
+   * the selected one when it comes back (quick switching: only the last one chosen is taken). A dropped read leaves
+   * nothing: its placeholder goes, or the view that was there before comes back, and its held events are cleared.
+   */
+  async #load(locationId: string, sessionId: string, onlyIfSelected = false): Promise<void> {
     const key = viewKey(locationId, sessionId);
     const existing = this.#kit.state().views[key];
+    const id = ++this.#loads;
+    this.#latestLoad.set(key, id);
+    const dropped = (): boolean => {
+      if (this.#latestLoad.get(key) !== id) return true; // Another read of it took over, and cleans up.
+      const { selectedLocation, selectedSession } = this.#kit.state();
+      if (!onlyIfSelected || (selectedLocation === locationId && selectedSession === sessionId))
+        return false;
+      this.#latestLoad.delete(key);
+      this.#held.delete(key);
+      if (existing !== undefined && !existing.loading) this.#setView(key, existing);
+      else
+        this.#kit.set((s) => {
+          const { [key]: _gone, ...views } = s.views;
+          return { views };
+        });
+      return true;
+    };
     this.#held.set(key, []);
     this.#setView(key, {
       locationId,
@@ -143,6 +223,8 @@ export class SessionsSlice {
     try {
       snapshot = await this.#kit.bridge.openSession(locationId, sessionId);
     } catch (error) {
+      if (dropped()) return;
+      this.#latestLoad.delete(key);
       this.#held.delete(key);
       // What was read before is still what there is: a re-read that failed does not take the conversation away.
       // (Not the placeholder of a read still going: that has nothing in it.) Version -1: the next event asks again.
@@ -155,6 +237,8 @@ export class SessionsSlice {
         });
       throw error;
     }
+    if (dropped()) return;
+    this.#latestLoad.delete(key);
     let view: SessionView = {
       locationId,
       sessionId,
@@ -189,7 +273,30 @@ export class SessionsSlice {
       return;
     }
     set({ selectedLocation: locationId, selectedSession: sessionId, blank: undefined });
-    if (state === "connected") await attempt(() => this.#load(locationId, sessionId));
+    this.#touch(viewKey(locationId, sessionId));
+    if (state === "connected") await attempt(() => this.#load(locationId, sessionId, true));
+  };
+
+  /**
+   * Loads a session into `state.views` without changing `selectedLocation` / `selectedSession` or leaving the current
+   * view (used when inspecting a Loop session inside Timeline's right panel).
+   */
+  openView = async (locationId: string, sessionId: string): Promise<boolean> => {
+    const { state: now, set, attempt } = this.#kit;
+    const state = now().status[locationId]?.state;
+    if (state !== "connected" && now().views[viewKey(locationId, sessionId)] === undefined) {
+      const name = now().locations.find((h) => h.id === locationId)?.name ?? locationId;
+      set({ error: { key: "session.awayCannotOpen", params: { location: name } } });
+      return false;
+    }
+    if (state === "connected") {
+      const ok = await attempt(async () => {
+        await this.#load(locationId, sessionId);
+        return true;
+      });
+      return ok === true;
+    }
+    return true;
   };
 
   /**
@@ -197,8 +304,10 @@ export class SessionsSlice {
    * it goes; if it cannot go, what was in it comes back, in front of anything written since. `steer`: while the agent
    * works, into the turn that is running instead of the queue.
    */
-  async send(options: { steer?: boolean; via?: SendVia } = {}): Promise<void> {
-    const open = this.#open();
+  async send(
+    options: { steer?: boolean; via?: SendVia; target?: SessionTarget } = {},
+  ): Promise<void> {
+    const open = this.#target(options.target);
     if (open === undefined) return;
     const { locationId, sessionId } = open;
     const { drafts, bridge, attempt, track } = this.#kit;
@@ -230,8 +339,8 @@ export class SessionsSlice {
    * the focus. Nothing is sent: the person reads it, may change it, and sends it as any message, asked for permissions
    * afresh. Only for the session in view.
    */
-  resend = (resend: Resend): void => {
-    const open = this.#open();
+  resend = (resend: Resend, target?: SessionTarget): void => {
+    const open = this.#target(target);
     if (open === undefined) return;
     const { drafts, set, track } = this.#kit;
     const key = viewKey(open.locationId, open.sessionId);
@@ -256,8 +365,8 @@ export class SessionsSlice {
    * while its location is connected and the agent is not at work. If it cannot go, it comes back in the box, so
    * nothing is lost. Resolves when the daemon has answered.
    */
-  retry = async (resend: Resend): Promise<boolean> => {
-    const open = this.#open();
+  retry = async (resend: Resend, target?: SessionTarget): Promise<boolean> => {
+    const open = this.#target(target);
     if (open === undefined || resend.busy) return false;
     const { locationId, sessionId } = open;
     const { state, bridge, attempt, drafts, track } = this.#kit;
@@ -278,8 +387,19 @@ export class SessionsSlice {
   };
 
   /** What fits an @ in the selected session's box. Quiet when it cannot say: a menu that is not there is enough. */
-  searchFiles = async (query: string): Promise<FileSearch | undefined> => {
+  searchFiles = async (query: string, target?: SessionTarget): Promise<FileSearch | undefined> => {
     const state = this.#kit.state();
+    if (target !== undefined) {
+      try {
+        return await this.#kit.bridge.searchFiles(
+          target.locationId,
+          { sessionId: target.sessionId },
+          query,
+        );
+      } catch {
+        return undefined;
+      }
+    }
     const { selectedLocation: locationId, selectedSession: sessionId, blank } = state;
     // A blank conversation has no session yet: it looks in the folder it has chosen, if the daemon can.
     const where =
@@ -321,8 +441,8 @@ export class SessionsSlice {
     this.#kit.bridge.workspaceFile(locationId, sessionId, path);
 
   /** Takes a queued prompt back to edit it. Undefined if it had gone to the agent, or came back, meanwhile. */
-  dequeue = async (queueId: string): Promise<PromptBlock[] | undefined> => {
-    const open = this.#open();
+  dequeue = async (queueId: string, target?: SessionTarget): Promise<PromptBlock[] | undefined> => {
+    const open = this.#target(target);
     if (open === undefined) return undefined;
     const { locationId, sessionId } = open;
     const blocks = await this.#kit.attempt(() =>
@@ -332,14 +452,14 @@ export class SessionsSlice {
     return blocks;
   };
 
-  cancel = async (): Promise<void> => {
-    const open = this.#open();
+  cancel = async (target?: SessionTarget): Promise<void> => {
+    const open = this.#target(target);
     if (open === undefined) return;
     await this.#kit.attempt(() => this.#kit.bridge.cancel(open.locationId, open.sessionId));
   };
 
-  setConfig = async (configId: string, value: string): Promise<void> => {
-    const open = this.#open();
+  setConfig = async (configId: string, value: string, target?: SessionTarget): Promise<void> => {
+    const open = this.#target(target);
     if (open === undefined) return;
     await this.#kit.attempt(() =>
       this.#kit.bridge.setSessionConfig(open.locationId, open.sessionId, configId, value),
@@ -375,8 +495,12 @@ export class SessionsSlice {
    * being stopped; false: there was nothing to stop (it ended, or the agent that ran it is gone); undefined: the ask
    * failed, and the error is shown.
    */
-  stopSubagent = async (childId: string, background: boolean): Promise<boolean | undefined> => {
-    const open = this.#open();
+  stopSubagent = async (
+    childId: string,
+    background: boolean,
+    target?: SessionTarget,
+  ): Promise<boolean | undefined> => {
+    const open = this.#target(target);
     if (open === undefined) return undefined;
     return await this.#kit.attempt(() =>
       this.#kit.bridge.stopSubagent(open.locationId, open.sessionId, childId, background),
@@ -431,6 +555,7 @@ export class SessionsSlice {
     this.#kit.sidePanels.forget(key);
     this.#kit.filesViews.forget(key);
     this.#held.delete(key);
+    this.#latestLoad.delete(key);
     this.#kit.set((s) => {
       const { [key]: _gone, ...views } = s.views;
       const { [key]: _closed, ...terminals } = s.terminals;

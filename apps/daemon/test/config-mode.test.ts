@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { chmod, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { secureConfigFile } from "../src/config.ts";
+import { loadConfig, secureConfigFile } from "../src/config.ts";
 
 let dir: string;
 beforeEach(async () => {
@@ -64,4 +64,15 @@ test("an error other than a missing file is thrown, not taken for fine", async (
   const file = join(dir, "config.json");
   await writeFile(file, "{}");
   await expect(secureConfigFile(join(file, "nested"))).rejects.toThrow();
+});
+
+test("update.drainAfterMinutes and forceAfterMinutes default to 15, take a value, and name the field when wrong", async () => {
+  const path = join(dir, "config.json");
+  expect((await loadConfig(path)).update).toEqual({ drainAfterMinutes: 15, forceAfterMinutes: 15 });
+  await writeFile(path, JSON.stringify({ update: { drainAfterMinutes: 0, forceAfterMinutes: 5 } }));
+  expect((await loadConfig(path)).update).toEqual({ drainAfterMinutes: 0, forceAfterMinutes: 5 });
+  await writeFile(path, JSON.stringify({ update: { drainAfterMinutes: -1 } }));
+  await expect(loadConfig(path)).rejects.toThrow(/drainAfterMinutes/);
+  await writeFile(path, JSON.stringify({ update: { forceAfterMinutes: "soon" } }));
+  await expect(loadConfig(path)).rejects.toThrow(/forceAfterMinutes/);
 });

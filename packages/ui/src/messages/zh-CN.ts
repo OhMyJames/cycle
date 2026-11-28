@@ -15,6 +15,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "search.open": "搜索会话",
 
   "session.away": "{location} · {state}",
+  "session.hasDraft": "有未发送的草稿",
   "notice.connecting": "正在连接 {location}…",
   "notice.draftKept": "草稿会保留。",
   "session.awayIncompatible":
@@ -246,7 +247,6 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "composer.continue.context": "这段对话已经很长，每次回复都要把全部内容再发一遍。",
   "composer.continue.idle": "这个会话已经闲置了一阵，下一条回复要把整段对话按全价再发一遍。",
   "composer.continue.action": "在新会话中继续",
-  "composer.continue.dismiss": "关闭提示",
   "composer.dropFiles": "把文件拖到这里以附加",
   "composer.problem.type": "{name} 不是 PNG、JPEG、GIF 或 WebP 图片。",
   "composer.problem.typeFiles": "{name} 不是图片、文本文件或 PDF。",
@@ -321,6 +321,9 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
 
   // 排队的消息
   "composer.queued.label": "排队的消息",
+  "composer.updating": "Cycle 正在更新，正在运行的任务结束后重启；现在发的消息会在重启后发出。",
+  "composer.updating.until":
+    "Cycle 正在更新，正在运行的任务结束后重启，最迟 {time}；现在发的消息会在重启后发出。",
   "composer.queued.tag": "排队中",
   "composer.queued.edit": "编辑排队的消息：{preview}",
   "composer.queued.editShort": "编辑",
@@ -406,6 +409,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "tool.facts.exitCode": "退出码 {code}",
   "tool.facts.timedOut": "运行超过 {duration}，已转到后台",
   "tool.facts.background": "在后台",
+  "tool.facts.took": "耗时 {duration}",
   "session.dismissBackground": "把 {count} 个未确认的后台任务标记为已结束",
   "review.title": "代码评审",
   "review.none": "没有发现问题",
@@ -609,6 +613,10 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "loop.timeline.error.body": "Loop 服务没有返回这个项目的进展记录。",
   "loop.timeline.loadMore": "显示更多",
   "loop.timeline.openSession": "打开会话",
+  "loop.timeline.sessionPanel": "会话",
+  "loop.timeline.sessionFailed": "无法读取会话",
+  "loop.timeline.openFullSession": "在主视图打开会话",
+  "loop.timeline.closeSession": "关闭会话面板",
   "loop.timeline.graph": "任务图",
   "loop.timeline.waitsFor": "等待：{steps}。",
   "loop.timeline.openSessionFor": "打开 {target}",
@@ -789,6 +797,12 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "loop.graph.collapse": "收起节点 {title}",
   "loop.graph.goal": "目标",
   "loop.graph.fix": "修复",
+  "loop.graph.qaSession": "QA 会话",
+  "loop.graph.researchSession": "调研会话",
+  "loop.graph.designSession": "设计会话",
+  "loop.graph.verdict.pass": "通过",
+  "loop.graph.verdict.fail": "未通过",
+  "loop.graph.report": "QA 报告",
   "loop.graph.dependsOn": "依赖节点",
   "loop.graph.filesHint": "涉及文件",
   "loop.graph.commit": "提交",

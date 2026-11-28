@@ -20,9 +20,11 @@ import { startedAt } from "../started.ts";
 import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import { ErrorCircleIcon, WarningIcon } from "./icons.tsx";
+import { useAllInView } from "./in-view.ts";
 import { Elapsed, InlineAiStatus } from "./inline-ai-status.tsx";
 import { useLoaderClaim } from "./loader-claim.ts";
 import { BACKGROUND_KIND, backgroundOf } from "./overview.tsx";
+import { useSessionScope } from "./session-scope.tsx";
 import { useStartScope } from "./start-scope.ts";
 import { MARK_STYLE, StatusDot } from "./status.tsx";
 import { useSteady } from "./steady.ts";
@@ -204,8 +206,15 @@ export function EndBlock({ stop, resend }: { stop: StopReason; resend?: Resend |
 function TurnAgain({ resend }: { resend: Resend }) {
   const { t, list } = useI18n();
   const store = useAppStore();
+  const sessionScope = useSessionScope();
+  const target =
+    sessionScope.locationId !== undefined && sessionScope.sessionId !== undefined
+      ? { locationId: sessionScope.locationId, sessionId: sessionScope.sessionId }
+      : undefined;
   const connected = useAppState(
-    (s) => s.selectedLocation !== undefined && s.status[s.selectedLocation]?.state === "connected",
+    (s) =>
+      sessionScope.locationId !== undefined &&
+      s.status[sessionScope.locationId]?.state === "connected",
   );
   const [asking, setAsking] = useState<"retry" | "edit" | undefined>();
   const [sending, setSending] = useState(false);
@@ -224,7 +233,7 @@ function TurnAgain({ resend }: { resend: Resend }) {
     // then would send the message twice. It goes away when the turn it ends is no longer the last.
     let sent = false;
     try {
-      sent = await store.retry(resend);
+      sent = await store.retry(resend, target);
     } finally {
       if (!sent) setSending(false);
     }
@@ -236,7 +245,7 @@ function TurnAgain({ resend }: { resend: Resend }) {
           type="button"
           data-variant="ghost"
           data-size="sm"
-          onClick={() => (changed ? setAsking("edit") : store.resend(resend))}
+          onClick={() => (changed ? setAsking("edit") : store.resend(resend, target))}
         >
           {t("turn.resend")}
         </Button>
@@ -267,7 +276,7 @@ function TurnAgain({ resend }: { resend: Resend }) {
               : t("turn.resend.changedBody", { tools: list(shown) })
           }
           confirmLabel={asking === "retry" ? t("turn.retry") : t("turn.resend.changedConfirm")}
-          onConfirm={() => (asking === "retry" ? retry() : store.resend(resend))}
+          onConfirm={() => (asking === "retry" ? retry() : store.resend(resend, target))}
         />
       ) : null}
     </div>
@@ -370,7 +379,8 @@ export function StepLine({
  * Between turns, while something the agent started still runs in the background (a sub-agent sent there, a command, a
  * watcher): one quiet line where the step line was, with a slowly breathing ring (the sidebar's background mark), how
  * many, and what they are. Not the loader and no clock: the agent is not at work on a turn, and the person may write.
- * Clicked, it opens the Overview, where each is listed. Gone when the last one ends, or once a turn begins.
+ * What they are is left out while each has its card on screen: the card says it, and the same name twice in one view
+ * is noise. Clicked, it opens the Overview, where each is listed. Gone when the last one ends, or once a turn begins.
  */
 function BackgroundLine({
   conversation,
@@ -391,6 +401,10 @@ function BackgroundLine({
   const running = useMemo(
     () => backgroundOf(conversation).filter((row) => row.state === "running"),
     [conversation],
+  );
+  // Only a sub-agent has a card; a command or a watcher in the background is a line among others, so it is named here.
+  const shown = useAllInView(
+    running.map((row) => (row.kind === "agent" ? row.toolCallId : undefined)),
   );
   if (live === 0 || running.length === 0) return null;
   const label = t("step.background", { count: running.length });
@@ -415,7 +429,7 @@ function BackgroundLine({
         </span>
         <span data-slot="step-label">
           {label}
-          <span data-slot="step-detail"> · {names}</span>
+          {shown ? null : <span data-slot="step-detail"> · {names}</span>}
           <span data-slot="visually-hidden">. {t("step.backgroundOpen")}</span>
         </span>
       </button>

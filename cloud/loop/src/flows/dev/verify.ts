@@ -14,8 +14,13 @@ export async function verify(
   save: Save,
 ): Promise<void> {
   if (run.dev.activeNodeId != null) {
-    await nodeVerify(h, run, save);
-    return;
+    // A QA node that is still open means a run going on from `qa`: only a Dev node has node-local checks.
+    const graph = await h.d.store.loadGraph(run.key);
+    const active = graph?.nodes.find((n) => n.id === run.dev.activeNodeId);
+    if (active === undefined || active.role === "dev") {
+      await nodeVerify(h, run, save);
+      return;
+    }
   }
   const { config, store, clock } = h.d;
   const worktree = h.need(run.worktree ?? undefined);

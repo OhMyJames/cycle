@@ -1,12 +1,9 @@
 // The sub-agent's card (CYCL-217): its states, one loader in the conversation, cards side by side, the task's clamp.
 import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
-import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
-import { cdp, userEvent } from "vitest/browser";
-import type { PermissionRequest, SessionSnapshot } from "../../src/api.ts";
-import { applyUpdate, emptyConversation } from "../../src/model/index.ts";
-import { fakeBridge } from "../fake-bridge.ts";
-import { renderApp } from "./render-app.tsx";
+import { cdp } from "vitest/browser";
+import { openSession } from "./mount.tsx";
 
 const reduceMotion = (on: boolean) =>
   cdp().send("Emulation.setEmulatedMedia", {
@@ -39,37 +36,13 @@ const news = (
   });
 
 /** The session `s1`, open, with these updates in it, on a daemon that can stop one sub-agent alone. */
-const open = async (...updates: SessionUpdate[]) => {
-  const snapshot = (): SessionSnapshot => ({
-    conversation: updates.reduce((c, u) => applyUpdate(c, u), emptyConversation()),
-    permissions: [],
-    version: updates.length,
+const open = (...updates: SessionUpdate[]) =>
+  openSession(updates, {
+    // Pressed where it is found: the row's name changes as the session's state arrives (it says it is at work), and a
+    // locator looked up again by the old name would wait for it in vain.
+    click: "act",
+    fake: { capabilities: { queue: true, files: true, folders: true, stopSubagent: true } },
   });
-  const script = fakeBridge({
-    connected: true,
-    snapshot,
-    capabilities: { queue: true, files: true, folders: true, stopSubagent: true },
-  });
-  await renderApp(script.bridge);
-  const user = userEvent.setup();
-  // Pressed where it is found: the row's name changes as the session's state arrives (it says it is at work), and a
-  // locator looked up again by the old name would wait for it in vain.
-  const row = await screen.findByRole("option", { name: /work/ });
-  await act(() => row.click());
-  const log = await screen.findByRole("log", { name: "Conversation" });
-  let version = updates.length;
-  const emit = (update: SessionUpdate) => {
-    version += 1;
-    return act(() =>
-      script.emit({ type: "update", locationId: "local", sessionId: "s1", update, version }),
-    );
-  };
-  const ask = (request: PermissionRequest) => {
-    version += 1;
-    return act(() => script.emit({ type: "permission", request, version }));
-  };
-  return { user, log, emit, ask, script };
-};
 
 /** Each sub-agent's card in the conversation, by its call's id. */
 const cardsOf = async (log: HTMLElement, count: number) =>

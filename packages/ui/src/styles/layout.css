@@ -38,6 +38,7 @@
   [data-slot="blank-agent-name"],
   [data-slot="blank-recent-name"],
   [data-slot="notice-text"],
+  [data-slot="loop-session-panel-title"],
   [data-kind="session-title"]
 ) {
   overflow: hidden;
@@ -1094,6 +1095,7 @@ button[data-slot="mention-chip"] {
   color: inherit;
   font: inherit;
   cursor: pointer;
+  transition: background-color var(--cycle-motion-state) var(--cycle-ease);
 }
 
 button[data-slot="mention-chip"]:hover {
@@ -1491,6 +1493,7 @@ svg[data-slot="dot"] {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  max-width: min(24rem, calc(100vw - 1rem));
   padding: 0.25rem 0.5rem;
   border: 1px solid var(--ui-border);
   border-radius: var(--cycle-radius-sm);
@@ -1500,6 +1503,7 @@ svg[data-slot="dot"] {
   font-family: var(--cycle-font-display);
   font-size: var(--cycle-text-meta);
   line-height: 1.3;
+  overflow-wrap: anywhere;
   transition: opacity var(--cycle-motion-state) var(--cycle-ease);
 }
 

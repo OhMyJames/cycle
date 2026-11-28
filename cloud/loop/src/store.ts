@@ -80,6 +80,18 @@ export const DevStateSchema = z.object({
   ciRound: z.number().int().min(0).default(0),
   /** The HEAD commit whose CI run last came back red; the same commit again means no new CI run unless the failed jobs are rerun. */
   ciFailedSha: z.string().nullable().default(null),
+  /**
+   * CYC-550: set while the run waits for the CI of one commit. `since` is when waiting on this commit began (the CI
+   * timeout counts from it, a wake does not restart it); `staleFailedUrls` are the jobs of the red attempt just rerun.
+   */
+  ciWait: z
+    .object({
+      sha: z.string(),
+      since: z.string(),
+      staleFailedUrls: z.array(z.string()).default([]),
+    })
+    .nullable()
+    .default(null),
   /** CYC-450: the worktree's `node_modules` was deleted while waiting for CI or the merge; Dev installs it again. */
   nodeModulesReleased: z.boolean().default(false),
   /** Times the loop merged the base into the branch after a conflict found while waiting for CI. Counted apart from fix rounds. */
@@ -188,11 +200,14 @@ export const RunRecordSchema = z.preprocess(
   z.discriminatedUnion("kind", [
     RunCommonSchema.extend({ kind: z.literal("dev"), dev: DevStateSchema }),
     RunCommonSchema.extend({ kind: z.literal("research"), research: ResearchStateSchema }),
+    // A design run (CYC-545) keeps the same state as a research run: questions, one report, a conclusion, follow-ups.
+    RunCommonSchema.extend({ kind: z.literal("design"), research: ResearchStateSchema }),
   ]),
 ) as unknown as z.ZodType<RunRecord>;
 export type RunRecord =
   | (RunCommon & { kind: "dev"; dev: DevState })
-  | (RunCommon & { kind: "research"; research: ResearchState });
+  | (RunCommon & { kind: "research"; research: ResearchState })
+  | (RunCommon & { kind: "design"; research: ResearchState });
 
 /** A change to a run: the common fields as they are; `dev` is merged into the dev state, `research` replaces it. */
 export type RunPatch = Partial<RunCommon> & { dev?: Partial<DevState>; research?: ResearchState };
@@ -209,9 +224,9 @@ export const devOf = (run: RunRecord): DevState => {
   return run.dev;
 };
 
-/** The research state of a research run. */
+/** The research state of a research run (or of a design run, which keeps the same). */
 export const researchOf = (run: RunRecord): ResearchState => {
-  if (run.kind !== "research")
+  if (run.kind !== "research" && run.kind !== "design")
     throw new Error(`${run.key} is a ${run.kind} run, not a research run`);
   return run.research;
 };

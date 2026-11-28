@@ -6,10 +6,12 @@ import { type Conversation, isLive, streamsOf, type ToolItem, textOf } from "../
 import { startedAt } from "../started.ts";
 import { useI18n } from "./i18n.tsx";
 import { CheckIcon, ChevronRightIcon, ErrorCircleIcon, StopIcon, WarningIcon } from "./icons.tsx";
+import { useReportInView } from "./in-view.ts";
 import { Elapsed } from "./inline-ai-status.tsx";
 import { type LoaderState, loaderStateOfKind, MorphLoader } from "./loader/index.ts";
 import { useLoaderClaim } from "./loader-claim.ts";
 import { Markdown } from "./markdown.tsx";
+import { useSessionScope } from "./session-scope.tsx";
 import { useStartScope } from "./start-scope.ts";
 import { useAppState, useAppStore } from "./store-context.tsx";
 import { Copyable, clip, durationOf, toolDescription, toolName, useRevealOpen } from "./tool.tsx";
@@ -249,9 +251,10 @@ export function SubagentCard({ tool, work }: { tool: ToolItem; work?: ReactNode 
   // location's daemon can pass a stop on. Asked once: the card says it is stopping until its end comes. If the
   // daemon says there is nothing to stop (it ended while this card was behind), the button goes; if the ask fails, the
   // error is shown and it can be asked again.
+  const sessionScope = useSessionScope();
   const locationCan = useAppState((s) =>
-    s.selectedLocation !== undefined
-      ? s.status[s.selectedLocation]?.capabilities?.stopSubagent === true
+    sessionScope.locationId !== undefined
+      ? s.status[sessionScope.locationId]?.capabilities?.stopSubagent === true
       : false,
   );
   const [asked, setAsked] = useState<"no" | "stopping" | "nothing">("no");
@@ -264,12 +267,18 @@ export function SubagentCard({ tool, work }: { tool: ToolItem; work?: ReactNode 
     sub.state === "running" &&
     sub.id !== undefined;
   const card = useRef<HTMLDivElement>(null);
+  // In the background and on screen: the line at the end of the conversation does not name it again (turn.tsx).
+  useReportInView(tool.id, card, running && background);
   const stopFocused = useRef(false);
   const stop = () => {
     if (sub?.id === undefined || stopping) return;
     setAsked("stopping");
+    const target =
+      sessionScope.locationId !== undefined && sessionScope.sessionId !== undefined
+        ? { locationId: sessionScope.locationId, sessionId: sessionScope.sessionId }
+        : undefined;
     void store
-      .stopSubagent(sub.id, sub.background)
+      .stopSubagent(sub.id, sub.background, target)
       .then((taken) => setAsked(taken === true ? "stopping" : taken === false ? "nothing" : "no"));
   };
   // The button goes when its sub-agent ends: focus that was on it stays on the card, not lost to the page.

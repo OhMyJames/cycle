@@ -9,6 +9,7 @@ import {
   LOOP_TICKET_GET,
   LoopBoardSchema,
   LoopGraphActResultSchema,
+  LoopGraphNodeSchema,
   LoopRunDetailSchema,
   LoopTicketDetailSchema,
 } from "@cycle/protocol";
@@ -24,7 +25,7 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 const now = () => new Date("2026-11-26T10:00:00.000Z");
 
 class Tracker implements ApiTracker {
-  issues = [2, 3].map((n) => ({
+  issues = [2, 3, 4].map((n) => ({
     id: 100 + n,
     sequenceNumber: n,
     title: `ticket ${n}`,
@@ -81,6 +82,9 @@ const node = (id: string, position: number, over: Partial<TaskNode> = {}): TaskN
   id,
   position,
   origin: "planned",
+  role: "dev",
+  verdict: null,
+  report: null,
   title: `Node ${id}`,
   goal: `Goal ${id}`,
   dependsOn: [],
@@ -202,6 +206,42 @@ describe("graph in reads", () => {
   });
 });
 
+describe("role, verdict and report", () => {
+  test("QA node carries them in ticket and run detail; old nodes without them still parse", async () => {
+    await store.save(run("CYC-4"));
+    await store.saveGraph({
+      ...graphOf([
+        node("n1", 0, { status: "passed" }),
+        node("qa-1", 1, {
+          role: "qa",
+          status: "passed",
+          verdict: "fail",
+          report: "Found a bug",
+          commitSha: "abc",
+          dependsOn: ["n1"],
+        }),
+      ]),
+      runKey: "CYC-4",
+    });
+    const ticket = LoopTicketDetailSchema.parse(
+      await api.call(LOOP_TICKET_GET, { project: "CYC", key: "CYC-4" }),
+    );
+    expect(ticket.graph?.nodes.map((x) => [x.role, x.verdict, x.report])).toEqual([
+      ["dev", null, null],
+      ["qa", "fail", "Found a bug"],
+    ]);
+    const detail = LoopRunDetailSchema.parse(
+      await api.call(LOOP_RUN_GET, { project: "CYC", key: "CYC-4" }),
+    );
+    expect(detail.graph?.nodes[1]).toMatchObject({ role: "qa", verdict: "fail" });
+    const card = LoopBoardSchema.parse(await api.call(LOOP_BOARD_GET, { project: "CYC" }));
+    expect(JSON.stringify(card)).not.toContain("Found a bug");
+
+    const { role, verdict, report, ...old } = node("n1", 0);
+    expect(LoopGraphNodeSchema.parse(old)).toMatchObject({ id: "n1" });
+  });
+});
+
 describe("loop/graph/act", () => {
   test("retry_node resets the node and puts a blocked run back at graph_plan", async () => {
     const result = LoopGraphActResultSchema.parse(await act({ action: "retry_node" }));
@@ -219,6 +259,53 @@ describe("loop/graph/act", () => {
     expect(result.phase).toBe("dev");
     expect((await store.load("CYC-2"))?.phase).toBe("dev");
   });
+
+  test.each(["research", "design"] as const)(
+    "retry on a blocked %s run resumes at the node's phase, not graph_plan",
+    async (kind) => {
+      for (const [id, role, phase] of [
+        ["research", kind, "research"],
+        ["qa-1", "qa", "research_qa"],
+      ] as const) {
+        await store.save(
+          run("CYC-4", {
+            kind,
+            research: {
+              questions: [],
+              output: null,
+              docId: null,
+              docLinked: false,
+              conclusionDone: false,
+              followups: [],
+              commented: false,
+            },
+            dev: undefined,
+            phase: "blocked",
+            blockedReason: "x",
+            resumeFrom: phase,
+          }),
+        );
+        await store.saveGraph({
+          ...graphOf([
+            node("research", 0, { role: kind, status: "passed", verify: [] }),
+            node("qa-1", 1, { role: "qa", status: "blocked" }),
+          ]),
+          runKey: "CYC-4",
+        });
+        if (id === "research")
+          await store.saveGraph({
+            ...graphOf([node("research", 0, { role: kind, status: "blocked", verify: [] })]),
+            runKey: "CYC-4",
+          });
+        const result = LoopGraphActResultSchema.parse(
+          await act({ key: "CYC-4", nodeId: id, roles: ["research", "design"] }),
+        );
+        expect(result.phase).toBe(phase);
+        expect((await store.load("CYC-4"))?.phase).toBe(phase);
+        expect(result.graph.nodes.some((x) => x.role === role)).toBe(true);
+      }
+    },
+  );
 
   test("skip_node marks the node skipped and resumes the run", async () => {
     await act({ action: "skip_node" });
@@ -283,5 +370,55 @@ describe("loop/graph/act", () => {
     expect(await reasonOf(act({ actor: "" }))).toBe("actor_required");
     expect(store.actions()).toHaveLength(0);
     expect((await store.load("CYC-2"))?.phase).toBe("blocked");
+  });
+});
+
+describe("research and design nodes for clients that know them", () => {
+  const seed = async () => {
+    await store.save(run("CYC-4"));
+    await store.saveGraph({
+      ...graphOf(
+        [
+          node("r1", 0, { role: "research", status: "running", verify: [], report: "R" }),
+          node("n1", 1, { dependsOn: ["r1"], status: "pending" }),
+        ],
+        "r1",
+      ),
+      runKey: "CYC-4",
+    });
+  };
+
+  test("without roles the nodes, their dependsOn ids and the current node are gone", async () => {
+    await seed();
+    const ticket = LoopTicketDetailSchema.parse(
+      await api.call(LOOP_TICKET_GET, { project: "CYC", key: "CYC-4" }),
+    );
+    expect(ticket.graph?.nodes.map((x) => [x.id, x.dependsOn])).toEqual([["n1", []]]);
+    expect(ticket.graph?.currentNodeId).toBeNull();
+    const detail = LoopRunDetailSchema.parse(
+      await api.call(LOOP_RUN_GET, { project: "CYC", key: "CYC-4", roles: ["dev", "qa"] }),
+    );
+    expect(detail.graph?.nodes.map((x) => x.id)).toEqual(["n1"]);
+    // The card summary only has counts and the current node, so it counts every role.
+    const board = LoopBoardSchema.parse(await api.call(LOOP_BOARD_GET, { project: "CYC" }));
+    const card = board.columns[0]?.cards.find((c) => c.key === "CYC-4");
+    expect(card?.graph).toMatchObject({ total: 2, running: 1, currentNodeId: "r1" });
+  });
+
+  test("with roles they come back, with an empty verify", async () => {
+    await seed();
+    const roles = ["dev", "qa", "research", "design"];
+    const ticket = LoopTicketDetailSchema.parse(
+      await api.call(LOOP_TICKET_GET, { project: "CYC", key: "CYC-4", roles }),
+    );
+    expect(ticket.graph?.nodes.map((x) => [x.id, x.role, x.dependsOn])).toEqual([
+      ["r1", "research", []],
+      ["n1", "dev", ["r1"]],
+    ]);
+    expect(ticket.graph?.currentNodeId).toBe("r1");
+    const only = LoopRunDetailSchema.parse(
+      await api.call(LOOP_RUN_GET, { project: "CYC", key: "CYC-4", roles: ["research"] }),
+    );
+    expect(only.graph?.nodes.map((x) => x.id)).toEqual(["r1", "n1"]);
   });
 });

@@ -760,6 +760,13 @@ export type SessionSnapshot = {
   version: number;
 };
 
+/** A daemon that no longer starts turns, waiting to switch to its new version (CYC-547). */
+export type DaemonDraining = {
+  version: string;
+  /** When it will switch whatever still runs, ISO 8601 UTC. */
+  forceAt?: string;
+};
+
 /** Where the app's own updating stands. `current` is the version that is running. */
 export type UpdateState = {
   current: string;
@@ -878,6 +885,11 @@ export type AppEvent =
   | { type: "connectors"; locationId: string }
   /** The location's model providers changed, here or elsewhere: read them, and its agents, again. */
   | { type: "providers"; locationId: string }
+  /**
+   * The location's daemon began draining for its own update, or stopped (`draining` absent: waiting, or switched;
+   * docs/protocol.md §3, CYC-547). Waiting says nothing: it is short.
+   */
+  | { type: "daemon-update"; locationId: string; draining?: DaemonDraining }
   /** An agent's plugins on that location changed, here or elsewhere: read them again. */
   | { type: "plugins"; locationId: string; agentId: string }
   /** A session was deleted elsewhere while the connection was away: nothing of it is kept. */
@@ -1470,6 +1482,8 @@ export type LoopGraphNode = {
   /** Topological order, from 0. */
   position: number;
   origin: "planned" | "fix";
+  /** Absent (older servers) means `dev`. */
+  role?: "dev" | "qa" | "research" | "design" | undefined;
   title: string;
   goal: string;
   dependsOn: string[];
@@ -1481,6 +1495,9 @@ export type LoopGraphNode = {
   rounds: number;
   lastError: string | null;
   summary: string | null;
+  /** QA's conclusion; `status` says whether the run finished. */
+  verdict?: "pass" | "fail" | null | undefined;
+  report?: string | null | undefined;
   startedAt: string | null;
   finishedAt: string | null;
 };
@@ -1553,8 +1570,8 @@ export type LoopNoticeKind =
 export type LoopNotice = {
   id: string;
   kind: LoopNoticeKind;
-  /** The work item key, `CYC-390`. */
-  identifier: string;
+  /** The work item key, `CYC-390`; null for a Notice about the Project itself, which has no ticket to open. */
+  identifier: string | null;
   text: string;
   session: { kind: string; id: string } | null;
 };

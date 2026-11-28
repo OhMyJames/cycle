@@ -247,7 +247,10 @@ const translateToolContent = (
   };
 };
 
-/** Extract structured `_meta["cycle/toolResult"]` where agy gives exact numbers (command exit code, edit diff counts). */
+/** A non-negative integer count from agy raw output. */
+const isCount = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0;
+
+/** Extract structured `_meta["cycle/toolResult"]` where agy gives exact numbers (command exit code, edit diff counts, read range, search counts). */
 const toolResultMeta = (
   payload: V1ToolCallPayload,
   editStats?: { additions: number; deletions: number; created: boolean },
@@ -262,6 +265,40 @@ const toolResultMeta = (
     raw.exit_code >= 0
   ) {
     return { [META.toolResult]: { run: { exitCode: raw.exit_code } } };
+  }
+  if (payload.kind === "read" && payload.status === "completed" && raw) {
+    // UNVERIFIED shape: no real agy read-file output is captured in this repo (fixtures only have
+    // the command's `{ output, exit_code }`). Assumed, by analogy with `exit_code`:
+    // `rawOutput: { start_line, num_lines, total_lines? }`. Numbers only, never file content.
+    if (isCount(raw.start_line) && isCount(raw.num_lines)) {
+      return {
+        [META.toolResult]: {
+          read: {
+            startLine: raw.start_line,
+            numLines: raw.num_lines,
+            ...(isCount(raw.total_lines) ? { totalLines: raw.total_lines } : {}),
+          },
+        },
+      };
+    }
+  }
+  if (payload.kind === "search" && payload.status === "completed" && raw) {
+    // UNVERIFIED shape: no real agy search output is captured in this repo. Assumed, by analogy
+    // with `exit_code`: `rawOutput: { num_files, num_matches?, num_lines?, truncated? }`. `files` is
+    // required by the schema, so nothing is filled without a direct file count (locations are not
+    // counted: they may be truncated). Numbers and a flag only, never hit text.
+    if (isCount(raw.num_files)) {
+      return {
+        [META.toolResult]: {
+          search: {
+            files: raw.num_files,
+            ...(isCount(raw.num_matches) ? { matches: raw.num_matches } : {}),
+            ...(isCount(raw.num_lines) ? { lines: raw.num_lines } : {}),
+            ...(raw.truncated === true ? { more: true } : {}),
+          },
+        },
+      };
+    }
   }
   if (editStats) {
     return {

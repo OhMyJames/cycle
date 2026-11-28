@@ -8,10 +8,12 @@ import { Tip } from "./tip.tsx";
 
 /**
  * One line under a title bar about what that page shows: an icon, what is the matter, and what can be done about it.
- * Amber for what is in the way but passes or can be fixed from here, red for what failed. What concerns the whole app
- * (an update, a daemon too old) is not said here.
+ * Amber for what is in the way but passes or can be fixed from here, red for what failed, and no colour ("info") for
+ * what is only worth knowing: advice, or where the page was opened from. What concerns the whole app (an update, a
+ * daemon too old) is not said here.
  */
 export function NoticeLine({
+  kind,
   tone,
   icon,
   text,
@@ -19,7 +21,9 @@ export function NoticeLine({
   action,
   onDismiss,
 }: {
-  tone: "warning" | "error";
+  /** Which notice it is, for what looks for it. */
+  kind?: string | undefined;
+  tone: "info" | "warning" | "error";
   icon: ReactNode;
   text: string;
   /** Something is under way (connecting): the icon turns, and nothing is to be pressed. */
@@ -31,6 +35,7 @@ export function NoticeLine({
   return (
     <div
       data-slot="notice-line"
+      data-kind={kind}
       data-tone={tone}
       data-busy={busy || undefined}
       role={tone === "error" ? "alert" : "status"}

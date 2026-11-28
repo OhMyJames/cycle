@@ -4,6 +4,7 @@ import { page, userEvent } from "vitest/browser";
 import type { SessionSummary } from "../../src/api.ts";
 import { pins } from "../../src/pins.ts";
 import { fakeBridge, summary } from "../fake-bridge.ts";
+import { mountApp } from "./mount.tsx";
 import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
@@ -18,12 +19,16 @@ const row = (id: string, title: string): SessionSummary => ({
 });
 
 const mount = async () => {
-  const script = fakeBridge({ connected: true });
-  script.bridge.sessions = async () => [row("a", "First"), row("b", "Second")];
-  await renderApp(script.bridge);
-  const user = userEvent.setup();
+  const app = await mountApp(
+    {},
+    {
+      configure: (script) => {
+        script.bridge.sessions = async () => [row("a", "First"), row("b", "Second")];
+      },
+    },
+  );
   await screen.findAllByRole("option");
-  return { user, script };
+  return { user: app.user, script: app.script };
 };
 
 const option = (name: string) => screen.getByRole("option", { name: new RegExp(name) });

@@ -491,6 +491,7 @@ test("a PR merged outside the loop: the move fails, the next step does not comme
     dev: {
       ciRound: 0,
       ciFailedSha: null,
+      ciWait: null,
       nodeModulesReleased: false,
       fullFlowDocs: [],
       conflictRound: 0,

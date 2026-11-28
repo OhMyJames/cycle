@@ -296,7 +296,7 @@ function Behaviour({ props }: { props: MarkdownInputProps }) {
             const now = $getSelection();
             if ($isRangeSelection(now))
               now.insertNodes([
-                $createMentionNode(mention.path, mention.kind),
+                $createMentionNode(mention.path, mention.kind, mention.name),
                 $createTextNode(" "),
               ]);
           }

@@ -2,12 +2,9 @@
 import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
 import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
-import { userEvent } from "vitest/browser";
-import type { SessionSnapshot } from "../../src/api.ts";
-import { applyUpdate, emptyConversation } from "../../src/model/index.ts";
-import { fakeBridge } from "../fake-bridge.ts";
-import { boxText, ready } from "./box.ts";
-import { renderApp } from "./render-app.tsx";
+import { summary } from "../fake-bridge.ts";
+import { boxText } from "./box.ts";
+import { openSession } from "./mount.tsx";
 
 afterEach(() => {
   cleanup();
@@ -27,22 +24,10 @@ const open = async (
     u({ sessionUpdate: "state_update", state: "idle", stopReason: "end_turn" }),
     u({ sessionUpdate: "usage_update", used, size: 1_000_000 }),
   ];
-  const snapshot = (): SessionSnapshot => ({
-    conversation: updates.reduce((c, x) => applyUpdate(c, x), emptyConversation()),
-    permissions: [],
-    version: updates.length,
-  });
-  const script = fakeBridge({ connected: true, snapshot, capabilities });
-  const store = await renderApp(script.bridge);
-  const user = userEvent.setup();
-  await user.click(await screen.findByRole("option", { name: /work/ }));
-  const box = await screen.findByRole("textbox", { name: "Message" });
-  await ready(box);
+  const app = await openSession(updates, { box: true, fake: { capabilities } });
   const tracked = () =>
-    script.calls
-      .filter(([name, event]) => name === "track" && String(event).startsWith("continue_hint"))
-      .map(([, event, props]) => [event, props]);
-  return { ...script, user, box, store, tracked };
+    app.tracked().filter(([event]) => String(event).startsWith("continue_hint"));
+  return { ...app, tracked };
 };
 
 const hint = () => document.querySelector('[data-kind="continue"]');
@@ -62,11 +47,42 @@ test("a long conversation is offered a new session, which opens with the old one
   ]);
 });
 
+test("it is said under the title bar, in the plain tone, and not over the input box", async () => {
+  await open(250_000);
+  await waitFor(() => expect(hint()).not.toBeNull());
+  expect(hint()?.getAttribute("data-slot")).toBe("notice-line");
+  expect(hint()?.getAttribute("data-tone")).toBe("info");
+  expect(hint()?.closest('[data-slot="composer"]')).toBeNull();
+});
+
+test("it waits while something the session started still runs in the background", async () => {
+  const updates = [
+    u({ sessionUpdate: "user_message", messageId: "u1", content: [{ type: "text", text: "fix" }] }),
+    u({ sessionUpdate: "agent_message", messageId: "a1", content: [{ type: "text", text: "ok" }] }),
+    u({ sessionUpdate: "state_update", state: "idle", stopReason: "end_turn" }),
+    u({ sessionUpdate: "usage_update", used: 250_000, size: 1_000_000 }),
+  ];
+  const app = await openSession(updates, {
+    box: true,
+    fake: { capabilities: CAPS },
+    configure: (script) => {
+      script.bridge.sessions = async (locationId: string) => [
+        { ...summary("s1", locationId), background: 1 },
+      ];
+    },
+  });
+  // The length has been counted (the ring says so), and still nothing is offered.
+  await screen.findByText("25%");
+  await act(async () => {});
+  expect(app.box).toBeTruthy();
+  expect(hint()).toBeNull();
+});
+
 test("a conversation left idle while big is offered one, a small one is not, and dismissing hides it", async () => {
   const idle = await open(150_000);
   await waitFor(() => expect(hint()).not.toBeNull());
   expect(hint()?.textContent).toContain("has been idle");
-  await idle.user.click(screen.getByRole("button", { name: "Dismiss hint" }));
+  await idle.user.click(screen.getByRole("button", { name: "Dismiss" }));
   expect(hint()).toBeNull();
   expect(idle.tracked()).toEqual([["continue_hint_shown", { reason: "idle" }]]);
   cleanup();

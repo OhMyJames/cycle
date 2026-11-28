@@ -2,8 +2,10 @@ import { expect, test } from "bun:test";
 import {
   ACP_ERROR_CODES,
   agentsList,
+  CapabilitiesSchema,
   CycleErrorCode,
   checkPrompt,
+  DaemonUpdateStateSchema,
   describePromptProblem,
   LoopCardSchema,
   LoopGraphActionSchema,
@@ -15,6 +17,8 @@ import {
   NOTIFICATIONS,
   normalizePrompt,
   PROMPT_LIMITS,
+  QUEUE_UPDATE,
+  QueueUpdateSchema,
   seqOf,
   ToolResultSchema,
   tsOf,
@@ -184,6 +188,15 @@ test("a command's result says only how it ended", () => {
     ToolResultSchema.safeParse({ run: { timedOutMs: 120000, background: true } }).success,
   ).toBe(true);
   expect(ToolResultSchema.safeParse({ run: { interrupted: false } }).success).toBe(false);
+});
+
+test("a command's result may carry how long it ran, and old results without it still pass", () => {
+  expect(ToolResultSchema.safeParse({ run: { durationMs: 12000 } }).success).toBe(true);
+  expect(ToolResultSchema.safeParse({ run: { exitCode: 1, durationMs: 0 } }).success).toBe(true);
+  expect(ToolResultSchema.safeParse({ run: { exitCode: 1 } }).success).toBe(true);
+  for (const bad of [-1, 1.5, "12"]) {
+    expect(ToolResultSchema.safeParse({ run: { durationMs: bad } }).success).toBe(false);
+  }
 });
 
 test("a page fetched says only its status and size", () => {
@@ -392,4 +405,41 @@ test("loop/graph/act takes the three actions and refuses an unknown one", () => 
       graph,
     }).success,
   ).toBe(true);
+});
+
+test("the update state reads with and without the drain fields", () => {
+  const old = { version: "0.3.1", updates: "on" as const, pending: { version: "0.3.2" } };
+  expect(DaemonUpdateStateSchema.parse(old)).toEqual(old);
+  const draining = {
+    ...old,
+    pending: {
+      version: "0.3.2",
+      state: "draining" as const,
+      since: "2026-11-28T01:00:00.000Z",
+      forceAt: "2026-11-28T01:15:00.000Z",
+    },
+  };
+  expect(DaemonUpdateStateSchema.parse(draining)).toEqual(draining);
+  expect(
+    DaemonUpdateStateSchema.safeParse({ ...old, pending: { version: "x", state: "nope" } }).success,
+  ).toBe(false);
+  expect(NOTIFICATIONS.daemonUpdate).toBe("_cycle/daemon/update");
+  expect(META.updateNotify).toBe("cycle/updateNotify");
+});
+
+test("a queue snapshot's hold is optional and only 'update'", () => {
+  const entries = [{ queueId: "q1", prompt: [] }];
+  expect(QueueUpdateSchema.parse({ sessionUpdate: QUEUE_UPDATE, entries }).hold).toBeUndefined();
+  expect(
+    QueueUpdateSchema.parse({ sessionUpdate: QUEUE_UPDATE, entries, hold: "update" }).hold,
+  ).toBe("update");
+  expect(
+    QueueUpdateSchema.safeParse({ sessionUpdate: QUEUE_UPDATE, entries, hold: "other" }).success,
+  ).toBe(false);
+});
+
+test("capabilities carry selfUpdateDrain, and an old daemon's omit it", () => {
+  const shape = CapabilitiesSchema.shape;
+  expect(shape.selfUpdateDrain.parse(true)).toBe(true);
+  expect(shape.selfUpdateDrain.parse(undefined)).toBeUndefined();
 });

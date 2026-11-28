@@ -1,12 +1,10 @@
 import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { userEvent } from "vitest/browser";
-import type { FileContent, FileListing, SessionSnapshot, SessionSummary } from "../../src/api.ts";
-import { applyUpdate, emptyConversation } from "../../src/model/index.ts";
-import { fakeBridge, summary } from "../fake-bridge.ts";
+import type { FileContent, FileListing, SessionSummary } from "../../src/api.ts";
+import { summary } from "../fake-bridge.ts";
+import { openSession } from "./mount.tsx";
 import { openPanel, openTab } from "./panel.ts";
-import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
   cleanup();
@@ -79,56 +77,45 @@ const mount = async (
     sessions?: SessionSummary[];
   } = {},
 ) => {
-  const updates = options.updates ?? [];
-  const snapshot = (): SessionSnapshot => ({
-    conversation: updates.reduce((c, u) => applyUpdate(c, u), emptyConversation()),
-    permissions: [],
-    version: updates.length,
-  });
-  const script = fakeBridge({
-    connected: true,
-    snapshot,
-    capabilities: {
-      queue: true,
-      files: true,
-      folders: true,
-      fs: options.fs ?? true,
-      diff: options.diff ?? false,
+  let failing = options.failList === true;
+  const app = await openSession(options.updates ?? [], {
+    fake: {
+      capabilities: {
+        queue: true,
+        files: true,
+        folders: true,
+        fs: options.fs ?? true,
+        diff: options.diff ?? false,
+      },
+    },
+    row: options.sessions !== undefined ? /first/ : /work/,
+    configure: (script) => {
+      if (options.sessions !== undefined) {
+        const sessions = options.sessions;
+        script.bridge.sessions = async () => sessions;
+      }
+      script.bridge.listFiles = async (_e, sessionId, path) => {
+        script.calls.push(["listFiles", path]);
+        if (failing) throw new Error("EACCES: permission denied");
+        if (sessionId === "s2")
+          return {
+            root: "/other",
+            path,
+            entries: [{ name: "two.txt", kind: "file" }],
+            truncated: false,
+          };
+        return { root: "/work", path, entries: FOLDERS[path] ?? [], truncated: false };
+      };
+      script.bridge.readFile = async (_e, _s, path) => {
+        script.calls.push(["readFile", path]);
+        const file = FILES[path];
+        if (file === undefined) throw new Error("No such file or folder");
+        return file;
+      };
     },
   });
-  if (options.sessions !== undefined) {
-    const sessions = options.sessions;
-    script.bridge.sessions = async () => sessions;
-  }
-  let failing = options.failList === true;
-  script.bridge.listFiles = async (_e, sessionId, path) => {
-    script.calls.push(["listFiles", path]);
-    if (failing) throw new Error("EACCES: permission denied");
-    if (sessionId === "s2")
-      return {
-        root: "/other",
-        path,
-        entries: [{ name: "two.txt", kind: "file" }],
-        truncated: false,
-      };
-    return { root: "/work", path, entries: FOLDERS[path] ?? [], truncated: false };
-  };
-  script.bridge.readFile = async (_e, _s, path) => {
-    script.calls.push(["readFile", path]);
-    const file = FILES[path];
-    if (file === undefined) throw new Error("No such file or folder");
-    return file;
-  };
-  const store = await renderApp(script.bridge);
-  const user = userEvent.setup();
-  await user.click(
-    await screen.findByRole("option", { name: options.sessions !== undefined ? /first/ : /work/ }),
-  );
-  const tracked = () =>
-    script.calls
-      .filter(([name, event]) => name === "track" && String(event).startsWith("file"))
-      .map(([, event, props]) => [event, props]);
-  return { store, user, script, tracked, stopFailing: () => (failing = false) };
+  const tracked = () => app.tracked().filter(([event]) => String(event).startsWith("file"));
+  return { ...app, tracked, stopFailing: () => (failing = false) };
 };
 
 const panel = () => document.querySelector('[data-slot="side-panel"]') as HTMLElement;

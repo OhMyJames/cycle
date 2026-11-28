@@ -39,7 +39,6 @@ import { type PlanItem, type QueuedPrompt, textOf } from "../model/index.ts";
 import { commandText, filterCommands, slashQuery } from "../slash.ts";
 import { optionsOf, propertiesOf } from "./config-form.tsx";
 import { ContextDetails, planRowsOf } from "./context-details.tsx";
-import { ContinueRow, useContinueHint } from "./continue-hint.tsx";
 import { useI18n } from "./i18n.tsx";
 import { AttachIcon, CloseIcon, PlusIcon, SendIcon, StopIcon } from "./icons.tsx";
 import { Lightbox, type LightboxImage } from "./lightbox.tsx";
@@ -149,7 +148,7 @@ export function Composer({
   context,
   planUsage,
 }: ComposerProps) {
-  const { t, number } = useI18n();
+  const { t, number, date } = useI18n();
   const store = useAppStore();
   const draft = useSyncExternalStore(store.drafts.subscribe, () => store.drafts.get(sessionKey));
   // Only what the box shows is watched: the conversation is made anew by every streamed update, and the box must not be drawn again for each.
@@ -164,6 +163,8 @@ export function Composer({
   );
   // A permission waiting for an answer: ⌘Enter is its "Allow once" (app.tsx), the same test as there.
   const permissionWaits = useAppState((s) => (s.views[sessionKey]?.permissions.length ?? 0) > 0);
+  // The daemon is about to switch to its new version and starts no new turn: what is sent now goes after the restart.
+  const draining = useAppState((s) => s.daemonDraining[locationId]);
   const { text, attachments, kept } = draft;
   // A daemon that has not said it queues is asked nothing it would refuse: a message waits for the turn to end.
   const capabilities = useAppState((s) => s.status[locationId]?.capabilities);
@@ -184,10 +185,14 @@ export function Composer({
   const root = useRef<HTMLDivElement>(null);
   const fieldRef = useRef<HTMLDivElement>(null);
   const input = useRef<InputHandle | null>(null);
+  const sessionTarget = useMemo(
+    () => (!blank && sessionId !== undefined ? { locationId, sessionId } : undefined),
+    [blank, locationId, sessionId],
+  );
   // Something put a message back to be sent again (a failed turn's "Edit message"): the box takes the focus, to read it.
   const focusAsked = useAppState((s) => s.composerFocus);
   useEffect(() => {
-    if (focusAsked > 0) input.current?.focus();
+    if (focusAsked > 0 && root.current?.closest("[inert]") === null) input.current?.focus();
   }, [focusAsked]);
   // What is being named after a slash or an @, and which of the matches is under the arrows. Escape closes the menu until
   // what was typed changes.
@@ -213,7 +218,7 @@ export function Composer({
     }
     let current = true;
     const timer = setTimeout(() => {
-      void store.searchFiles(query).then((result) => {
+      void store.searchFiles(query, sessionTarget).then((result) => {
         if (current) setFound({ query, result });
       });
     }, MENTION_DELAY);
@@ -221,7 +226,7 @@ export function Composer({
       current = false;
       clearTimeout(timer);
     };
-  }, [typed.mention, canFind, store]);
+  }, [typed.mention, canFind, store, sessionTarget]);
   const commandRows: PickerRow[] =
     typed.slash === undefined
       ? []
@@ -544,11 +549,15 @@ export function Composer({
     recalled.current = NOT_RECALLING;
     setProblem(undefined);
     onSent?.();
-    await store.send(steer ? { steer: true, via } : { via });
+    await store.send({
+      ...(steer ? { steer: true } : {}),
+      via,
+      ...(sessionTarget !== undefined ? { target: sessionTarget } : {}),
+    });
   };
 
   const edit = async (queueId: string) => {
-    if ((await store.dequeue(queueId)) !== undefined) {
+    if ((await store.dequeue(queueId, sessionTarget)) !== undefined) {
       input.current?.focus();
     }
   };
@@ -658,20 +667,12 @@ export function Composer({
     };
   }, [attachable]);
 
-  const continueHint = useContinueHint({
-    locationId,
-    sessionId: blank ? undefined : sessionId,
-    sessionKey,
-    idle: !working,
-    connected,
-    context,
-  });
   const showBlocked = blocked !== undefined && blocked !== "" && connected;
   const hasExtensions =
     plan !== undefined ||
     queue.length > 0 ||
+    draining !== undefined ||
     showBlocked ||
-    continueHint.reason !== undefined ||
     dropping ||
     problem !== undefined;
 
@@ -734,18 +735,22 @@ export function Composer({
               })}
             </ul>
           ) : null}
+          {draining !== undefined ? (
+            <div data-slot="extension-row" data-kind="hint" data-update="draining" role="status">
+              {draining.forceAt !== undefined && !Number.isNaN(Date.parse(draining.forceAt))
+                ? t("composer.updating.until", {
+                    time: date(Date.parse(draining.forceAt), {
+                      hour: "numeric",
+                      minute: "2-digit",
+                    }),
+                  })
+                : t("composer.updating")}
+            </div>
+          ) : null}
           {showBlocked ? (
             <div data-slot="extension-row" data-kind="hint" role="status">
               {blocked}
             </div>
-          ) : null}
-          {continueHint.reason !== undefined && sessionId !== undefined ? (
-            <ContinueRow
-              reason={continueHint.reason}
-              locationId={locationId}
-              sessionId={sessionId}
-              onDismiss={continueHint.dismiss}
-            />
           ) : null}
           {dropping ? (
             <div data-slot="extension-row" data-kind="drop">
@@ -945,7 +950,7 @@ export function Composer({
                 data-kind="round"
                 data-action="stop"
                 disabled={!connected}
-                onClick={() => void store.cancel()}
+                onClick={() => void store.cancel(sessionTarget)}
               >
                 <StopIcon size={10} />
               </Button>

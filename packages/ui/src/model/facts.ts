@@ -33,7 +33,13 @@ export type ToolFacts = {
   /** Addresses a call gave back (a web search's hits): a title and an address each, never a page. */
   links: { key: string; uri: string; name: string }[];
   /** How a command ended, when the agent said (docs/protocol.md §9 `run`). */
-  run?: { interrupted: boolean; timedOutMs?: number; background: boolean; exitCode?: number };
+  run?: {
+    interrupted: boolean;
+    timedOutMs?: number;
+    background: boolean;
+    exitCode?: number;
+    durationMs?: number;
+  };
   /** Pictures in the result (a Read of an image, an MCP screenshot), each with a key for its list. */
   images: { key: string; block: Block }[];
 };
@@ -135,11 +141,13 @@ const runOf = (tool: ToolItem): ToolFacts["run"] => {
   const said = result.run;
   const timedOutMs = num(said.timedOutMs);
   const exitCode = num(said.exitCode);
+  const durationMs = num(said.durationMs);
   return {
     interrupted: said.interrupted === true,
     ...(timedOutMs !== undefined ? { timedOutMs } : {}),
     ...(exitCode !== undefined ? { exitCode } : {}),
     background: said.background === true,
+    ...(durationMs !== undefined ? { durationMs } : {}),
   };
 };
 

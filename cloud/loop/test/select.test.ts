@@ -189,3 +189,9 @@ test("toIssue reads blockers from links: only inward blocks count; missing links
   expect(missing.blockerColumnIds).toBeNull();
   expect(pickNext([missing], cfg)).toBeUndefined();
 });
+
+test("a Design work item is taken only when the Design type is allowed (the design config is on)", () => {
+  const item = issue({ number: 1, priority: "urgent", typeId: 24 });
+  expect(pickNext([item], cfg)).toBeUndefined();
+  expect(pickNext([item], config({ allowedTypeIds: [20, 25, 24] }))?.number).toBe(1);
+});

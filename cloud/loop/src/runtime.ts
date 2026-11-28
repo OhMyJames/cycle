@@ -11,6 +11,9 @@ import { loadConfigFiles } from "./config-file.ts";
 import { idleIntervalMs, runLoops, workerSpecs } from "./loop.ts";
 import { listen } from "./server.ts";
 
+/** How often the checker is offered a turn; the flow decides when it really looks. */
+export const WATCH_TICK_MS = 5000;
+
 export type Running = {
   /** Ask every loop to stop after its current step. */
   stop: () => void;
@@ -42,6 +45,12 @@ export const startPipelines = async (
   pulse();
   const heartbeatTimer = setInterval(pulse, 60_000);
   heartbeatTimer.unref?.();
+  // CYC-550: the CI checker of each Project; the flow throttles it to `ciPollIntervalMs`.
+  const watchTimers = projects.map((p) => {
+    const timer = setInterval(() => void p.pipeline.watch(), WATCH_TICK_MS);
+    timer.unref?.();
+    return timer;
+  });
   const done = runLoops(
     projects.flatMap((p) =>
       workerSpecs(
@@ -58,6 +67,7 @@ export const startPipelines = async (
     ),
   ).finally(async () => {
     clearInterval(heartbeatTimer);
+    for (const timer of watchTimers) clearInterval(timer);
     await Promise.allSettled(projects.map((p) => p.close()));
   });
   return {

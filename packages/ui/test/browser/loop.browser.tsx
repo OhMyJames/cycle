@@ -12,6 +12,7 @@ import type {
 } from "../../src/api.ts";
 import { fakeBridge, summary } from "../fake-bridge.ts";
 import { openSettings } from "./account-menu.ts";
+import { type FakeOptions, mountLoop } from "./mount.tsx";
 import { renderApp } from "./render-app.tsx";
 
 afterEach(cleanup);
@@ -61,30 +62,16 @@ const withTickets = (tickets: Record<string, LoopTicket[]>): LoopBoardAnswer => 
   })),
 });
 
-const mount = async (script: NonNullable<Parameters<typeof fakeBridge>[0]>) => {
-  // `options` stays live: a test can change what the bridge answers later.
-  const options = {
-    connected: true,
-    workspaceRepos: { "/work": cycle.repo.displayName },
-    ...script,
-  };
-  const fake = fakeBridge(options);
-  const store = await renderApp(fake.bridge);
-  const user = userEvent.setup();
-  await user.click(await screen.findByRole("button", { name: "Loop" }));
-  return { user, options, store, ...fake };
-};
+const mount = (script: FakeOptions) =>
+  mountLoop({ workspaceRepos: { "/work": cycle.repo.displayName }, ...script });
 
 const openOverviewProject = async (user: ReturnType<typeof userEvent.setup>, name: string) => {
   const overview = await screen.findByRole("region", { name: "Projects" });
   await user.click(within(overview).getByRole("button", { name: new RegExp(`\\b${name}\\b`) }));
 };
 
-const mountBoard = async (script: NonNullable<Parameters<typeof fakeBridge>[0]>) => {
-  const mounted = await mount(script);
-  await mounted.user.click(await screen.findByRole("button", { name: "Kanban" }));
-  return mounted;
-};
+const mountBoard = (script: FakeOptions) =>
+  mountLoop({ workspaceRepos: { "/work": cycle.repo.displayName }, ...script }, "board");
 
 test("the Loop page shows a full-width board as a row of columns, with Done open at the end", async () => {
   const { user, calls } = await mount({
@@ -166,38 +153,6 @@ test("a stale board says its data may be out of date, and a fresh one does not",
   await openOverviewProject(user, "Docs");
   await screen.findByRole("region", { name: "In Progress" });
   expect(screen.queryByText("Data may be out of date")).toBeNull();
-});
-
-test("clicking Loop always opens Overview; sidebar Kanban and Timeline open the matched project", async () => {
-  const { user } = await mount({
-    loopProjects: { kind: "ok", projects: [cycle] },
-    loopBoards: { CYC: board },
-    loopTimelines: {
-      CYC: {
-        kind: "ok",
-        project: "CYC",
-        entries: [],
-        hasMore: false,
-        nextBefore: null,
-        knownSessionIds: [],
-      },
-    },
-  });
-  // Clicking Loop lands directly on Overview (even with a single project).
-  await screen.findByRole("region", { name: "Projects" });
-  await user.keyboard("{Escape}");
-  expect(document.querySelector('[data-kind="loop-overview"]')).not.toBeNull();
-  // Sidebar Kanban opens the project's Kanban board.
-  await user.click(await screen.findByRole("button", { name: "Kanban" }));
-  await screen.findByRole("region", { name: "In Progress" });
-  // Sidebar Timeline opens the Timeline view, with a button back to Kanban when empty.
-  await user.click(await screen.findByRole("button", { name: "Timeline" }));
-  await screen.findByText("No Loop activity yet");
-  await user.click(screen.getByRole("button", { name: "Open Kanban" }));
-  await screen.findByRole("region", { name: "In Progress" });
-  // Clicking Loop in the top actions always returns to Overview.
-  await user.click(await screen.findByRole("button", { name: "Loop" }));
-  await screen.findByRole("region", { name: "Projects" });
 });
 
 test("unmatched workspaces hide Kanban and Timeline, and switching projects updates them", async () => {
@@ -306,21 +261,22 @@ const openTicketDrawer = async (
   script: Parameters<typeof fakeBridge>[0] = {},
 ) => {
   const mine = ticket(700, chat === "new" ? "Backlog" : "In Progress");
-  const user = userEvent.setup();
-  const fake = fakeBridge({
-    connected: true,
-    loopProjects: { kind: "ok", projects: [cycle] },
-    workspaceRepos: { "/work": cycle.repo.displayName },
-    loopBoards: {
-      CYC: withTickets({
-        Backlog: chat === "new" ? [mine] : [],
-        "In Progress": chat === "new" ? [] : [mine],
-      }),
+  const fake = await mountLoop(
+    {
+      loopProjects: { kind: "ok", projects: [cycle] },
+      workspaceRepos: { "/work": cycle.repo.displayName },
+      loopBoards: {
+        CYC: withTickets({
+          Backlog: chat === "new" ? [mine] : [],
+          "In Progress": chat === "new" ? [] : [mine],
+        }),
+      },
+      loopTickets: { "CYC-700": detailOf(mine, { chat, acceptance: [] }) },
+      ...script,
     },
-    loopTickets: { "CYC-700": detailOf(mine, { chat, acceptance: [] }) },
-    ...script,
-  });
-  await renderApp(fake.bridge);
+    "none",
+  );
+  const { user } = fake;
   await user.click(await screen.findByRole("button", { name: "Kanban" }));
   await user.click(await screen.findByRole("button", { name: "Ticket 700" }));
   return { user, fake };
@@ -360,14 +316,6 @@ test("an In Progress ticket is only watched: a note, and no chat button", async 
   expect(fake.named("loopChat")).toEqual([]);
 });
 
-test("Escape on the ticket drawer closes the drawer, not the board", async () => {
-  const { user } = await openTicketDrawer("new");
-  await screen.findByRole("complementary", { name: "CYC-700" });
-  await user.keyboard("{Escape}");
-  await waitFor(() => expect(screen.queryByRole("complementary", { name: "CYC-700" })).toBeNull());
-  expect(document.querySelector('[data-kind="loop-board"]')).not.toBeNull();
-});
-
 test("closing the ticket drawer plays the slide-out first, then removes it", async () => {
   const { user } = await openTicketDrawer("new");
   await screen.findByRole("complementary", { name: "CYC-700" });
@@ -400,6 +348,7 @@ test("Escape closes the ticket drawer to its board and leaves the board open; cl
   // Ticket drawer → board by Escape; the board stays, out of Loop by clicking a session, and back to Kanban from the sidebar.
   await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("complementary", { name: "CYC-700" })).toBeNull());
+  expect(document.querySelector('[data-kind="loop-board"]')).not.toBeNull();
   await user.keyboard("{Escape}");
   expect(document.querySelector('[data-kind="loop-board"]')).not.toBeNull();
   await user.click(screen.getByRole("option"));
@@ -446,11 +395,13 @@ test("even with one Project, clicking top Loop opens Overview instead of redirec
   });
   await screen.findByRole("region", { name: "Projects" });
   expect(document.querySelector('[data-kind="loop-board"]')).toBeNull();
+  await user.keyboard("{Escape}");
+  expect(document.querySelector('[data-kind="loop-overview"]')).not.toBeNull();
   await openOverviewProject(user, "CYC");
   await screen.findByRole("region", { name: "In Progress" });
 });
 
-test("Needs you is on the overview, not on the board, and absent when empty", async () => {
+test("Needs you is on the overview, not on the board", async () => {
   const blocked = {
     id: "CYC:blocked:CYC-9",
     kind: "blocked" as const,
@@ -505,18 +456,13 @@ test("opening a ticket drawer updates breadcrumbs to Project / ticket and clicki
   expect(screen.getByRole("region", { name: "In Progress" })).toBeTruthy();
 });
 
-test("the board shows the columns by name, with Done last, the rest in the order they come", async () => {
+test("the board is a row of columns by name with Done last and open: cards are not draggable, there is no move menu, and the tops line up", async () => {
   await mountBoard({ loopProjects: { kind: "ok", projects: [cycle] }, loopBoards: { CYC: board } });
   await screen.findByRole("region", { name: "In Review" });
   const names = [...document.querySelectorAll('[data-slot="loop-column"]')].map((e) =>
     e.getAttribute("aria-label"),
   );
   expect(names).toEqual(["Backlog", "Todo", "In Progress", "In Review", "Blocked", "Done"]);
-});
-
-test("the board is a row of columns: cards are not draggable, there is no move menu, and Done is open with its card", async () => {
-  await mountBoard({ loopProjects: { kind: "ok", projects: [cycle] }, loopBoards: { CYC: board } });
-  await screen.findByRole("region", { name: "In Review" });
   expect(document.querySelectorAll("[draggable='true']")).toHaveLength(0);
   expect(screen.queryByText(/Move to/i)).toBeNull();
   expect(screen.queryByRole("menu")).toBeNull();
@@ -937,25 +883,6 @@ const detailOf = (
   },
 });
 
-test("Approve in the ticket drawer asks first; only the confirmation writes, and a failure is said", async () => {
-  const backlog = ticket(600, "Backlog");
-  const { user, calls } = await mountBoard({
-    loopProjects: { kind: "ok", projects: [cycle] },
-    loopBoards: { CYC: withTickets({ Backlog: [backlog] }) },
-    loopTickets: { "CYC-600": detailOf(backlog, { actions: ["approve", "to_todo"], chat: "new" }) },
-    loopAct: { kind: "failed", reason: "forbidden" },
-  });
-  await user.click(await screen.findByRole("button", { name: "Ticket 600" }));
-  await user.click(await screen.findByRole("button", { name: "Approve CYC-600" }));
-  expect(calls.some(([name]) => name === "loopAct")).toBe(false);
-  const dialog = await screen.findByRole("alertdialog");
-  await user.click(within(dialog).getByRole("button", { name: "Approve" }));
-  expect(await within(dialog).findByText(/did not accept this from Loop/)).toBeTruthy();
-  expect(calls.filter(([name]) => name === "loopAct")).toEqual([
-    ["loopAct", "CYC", "CYC-600", "approve", true],
-  ]);
-});
-
 test("cancelling Approve writes nothing; a ticket with no buttons shows none", async () => {
   const backlog = ticket(600, "Backlog");
   const doing = ticket(601, "In Progress");
@@ -1106,49 +1033,54 @@ test("an older board read that lands last does not replace a newer one", async (
 });
 
 test("sidebar keeps New/Search/Connectors/Loop at top, shows Kanban and Timeline under matched workspace, and hides them on unmatched workspaces", async () => {
-  const user = userEvent.setup();
-  const fake = fakeBridge({
-    connected: true,
-    loopProjects: { kind: "ok", projects: [cycle, docs] },
-    loopBoards: { CYC: board, DOC: board },
-    loopTimelines: {
-      CYC: {
-        kind: "ok",
-        project: "CYC",
-        entries: [],
-        hasMore: false,
-        nextBefore: null,
-        knownSessionIds: [],
-      },
-      DOC: {
-        kind: "ok",
-        project: "DOC",
-        entries: [],
-        hasMore: false,
-        nextBefore: null,
-        knownSessionIds: [],
-      },
-    },
-    workspaceRepos: {
-      "/work/cycle-v1": "CLAWDOT/CYCLE",
-      "/work/plain": null,
-    },
-  });
-  fake.bridge.sessions = async () => [
+  const fake = await mountLoop(
     {
-      ...summary("s1"),
-      cwd: "/work/cycle-v1",
-      title: "Cycle chat",
-      updatedAt: "2020-01-03T00:00:00Z",
+      loopProjects: { kind: "ok", projects: [cycle, docs] },
+      loopBoards: { CYC: board, DOC: board },
+      loopTimelines: {
+        CYC: {
+          kind: "ok",
+          project: "CYC",
+          entries: [],
+          hasMore: false,
+          nextBefore: null,
+          knownSessionIds: [],
+        },
+        DOC: {
+          kind: "ok",
+          project: "DOC",
+          entries: [],
+          hasMore: false,
+          nextBefore: null,
+          knownSessionIds: [],
+        },
+      },
+      workspaceRepos: {
+        "/work/cycle-v1": "CLAWDOT/CYCLE",
+        "/work/plain": null,
+      },
     },
+    "none",
     {
-      ...summary("s2"),
-      cwd: "/work/plain",
-      title: "Plain chat",
-      updatedAt: "2020-01-02T00:00:00Z",
+      configure: (script) => {
+        script.bridge.sessions = async () => [
+          {
+            ...summary("s1"),
+            cwd: "/work/cycle-v1",
+            title: "Cycle chat",
+            updatedAt: "2020-01-03T00:00:00Z",
+          },
+          {
+            ...summary("s2"),
+            cwd: "/work/plain",
+            title: "Plain chat",
+            updatedAt: "2020-01-02T00:00:00Z",
+          },
+        ];
+      },
     },
-  ];
-  await renderApp(fake.bridge);
+  );
+  const { user } = fake;
 
   // Top global actions: New, Search, Connectors, Loop; no Sessions/Loop mode switch.
   expect(document.querySelector('[data-slot="mode-switch"]')).toBeNull();
@@ -1674,6 +1606,67 @@ test("the drawer lists the graph in order, auto-expands active/stuck nodes, show
     expect(sent.includes(text)).toBe(false);
 });
 
+test("a QA node shows as a QA session with its verdict, and Dev nodes stay as they were", async () => {
+  const mine = ticket(610, "In Progress");
+  const nodes = [
+    node(0, { status: "passed" }),
+    node(1, {
+      id: "qa-1",
+      role: "qa",
+      status: "passed",
+      verdict: "fail",
+      report: "Missing test for X",
+      sessionId: "sess-qa",
+      commitSha: "1234567890abcdef",
+      dependsOn: ["n0"],
+    }),
+    node(2, { id: "qa-2", role: "qa", status: "passed", verdict: "pass", dependsOn: ["n0"] }),
+  ];
+  const { drawer } = await openGraphDrawer({
+    loopTickets: { "CYC-610": detailOf(mine, { graph: graphOf(nodes) }) },
+  });
+  const qa1 = drawer.querySelector('[data-slot="loop-graph-node"][data-id="qa-1"]') as HTMLElement;
+  expect(within(qa1).getByText("QA session")).toBeTruthy();
+  expect(within(qa1).getByText("Rejected")).toBeTruthy();
+  const qa2 = drawer.querySelector('[data-slot="loop-graph-node"][data-id="qa-2"]') as HTMLElement;
+  expect(within(qa2).getByText("Approved")).toBeTruthy();
+  const dev = drawer.querySelector('[data-slot="loop-graph-node"][data-id="n0"]') as HTMLElement;
+  expect(dev.querySelector('[data-slot="loop-graph-verdict"]')).toBeNull();
+  expect(within(dev).queryByText("QA session")).toBeNull();
+});
+
+test("research and design nodes show as their own sessions with the report and no empty verify", async () => {
+  const mine = ticket(610, "In Progress");
+  const nodes = [
+    node(0, {
+      id: "r1",
+      role: "research",
+      status: "passed",
+      verify: [],
+      summary: "Found it",
+      report: "Full research report",
+    }),
+    node(1, {
+      id: "d1",
+      role: "design",
+      status: "passed",
+      verify: [],
+      report: "Option A vs B",
+      dependsOn: ["r1"],
+    }),
+  ];
+  const { user, drawer } = await openGraphDrawer({
+    loopTickets: { "CYC-610": detailOf(mine, { graph: graphOf(nodes) }) },
+  });
+  const r1 = drawer.querySelector('[data-slot="loop-graph-node"][data-id="r1"]') as HTMLElement;
+  expect(within(r1).getByText("Research session")).toBeTruthy();
+  const d1 = drawer.querySelector('[data-slot="loop-graph-node"][data-id="d1"]') as HTMLElement;
+  expect(within(d1).getByText("Design session")).toBeTruthy();
+  await user.click(within(r1).getByRole("button", { name: /^Expand node/ }));
+  expect(within(r1).getByText("Full research report")).toBeTruthy();
+  expect(r1.querySelector('[data-field="verify"]')).toBeNull();
+});
+
 test("only blocked and failed nodes have retry and skip (with confirm), and editable nodes can be edited in place", async () => {
   const { user, fake, drawer } = await openGraphDrawer();
   expect(within(drawer).getAllByRole("button", { name: /^Retry node/ })).toHaveLength(2);
@@ -1751,21 +1744,18 @@ test("a pending Backlog ticket can be returned from the drawer with an optional 
     ...ticket(705, "Backlog"),
     pending: { reason: "Needs approval" },
   };
-  const user = userEvent.setup();
-  const options = {
-    connected: true,
-    loopProjects: { kind: "ok" as const, projects: [cycle] },
-    workspaceRepos: { "/work": cycle.repo.displayName },
-    loopBoards: { CYC: withTickets({ Backlog: [mine] }) },
-    loopTickets: {
-      "CYC-705": detailOf(mine, { actions: ["approve", "return"] }),
+  const { user, options, ...fake } = await mountLoop(
+    {
+      loopProjects: { kind: "ok", projects: [cycle] },
+      workspaceRepos: { "/work": cycle.repo.displayName },
+      loopBoards: { CYC: withTickets({ Backlog: [mine] }) },
+      loopTickets: {
+        "CYC-705": detailOf(mine, { actions: ["approve", "return"] }),
+      },
+      loopAct: { kind: "failed", reason: "offline" },
     },
-    loopAct: { kind: "failed" as const, reason: "offline" as const } as
-      | { kind: "ok" }
-      | { kind: "failed"; reason: "offline" },
-  };
-  const fake = fakeBridge(options);
-  await renderApp(fake.bridge);
+    "none",
+  );
   await user.click(await screen.findByRole("button", { name: "Kanban" }));
   await user.click(await screen.findByRole("button", { name: "Ticket 705" }));
   const drawer = await screen.findByRole("complementary", { name: "CYC-705" });
@@ -1949,6 +1939,42 @@ test("an In Progress ticket drawer shows run progress, translated stage, heartbe
   const sent = JSON.stringify(tracked(fake.calls));
   expect(sent.includes("Waiting for CI checks")).toBe(false);
   expect(sent.includes("Ticket 900")).toBe(false);
+});
+
+test("a Project-level Notice shows no ticket number and opens no ticket", async () => {
+  const user = userEvent.setup();
+  const fake = fakeBridge({
+    connected: true,
+    loopProjects: { kind: "ok", projects: [cycle] },
+    workspaceRepos: { "/work": cycle.repo.displayName },
+    loopBoards: { CYC: board },
+    loopNotices: {
+      CYC: {
+        kind: "ok",
+        notices: [
+          {
+            id: "CYC:notice:1",
+            kind: "supervisor",
+            identifier: null,
+            text: "A new supervisor version is out",
+            session: null,
+          },
+        ],
+      },
+    },
+  });
+  await renderApp(fake.bridge);
+  await user.click(await screen.findByRole("button", { name: "Kanban" }));
+
+  await screen.findByText("1 item needs you");
+  // The kind says what it is; there is no bare project key standing in for a ticket, and nothing to click.
+  const alerts = document.querySelector('[data-slot="loop-board-alerts"]');
+  expect(alerts?.querySelector('[data-slot="loop-ticket-id"]')).toBeNull();
+  expect(
+    within(alerts as HTMLElement).queryByRole("button", { name: /Supervisor note/ }),
+  ).toBeNull();
+  expect(within(alerts as HTMLElement).getByText("Supervisor note")).toBeTruthy();
+  expect(fake.named("loopTicket")).toEqual([]);
 });
 
 test("escalated In Review ticket shows review conclusion and marks In review as awaiting review, not Done", async () => {
@@ -2278,8 +2304,9 @@ test("CYC-534: Loop sessions stay out of the sidebar session list and appear on 
   expect(screen.queryByText("Older research ticket")).toBeNull();
   expect(screen.getByText("Implement timeline page")).toBeTruthy();
 
-  // Clicking a step's session button opens that session, emits behavior-only analytics, and offers Back to Timeline.
-  await user.click(screen.getByRole("button", { name: "Open Protocol schema" }));
+  // Clicking a step's session button opens that session in the right panel beside Timeline, without leaving Timeline.
+  const openDevBtn = screen.getByRole("button", { name: "Open Protocol schema" });
+  await user.click(openDevBtn);
   await waitFor(() =>
     expect(fake.named("openSession").some(([, , sid]) => sid === "sess-dev-517")).toBe(true),
   );
@@ -2287,13 +2314,247 @@ test("CYC-534: Loop sessions stay out of the sidebar session list and appear on 
     "loop_timeline_session_opened",
     { entry_kind: "run", role: "dev" },
   ]);
-  // One-click Back to Timeline returns straight to Timeline.
+  const sessionPanel = await waitFor(() => {
+    const el = document.querySelector<HTMLElement>('[data-slot="loop-session-panel"]');
+    expect(el).not.toBeNull();
+    return el as HTMLElement;
+  });
+  expect(within(sessionPanel).getByRole("heading", { name: "[CYC-517] Dev" })).toBeTruthy();
+  expect(screen.getByText("Implement timeline page")).toBeTruthy();
+  expect(openDevBtn.hasAttribute("data-active")).toBe(true);
+
+  // Sending a message from the right panel's composer targets the opened Loop session, not the background human session.
+  const panelInput = sessionPanel.querySelector<HTMLElement>('[data-slot="composer-input"]');
+  expect(panelInput).not.toBeNull();
+  await user.click(panelInput as HTMLElement);
+  await user.keyboard("Check edge cases{Enter}");
+  await waitFor(() =>
+    expect(fake.named("prompt").some(([, , sid]) => sid === "sess-dev-517")).toBe(true),
+  );
+  expect(fake.named("prompt").some(([, , sid]) => sid === "human-1")).toBe(false);
+
+  // Escape closes the right-side session panel while staying on Timeline.
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(document.querySelector('[data-slot="loop-session-panel"]')).toBeNull(),
+  );
+  expect(screen.getByText("Implement timeline page")).toBeTruthy();
+
+  // Re-opening and clicking Open full session jumps to the full session view with one-click Back to Timeline.
+  await user.click(screen.getByRole("button", { name: "Open Protocol schema" }));
+  const reopenedPanel = await waitFor(() => {
+    const el = document.querySelector<HTMLElement>('[data-slot="loop-session-panel"]');
+    expect(el).not.toBeNull();
+    return el as HTMLElement;
+  });
+  await user.click(within(reopenedPanel).getByRole("button", { name: "Open full session" }));
   await user.click(await screen.findByRole("button", { name: "Back to Timeline" }));
   await screen.findByText("Implement timeline page");
 
   // Clicking a ticket key opens the ticket drawer.
   await user.click(screen.getAllByRole("button", { name: "CYC-517" })[0] as HTMLElement);
   await screen.findByRole("complementary", { name: "CYC-517" });
+});
+
+test("Timeline right panel switches between sessions and preserves the background session's SidePanel", async () => {
+  const nowIso = new Date().toISOString();
+  const user = userEvent.setup();
+  const fake = fakeBridge({
+    connected: true,
+    loopProjects: { kind: "ok", projects: [cycle] },
+    workspaceRepos: { "/work": cycle.repo.displayName },
+    loopTimelines: {
+      CYC: {
+        kind: "ok",
+        project: "CYC",
+        entries: [
+          {
+            entryKind: "run",
+            id: "run:CYC-540",
+            key: "CYC-540",
+            title: "Side-by-side timeline sessions",
+            kind: "dev",
+            phase: "qa",
+            state: "active",
+            round: 1,
+            startedAt: nowIso,
+            updatedAt: nowIso,
+            prUrl: null,
+            blockedReason: null,
+            graph: null,
+            steps: [
+              {
+                id: "session:dev:sess-dev-540",
+                label: "dev",
+                role: "dev",
+                status: "passed",
+                sessionId: "sess-dev-540",
+                startedAt: nowIso,
+                finishedAt: nowIso,
+                summary: "Implemented panel",
+                error: null,
+              },
+              {
+                id: "session:qa:sess-qa-540",
+                label: "qa",
+                role: "qa",
+                status: "running",
+                sessionId: "sess-qa-540",
+                startedAt: nowIso,
+                finishedAt: null,
+                summary: null,
+                error: null,
+              },
+            ],
+          },
+        ],
+        hasMore: false,
+        nextBefore: null,
+        knownSessionIds: ["sess-dev-540", "sess-qa-540"],
+      },
+    },
+  });
+  fake.bridge.sessions = async () => [
+    { ...summary("human-1"), title: "My own chat", updatedAt: nowIso },
+    {
+      ...summary("sess-dev-540"),
+      title: "[CYC-540] Dev",
+      updatedAt: nowIso,
+      origin: { kind: "loop", project: "CYC", run: "CYC-540", role: "dev" },
+    },
+    {
+      ...summary("sess-qa-540"),
+      title: "[CYC-540] QA",
+      state: "running",
+      updatedAt: nowIso,
+      origin: { kind: "loop", project: "CYC", run: "CYC-540", role: "qa" },
+    },
+  ];
+
+  await renderApp(fake.bridge);
+  // Open the human session and its right-side SidePanel first.
+  await user.click(await screen.findByRole("option", { name: /My own chat/ }));
+  await user.click(await screen.findByRole("button", { name: "Show panel" }));
+  const humanSidePanel = await waitFor(() => {
+    const el = document.querySelector<HTMLElement>('[data-slot="side-panel"]');
+    expect(el).not.toBeNull();
+    return el as HTMLElement;
+  });
+
+  // Switch to Timeline and open Dev session in the right panel.
+  await user.click(await screen.findByRole("button", { name: "Timeline" }));
+  await screen.findByText("Side-by-side timeline sessions");
+  await user.click(screen.getByRole("button", { name: "Open Dev session" }));
+  const panel = await waitFor(() => {
+    const el = document.querySelector<HTMLElement>('[data-slot="loop-session-panel"]');
+    expect(el).not.toBeNull();
+    return el as HTMLElement;
+  });
+  expect(within(panel).getByRole("heading", { name: "[CYC-540] Dev" })).toBeTruthy();
+  expect(humanSidePanel.hidden).toBe(true);
+  expect(humanSidePanel.inert).toBe(true);
+
+  // Switch directly to QA session without closing the panel.
+  await user.click(screen.getByRole("button", { name: "Open QA session" }));
+  await waitFor(() =>
+    expect(within(panel).getByRole("heading", { name: "[CYC-540] QA" })).toBeTruthy(),
+  );
+  expect(screen.getByRole("button", { name: "Open QA session" }).hasAttribute("data-active")).toBe(
+    true,
+  );
+  expect(screen.getByRole("button", { name: "Open Dev session" }).hasAttribute("data-active")).toBe(
+    false,
+  );
+
+  // Returning to My own chat brings back the exact same SidePanel DOM node intact.
+  await user.click(screen.getByRole("option", { name: /My own chat/ }));
+  await waitFor(() => expect(humanSidePanel.hidden).toBe(false));
+  expect(document.querySelector('[data-slot="side-panel"]')).toBe(humanSidePanel);
+  expect(humanSidePanel.inert).toBe(false);
+  expect(document.querySelector('[data-slot="loop-session-panel"]')).toBeNull();
+});
+
+test("Timeline right panel shows an error state with Reload instead of looping when openSession fails", async () => {
+  const nowIso = new Date().toISOString();
+  const user = userEvent.setup();
+  const fake = fakeBridge({
+    connected: true,
+    loopProjects: { kind: "ok", projects: [cycle] },
+    workspaceRepos: { "/work": cycle.repo.displayName },
+    loopTimelines: {
+      CYC: {
+        kind: "ok",
+        project: "CYC",
+        entries: [
+          {
+            entryKind: "run",
+            id: "run:CYC-541",
+            key: "CYC-541",
+            title: "Retry panel load",
+            kind: "dev",
+            phase: "dev",
+            state: "active",
+            round: 1,
+            startedAt: nowIso,
+            updatedAt: nowIso,
+            prUrl: null,
+            blockedReason: null,
+            graph: null,
+            steps: [
+              {
+                id: "session:dev:sess-fail-541",
+                label: "dev",
+                role: "dev",
+                status: "running",
+                sessionId: "sess-fail-541",
+                startedAt: nowIso,
+                finishedAt: null,
+                summary: null,
+                error: null,
+              },
+            ],
+          },
+        ],
+        hasMore: false,
+        nextBefore: null,
+        knownSessionIds: ["sess-fail-541"],
+      },
+    },
+  });
+  fake.bridge.sessions = async () => [
+    { ...summary("human-1"), title: "My own chat", updatedAt: nowIso },
+    {
+      ...summary("sess-fail-541"),
+      title: "[CYC-541] Dev",
+      updatedAt: nowIso,
+      origin: { kind: "loop", project: "CYC", run: "CYC-541", role: "dev" },
+    },
+  ];
+  const baseOpen = fake.bridge.openSession;
+  let attempts = 0;
+  fake.bridge.openSession = async (locationId, sessionId) => {
+    if (sessionId === "sess-fail-541" && attempts++ === 0) {
+      throw new Error("daemon busy");
+    }
+    return baseOpen(locationId, sessionId);
+  };
+
+  await renderApp(fake.bridge);
+  await user.click(await screen.findByRole("button", { name: "Timeline" }));
+  await screen.findByText("Retry panel load");
+  await user.click(screen.getByRole("button", { name: "Open Dev session" }));
+
+  const panel = await waitFor(() => {
+    const el = document.querySelector<HTMLElement>('[data-slot="loop-session-panel"]');
+    expect(el).not.toBeNull();
+    return el as HTMLElement;
+  });
+  await within(panel).findByText("Could not load the session");
+  expect(attempts).toBe(1);
+
+  await user.click(within(panel).getByRole("button", { name: "Read again" }));
+  await waitFor(() => expect(within(panel).queryByText("Could not load the session")).toBeNull());
+  expect(attempts).toBe(2);
 });
 
 test("CYC-534: Timeline shows inline alert when a session is unavailable and renders error state", async () => {

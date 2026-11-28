@@ -2,16 +2,15 @@ import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
-import type { PermissionRequest, PlanUsage, SessionSnapshot, UpdateState } from "../../src/api.ts";
+import type { PermissionRequest, PlanUsage, UpdateState } from "../../src/api.ts";
 import { codeTheme } from "../../src/code-theme.ts";
-import { applyUpdate, emptyConversation } from "../../src/model/index.ts";
 import { MOD } from "../../src/react/sidebar.tsx";
-import { fakeBridge, idle, summary, text } from "../fake-bridge.ts";
+import { type fakeBridge, idle, summary, text } from "../fake-bridge.ts";
 import { accountMenu, openSettings } from "./account-menu.ts";
 import { findAlert, getAlert, queryAlert } from "./alert.ts";
 import { chosenFolder, typeFolder } from "./blank.ts";
 import { boxText, press, ready, sleep, write } from "./box.ts";
-import { renderApp } from "./render-app.tsx";
+import { type FakeOptions, history, mountApp, type Script } from "./mount.tsx";
 
 afterEach(() => {
   cleanup();
@@ -21,39 +20,27 @@ afterEach(() => {
 
 const u = (update: object) => update as SessionUpdate;
 
-const mount = async (
-  options: {
-    snapshot?: () => SessionSnapshot;
-    configure?: (script: ReturnType<typeof fakeBridge>) => void;
-    capabilities?: {
-      queue: boolean;
-      steer?: boolean;
-      files: boolean;
-      folders: boolean;
-      sessionMentions?: boolean;
-    };
-    steer?: boolean;
-  } = {},
-) => {
-  const script = fakeBridge({
-    connected: true,
-    ...(options.steer === true ? { steer: true } : {}),
-    ...(options.snapshot ? { snapshot: options.snapshot } : {}),
-    ...(options.capabilities ? { capabilities: options.capabilities } : {}),
-  });
-  options.configure?.(script);
-  const store = await renderApp(script.bridge);
-  const user = userEvent.setup();
-  // An event arrives outside React's own calls: say so, or each one warns.
-  const emit = (event: Parameters<typeof script.emit>[0]) => act(() => script.emit(event));
-  return { store, user, ...script, emit };
-};
-
-const history = (...updates: SessionUpdate[]): SessionSnapshot => ({
-  conversation: updates.reduce((c, u) => applyUpdate(c, u), emptyConversation()),
-  permissions: [],
-  version: updates.length,
+// A pending "Allow Bash?" request on s1; the options and the command differ by test.
+const askPermission = (
+  options: PermissionRequest["options"] = [
+    { optionId: "allow", name: "Allow", kind: "allow_once" },
+    { optionId: "deny", name: "Deny", kind: "reject_once" },
+  ],
+  command = "ls",
+): PermissionRequest => ({
+  key: "local:s1:p1",
+  locationId: "local",
+  sessionId: "s1",
+  title: "Allow Bash?",
+  subject: { type: "tool_call", toolCall: { name: "Bash", rawInput: { command } } },
+  options,
 });
+
+/** The app on a connected fake bridge; `configure` changes the bridge before the app starts. */
+const mount = ({
+  configure,
+  ...options
+}: FakeOptions & { configure?: (script: Script) => void } = {}) => mountApp(options, { configure });
 
 const openFirstSession = async (user: ReturnType<typeof userEvent.setup>) => {
   const option = await screen.findByRole("option", { name: /work/ });
@@ -211,17 +198,7 @@ test("while a permission waits, ⌘Enter is the card's Allow once, not the queue
     update: u({ sessionUpdate: "state_update", state: "requires_action" }),
     version: 1,
   });
-  const request: PermissionRequest = {
-    key: "local:s1:p1",
-    locationId: "local",
-    sessionId: "s1",
-    title: "Allow Bash?",
-    subject: { type: "tool_call", toolCall: { name: "Bash", rawInput: { command: "ls" } } },
-    options: [
-      { optionId: "allow", name: "Allow", kind: "allow_once" },
-      { optionId: "deny", name: "Deny", kind: "reject_once" },
-    ],
-  };
+  const request = askPermission();
   emit({ type: "permission", request, version: 2 });
   await screen.findByLabelText("Allow Bash?");
   await write(box, "wait");
@@ -245,14 +222,7 @@ test("in the Loop mode ⌘Enter does not answer the permission of the hidden ses
     update: u({ sessionUpdate: "state_update", state: "requires_action" }),
     version: 1,
   });
-  const request: PermissionRequest = {
-    key: "local:s1:p1",
-    locationId: "local",
-    sessionId: "s1",
-    title: "Allow Bash?",
-    subject: { type: "tool_call", toolCall: { name: "Bash", rawInput: { command: "ls" } } },
-    options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
-  };
+  const request = askPermission([{ optionId: "allow", name: "Allow", kind: "allow_once" }]);
   emit({ type: "permission", request, version: 2 });
   await screen.findByLabelText("Allow Bash?");
   await user.click(screen.getByRole("button", { name: "Loop" }));
@@ -920,21 +890,15 @@ test("Ctrl or Cmd+Enter allows a pending request even while typing in the messag
   emit({
     type: "permission",
     version: 1,
-    request: {
-      key: "local:s1:p1",
-      locationId: "local",
-      sessionId: "s1",
-      title: "Allow Bash?",
-      subject: {
-        type: "tool_call",
-        toolCall: { name: "Bash", rawInput: { command: "rm -rf build" } },
-      },
-      options: [
+    request: askPermission(
+      [
         { optionId: "allow", name: "Allow once", kind: "allow_once" },
         { optionId: "deny", name: "Deny", kind: "reject_once" },
       ],
-    },
+      "rm -rf build",
+    ),
   });
+
   await screen.findByLabelText("Allow Bash?");
   // The key this platform's shortcut uses: Cmd on a Mac, Control elsewhere (the page reads the user agent).
   const mod = /Mac/.test(navigator.userAgent) ? "Meta" : "Control";
@@ -1916,6 +1880,125 @@ test("empty state offers Start a new session and high-risk mode chip carries dat
   const chip = await screen.findByRole("button", { name: "Permission mode: Bypass permissions" });
   expect(chip.hasAttribute("data-danger")).toBe(true);
   expect(screen.getByRole("button", { name: "Hide sidebar" })).toBeTruthy();
+});
+
+const toolsAt400 = async (modelTitle: string, modeTitle = "Auto") => {
+  const { user, emit } = await mount({
+    configure: (script) => {
+      const session = { ...summary("s1"), config: { mode: "auto", model: "m", effort: "high" } };
+      script.bridge.locations = async () => ({
+        locations: [{ id: "local", name: "Local", kind: "local" }],
+        status: [
+          {
+            locationId: "local",
+            state: "connected",
+            capabilities: { queue: true, files: false, folders: false },
+          },
+        ],
+        sessions: { local: [session] },
+      });
+      script.bridge.agents = async () => [
+        {
+          id: "fake",
+          name: "Fake",
+          available: true,
+          promptCapabilities: { image: {} },
+          configSchema: {
+            type: "object",
+            properties: {
+              mode: {
+                type: "string",
+                title: "Permission mode",
+                oneOf: [{ const: "auto", title: modeTitle }],
+              },
+              model: { type: "string", title: "Model", oneOf: [{ const: "m", title: modelTitle }] },
+              effort: {
+                type: "string",
+                title: "Effort",
+                oneOf: [
+                  { const: "default", title: "Default" },
+                  { const: "high", title: "High" },
+                ],
+              },
+            },
+          },
+        },
+      ];
+      script.bridge.sessions = async () => [session];
+    },
+  });
+  await openFirstSession(user);
+  await screen.findByRole("textbox", { name: "Message" });
+  emit({
+    type: "update",
+    locationId: "local",
+    sessionId: "s1",
+    version: 1,
+    update: { sessionUpdate: "usage_update", used: 12_000, size: 200_000 } as never,
+  });
+  await screen.findByRole("button", { name: /Context 6% full/ });
+  // 720x480 leaves the conversation 400px at least: the box is held to that width.
+  const composer = document.querySelector<HTMLElement>('[data-slot="composer"]');
+  const box = document.querySelector<HTMLElement>('[data-slot="composer-box"]');
+  const tools = document.querySelector<HTMLElement>('[data-slot="composer-tools"]');
+  if (!composer || !box || !tools) throw new Error("no composer");
+  composer.style.width = "400px";
+  composer.style.maxWidth = "400px";
+  await new Promise((r) => requestAnimationFrame(() => r(null)));
+  return { box, tools };
+};
+
+const expectToolsFit = (
+  { box, tools }: { box: HTMLElement; tools: HTMLElement },
+  shrunk = false,
+) => {
+  const edge = box.getBoundingClientRect();
+  // The bar hangs out of the box by a chip's clear border and padding (composer.css), so the words' own edge is the box's.
+  const controls = [
+    ...tools.querySelectorAll<HTMLElement>(
+      '[data-kind="setting-chip"], [data-kind="context-meter"]',
+    ),
+  ];
+  expect(controls.length).toBe(4);
+  const tops = controls.map((c) => Math.round(c.getBoundingClientRect().top));
+  expect(new Set(tops).size).toBe(1);
+  for (const c of controls) {
+    const r = c.getBoundingClientRect();
+    expect(r.left).toBeGreaterThanOrEqual(edge.left - 7.5);
+    expect(r.right).toBeLessThanOrEqual(edge.right + 7.5);
+    // Not cropped: the words are all there, but a model's name too long for the line, which fades at its end and
+    // keeps enough to read.
+    const words = c.querySelector<HTMLElement>('[data-slot="setting-value"]');
+    // The overflowing text fades; it never ends in an ellipsis.
+    if (words) expect(getComputedStyle(words).textOverflow).not.toBe("ellipsis");
+    if (words && c.getAttribute("data-setting") !== "model" && !shrunk)
+      expect(words.scrollWidth).toBeLessThanOrEqual(words.clientWidth);
+    if (words && c.getAttribute("data-setting") === "model")
+      if (words.scrollWidth > words.clientWidth)
+        expect(words.clientWidth).toBeGreaterThanOrEqual(48);
+  }
+  // No chip is squeezed on top of the next.
+  const rects = controls.map((c) => c.getBoundingClientRect()).sort((a, b) => a.left - b.left);
+  rects.forEach((r, i) => {
+    const before = rects[i - 1];
+    if (before) expect(r.left).toBeGreaterThanOrEqual(before.right - 1);
+  });
+  expect(tools.scrollWidth).toBeLessThanOrEqual(tools.clientWidth + 1);
+};
+
+test("the bar under the box keeps one line in a 400px conversation", async () => {
+  expectToolsFit(await toolsAt400("Opus"));
+});
+
+test("a long permission name with a long model name keeps the bar to one line in a 400px conversation", async () => {
+  expectToolsFit(
+    await toolsAt400("Claude Opus 4.5 with extended context", "Bypass all permission prompts"),
+    true,
+  );
+});
+
+test("a long model name keeps the bar to one line in a 400px conversation", async () => {
+  expectToolsFit(await toolsAt400("Claude Opus 4.5 with extended context"));
 });
 
 test("composer uses a single-line box by default, stays one line with several buttons, and docks extensions above", async () => {

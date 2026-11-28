@@ -6,7 +6,7 @@ import { CriteriaBook } from "../src/criteria.ts";
 import { openDb } from "../src/db/db.ts";
 import { ALLOWED, MIGRATIONS, schemaVersion } from "../src/db/schema.ts";
 import { openStore, SqliteStore } from "../src/db/store.ts";
-import { appendFixNode, buildGraph, updateGraphNode } from "../src/graph.ts";
+import { appendFixNode, appendQaNode, buildGraph, updateGraphNode } from "../src/graph.ts";
 import { Pipeline } from "../src/pipeline.ts";
 import { RunStore } from "../src/store.ts";
 import {
@@ -199,6 +199,7 @@ test("CI that went green is recorded, but a reopened store asks GitHub again bef
     dev: {
       ciRound: 0,
       ciFailedSha: null,
+      ciWait: null,
       nodeModulesReleased: false,
       fullFlowDocs: [],
       conflictRound: 0,
@@ -278,6 +279,7 @@ test("CI that went green seen green in this process is not asked again in review
     dev: {
       ciRound: 0,
       ciFailedSha: null,
+      ciWait: null,
       nodeModulesReleased: false,
       fullFlowDocs: [],
       conflictRound: 0,
@@ -321,6 +323,53 @@ test("CI that went green seen green in this process is not asked again in review
   expect((await pipeline.step()).status).toBe("delivered");
   expect(world.calls.filter((c) => c.includes("statusCheckRollup"))).toHaveLength(1);
   store.close();
+});
+
+test("graph nodes store role, verdict and report; rows from before read as dev with no verdict", async () => {
+  const dir = await tmp();
+  const store = SqliteStore.open(dir, now);
+  const g = buildGraph(
+    "CYC-542",
+    "plan_doc",
+    [{ id: "n1", title: "A", goal: "a", dependsOn: [], filesHint: [], verify: ["bun run check"] }],
+    now().toISOString(),
+  );
+  const done = updateGraphNode(g, "n1", { status: "passed" }, now().toISOString(), null);
+  const { graph: withQa } = appendQaNode(done, {
+    commitSha: "deadbeefcafe",
+    verify: ["bun run check"],
+    nowIso: now().toISOString(),
+  });
+  const judged = updateGraphNode(
+    withQa,
+    "qa-1",
+    { status: "passed", verdict: "fail", report: "found a bug", commitSha: "deadbeefcafe" },
+    now().toISOString(),
+    null,
+  );
+  await store.saveGraph(judged);
+  const loaded = await store.loadGraph("CYC-542");
+  expect(loaded?.nodes.map((n) => [n.id, n.role, n.verdict, n.report])).toEqual([
+    ["n1", "dev", null, null],
+    ["qa-1", "qa", "fail", "found a bug"],
+  ]);
+  store.close();
+});
+
+test("an older database gains the role, verdict and report columns with dev defaults", async () => {
+  const dir = await tmp();
+  const cut = MIGRATIONS.findIndex((m) => /ADD COLUMN role\b/.test(m));
+  expect(cut).toBeGreaterThan(0);
+  const old = openDb(dir, MIGRATIONS.slice(0, cut));
+  old.run(
+    `INSERT INTO graph_nodes (run_key, node_id, position, origin, title, goal, depends_on, files_hint, verify, status, updated_at)
+     VALUES ('K', 'n1', 0, 'planned', 't', 'g', '[]', '[]', '["bun run check"]', 'passed', 'x')`,
+  );
+  old.close();
+  const db = openDb(dir);
+  const row = db.query("SELECT role, verdict, report FROM graph_nodes").get();
+  expect(row).toEqual({ role: "dev", verdict: null, report: null });
+  db.close();
 });
 
 test("Task Graph persists atomically in SqliteStore and supports node updates and fix-* append", async () => {

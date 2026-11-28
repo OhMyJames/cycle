@@ -160,8 +160,10 @@ const sizeIn = (
 };
 
 export type SplitPanel = {
-  /** What the panel holds: its tabs. */
+  /** What the panel holds: its tabs, or a session opened beside Timeline. */
   content: ReactNode;
+  /** Accessible name for the right-side aside; defaults to `layout.panel`. */
+  label?: string | undefined;
   /** The user folded the panel (its handle's Enter, a double-click, a drag past half its minimum): folding it is closing it. */
   onClose?: () => void;
 };
@@ -171,6 +173,7 @@ export function SplitLayout({
   sidebar,
   main,
   panel,
+  auxPanel,
   panelHidden = false,
   panelOf,
   onSidebarWidth,
@@ -181,8 +184,13 @@ export function SplitLayout({
   /** The right panel, when open. Closed, its column is folded and holds nothing: nothing in it loads. */
   panel?: SplitPanel | undefined;
   /**
-   * True while another mode (the Loop) takes the main column: the panel's column folds at once, while its content
-   * stays mounted (hidden and inert) so local state such as terminals, open diffs and expanded folders survives return.
+   * An alternate right panel shown while `panelHidden` is true (such as a session opened from Loop Timeline).
+   * Unlike `panel`, it unmounts when closed and leaves any hidden `panel` mounted intact beside it.
+   */
+  auxPanel?: SplitPanel | undefined;
+  /**
+   * True while another mode (the Loop) takes the main column: the primary panel stays mounted (hidden and inert) so
+   * local state such as terminals, open diffs and expanded folders survives return, while `auxPanel` may use the column.
    */
   panelHidden?: boolean | undefined;
   /**
@@ -216,8 +224,9 @@ export function SplitLayout({
   // The changes this component asked for: their commits are not the user's.
   const ours = useRef(0);
   const sidebarWasFolded = useRef(false);
-  // Whether the panel is open and visible: what its column is fitted to.
-  const isOpen = panel !== undefined && !panelHidden;
+  // Whether the active panel is open and visible: what its column is fitted to.
+  const activePanel = panelHidden ? auxPanel : panel;
+  const isOpen = activePanel !== undefined;
   const opened = useRef(isOpen);
   opened.current = isOpen;
   // Puts the columns where they go for the window and what is open, and says how wide the panel is to be. Set once the
@@ -228,8 +237,10 @@ export function SplitLayout({
   // with it. Closing, what it shows stays in the column, out of reach, until the column has folded. A panel that comes
   // or goes with a session being opened or a mode switch is there or gone at once, as is any with reduced motion, or
   // one its handle folded (nothing is left to see).
-  const lastPanel = useRef(panel);
-  if (panel !== undefined && !panelHidden) lastPanel.current = panel;
+  const lastPrimary = useRef(panel);
+  if (panel !== undefined && !panelHidden) lastPrimary.current = panel;
+  const lastAux = useRef(auxPanel);
+  if (auxPanel !== undefined && panelHidden) lastAux.current = auxPanel;
   // What the panel last did: whose it is, whether it is open, whether it is hidden by a mode, whether it slid there,
   // and (closing) the slide it goes with. Set while rendering, and only then: `ended` is the one the slides' ends set,
   // so neither undoes the other.
@@ -254,12 +265,18 @@ export function SplitLayout({
     });
   }
   const leaving = was.going !== undefined && was.going !== ended;
-  const shown = panelHidden ? undefined : (panel ?? (leaving ? lastPanel.current : undefined));
-  const rendered = panelHidden ? panel : shown;
+  const shownPrimary = panelHidden
+    ? undefined
+    : (panel ?? (leaving ? lastPrimary.current : undefined));
+  const shownAux = panelHidden ? (auxPanel ?? (leaving ? lastAux.current : undefined)) : undefined;
+  const shown = panelHidden ? shownAux : shownPrimary;
+  const renderedPrimary = panelHidden ? panel : shownPrimary;
+  const renderedAux = shownAux;
   useEffect(() => {
     // Gone: what it showed is not held on to.
-    if (rendered === undefined) lastPanel.current = undefined;
-  }, [rendered]);
+    if (renderedPrimary === undefined) lastPrimary.current = undefined;
+    if (renderedAux === undefined) lastAux.current = undefined;
+  }, [renderedPrimary, renderedAux]);
 
   // The panel opened or closed: the columns are fitted to it, sliding when it was the user, at once otherwise. Before
   // the page is drawn, so the column is not seen a frame in the wrong place.
@@ -385,9 +402,9 @@ export function SplitLayout({
             want.current.sidebar = widthIn(group, "sidebar");
             sidebarWidth.current?.(want.current.sidebar);
           }
-          if (!isOpen || panel === undefined) return;
+          if (!isOpen || activePanel === undefined) return;
           if (controller.isCollapsed("panel")) {
-            panel.onClose?.();
+            activePanel.onClose?.();
             return;
           }
           // The panel's own width only when the user changed it, not the one the window narrowed it to while the user
@@ -428,14 +445,22 @@ export function SplitLayout({
           collapsible
           collapsedSize="0px"
         >
-          {rendered !== undefined ? (
+          {renderedPrimary !== undefined ? (
             <aside
               data-slot="side-panel"
-              aria-label={t("layout.panel")}
+              aria-label={renderedPrimary.label ?? t("layout.panel")}
               hidden={panelHidden}
               inert={panelHidden}
             >
-              {rendered.content}
+              {renderedPrimary.content}
+            </aside>
+          ) : null}
+          {renderedAux !== undefined ? (
+            <aside
+              data-slot="loop-session-panel"
+              aria-label={renderedAux.label ?? t("layout.panel")}
+            >
+              {renderedAux.content}
             </aside>
           ) : null}
         </ResizablePanel>

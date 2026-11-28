@@ -1,12 +1,11 @@
 import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
-import { userEvent } from "vitest/browser";
 import type { SessionSnapshot } from "../../src/api.ts";
-import { applyUpdate, emptyConversation } from "../../src/model/index.ts";
 import { fakeBridge, idle, text } from "../fake-bridge.ts";
 import { findAlert, queryAlert } from "./alert.ts";
 import { press, ready, write } from "./box.ts";
+import { history, mountApp } from "./mount.tsx";
 import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
@@ -18,14 +17,10 @@ const mount = async (
   configure?: (script: ReturnType<typeof fakeBridge>) => void,
   snapshot?: () => SessionSnapshot,
 ) => {
-  const script = fakeBridge({ connected: true, ...(snapshot ? { snapshot } : {}) });
-  configure?.(script);
-  const store = await renderApp(script.bridge);
-  const user = userEvent.setup();
-  const emit = (event: Parameters<typeof script.emit>[0]) => act(() => script.emit(event));
-  await user.click(await screen.findByRole("option", { name: /work/ }));
+  const app = await mountApp(snapshot ? { snapshot } : {}, { configure });
+  await app.user.click(await screen.findByRole("option", { name: /work/ }));
   await screen.findByRole("log", { name: "Conversation" });
-  return { store, user, ...script, emit };
+  return app;
 };
 
 const header = () => document.querySelector('[data-slot="main-header"]') as HTMLElement;
@@ -117,11 +112,7 @@ test("a conversation read at its end stays at its end when a line comes under th
     text(`Line ${i}. `.repeat(30), `a${i}`),
     idle({ stopReason: "end_turn" }),
   ]).flat();
-  const { emit } = await mount(undefined, () => ({
-    conversation: updates.reduce((c, u) => applyUpdate(c, u), emptyConversation()),
-    permissions: [],
-    version: updates.length,
-  }));
+  const { emit } = await mount(undefined, () => history(...updates));
   const log = await screen.findByRole("log", { name: "Conversation" });
   await waitFor(() => expect(log.textContent).toContain("Line 11"));
   // The window's height, as #root has it in the app: the conversation scrolls inside it.

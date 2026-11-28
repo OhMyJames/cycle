@@ -25,13 +25,13 @@ import {
 } from "../model/index.ts";
 import { reveal } from "../reveal.ts";
 import { startedAt } from "../started.ts";
-import { filesRootOf } from "../store/index.ts";
 import { AgentLink } from "./agent-link.tsx";
 import { CommandText } from "./command-text.tsx";
 import { useI18n } from "./i18n.tsx";
 import { ImageBlockView } from "./image.tsx";
 import { Elapsed } from "./inline-ai-status.tsx";
 import { isSafeLink, Markdown } from "./markdown.tsx";
+import { useScopedFilesRoot, useSessionScope } from "./session-scope.tsx";
 import { useStartScope } from "./start-scope.ts";
 import { useAppState, useAppStore } from "./store-context.tsx";
 
@@ -109,6 +109,9 @@ const locationsSummary = (tool: ToolItem): string | undefined => {
   const unique = [...new Set(paths)];
   return unique.length > 1 ? `${unique[0]} +${unique.length - 1}` : unique[0];
 };
+
+/** A command that ran at least this long shows how long on its card. */
+const LONG_COMMAND_MS = 10_000;
 
 /** What a call acted on: its command, path, pattern, address or query. Shown, never run. */
 export const toolSummary = (tool: ToolItem): string => {
@@ -373,7 +376,8 @@ function CallCard({ tool, openState }: { tool: ToolItem; openState?: OpenState |
   // away, and not from a call that failed: there may be nothing there to show.
   const activity = activityOf(tool);
   const where = tool.locations?.[0]?.path;
-  const filesRoot = useAppState(filesRootOf);
+  const sessionScope = useSessionScope();
+  const filesRoot = useScopedFilesRoot();
   const inFiles =
     tool.status === "completed" &&
     (activity === "read" || activity === "edit") &&
@@ -413,8 +417,8 @@ function CallCard({ tool, openState }: { tool: ToolItem; openState?: OpenState |
   // The file an edit changed, named as the Diff tab names it (from the session's folder).
   const editPath = facts.edit !== undefined ? editPathOf(tool) : undefined;
   const cwd = useAppState((state) =>
-    state.selectedLocation !== undefined
-      ? state.sessions[state.selectedLocation]?.find((x) => x.sessionId === state.selectedSession)
+    sessionScope.locationId !== undefined
+      ? state.sessions[sessionScope.locationId]?.find((x) => x.sessionId === sessionScope.sessionId)
           ?.cwd
       : undefined,
   );
@@ -462,7 +466,11 @@ function CallCard({ tool, openState }: { tool: ToolItem; openState?: OpenState |
         >
           {summary}
         </span>{" "}
-        {subagent !== undefined ? <SubagentFacts subagent={subagent} /> : <Facts facts={facts} />}{" "}
+        {subagent !== undefined ? (
+          <SubagentFacts subagent={subagent} />
+        ) : (
+          <Facts facts={facts} command={command !== undefined} />
+        )}{" "}
         {/* How long it has been at work, counted from when the page first saw it: the row drawn again goes on. */}
         {working ? (
           <Elapsed since={startedAt(`${scope}:tool:${tool.id}`)} slot="tool-elapsed" />
@@ -513,9 +521,13 @@ function CallCard({ tool, openState }: { tool: ToolItem; openState?: OpenState |
             }
             // Joined to what is under it: the change, or the note that it is too large to draw.
             joined={diff !== undefined || facts.edit.additions + facts.edit.deletions > 0}
-            onOpen={() => {
-              if (store.showInDiff(tool.id)) store.track("diff_shown_from_conversation", {});
-            }}
+            onOpen={
+              sessionScope.hasSidePanel
+                ? () => {
+                    if (store.showInDiff(tool.id)) store.track("diff_shown_from_conversation", {});
+                  }
+                : undefined
+            }
           />
         ) : null}
         {diff !== undefined ? <DiffView lines={diff} /> : null}
@@ -557,7 +569,7 @@ function CallCard({ tool, openState }: { tool: ToolItem; openState?: OpenState |
 }
 
 /** The numbers after a call's summary: what an edit changed, which lines a read read, what a search found. */
-function Facts({ facts }: { facts: ToolFacts }) {
+function Facts({ facts, command }: { facts: ToolFacts; command: boolean }) {
   const i18n = useI18n();
   const { t } = i18n;
   const { edit, read, search } = facts;
@@ -592,7 +604,7 @@ function Facts({ facts }: { facts: ToolFacts }) {
     );
   }
   if (facts.run !== undefined) {
-    const { interrupted, timedOutMs, background, exitCode } = facts.run;
+    const { interrupted, timedOutMs, background, exitCode, durationMs } = facts.run;
     const text = interrupted
       ? t("tool.facts.interrupted")
       : exitCode !== undefined && exitCode !== 0
@@ -602,7 +614,13 @@ function Facts({ facts }: { facts: ToolFacts }) {
           : background
             ? t("tool.facts.background")
             : undefined;
-    return text === undefined ? null : <span data-slot="tool-facts">{text}</span>;
+    // Only a command that ran long says how long; a quick one, or a tool that is not a command, stays quiet.
+    const took =
+      command && durationMs !== undefined && durationMs >= LONG_COMMAND_MS
+        ? t("tool.facts.took", { duration: durationOf(i18n, durationMs) })
+        : undefined;
+    const shown = [text, took].filter((part) => part !== undefined).join(" · ");
+    return shown === "" ? null : <span data-slot="tool-facts">{shown}</span>;
   }
   if (read !== undefined) {
     // Past the end of the file (or an empty one): no lines were read, and there is no range to give.
@@ -692,9 +710,28 @@ function DiffHead({
   deletions: number;
   status: string | undefined;
   joined: boolean;
-  onOpen: () => void;
+  onOpen?: (() => void) | undefined;
 }) {
   const { t } = useI18n();
+  const body = (
+    <>
+      {onOpen !== undefined ? (
+        <span data-slot="visually-hidden">{t("diff.showInDiff")}: </span>
+      ) : null}
+      <span data-slot="tool-diff-path">
+        <bdi>{path}</bdi>
+      </span>
+      {status !== undefined ? <span data-slot="diff-status">{status}</span> : null}
+      <Counts additions={additions} deletions={deletions} />
+    </>
+  );
+  if (onOpen === undefined) {
+    return (
+      <div data-slot="tool-diff-head" data-joined={joined || undefined} title={path}>
+        {body}
+      </div>
+    );
+  }
   return (
     <button
       type="button"
@@ -703,12 +740,7 @@ function DiffHead({
       title={`${t("diff.showInDiff")}: ${path}`}
       onClick={onOpen}
     >
-      <span data-slot="visually-hidden">{t("diff.showInDiff")}: </span>
-      <span data-slot="tool-diff-path">
-        <bdi>{path}</bdi>
-      </span>
-      {status !== undefined ? <span data-slot="diff-status">{status}</span> : null}
-      <Counts additions={additions} deletions={deletions} />
+      {body}
     </button>
   );
 }

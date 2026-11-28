@@ -581,7 +581,7 @@ const workItemFindings = (
   if (piece.description.trim() === "") return findings;
   const pre = preflight(
     { ...issue, title: piece.title, description: piece.description, typeId: piece.typeId },
-    { ...rules, research: null } satisfies PreflightConfig,
+    { ...rules, research: null, design: null } satisfies PreflightConfig,
   );
   if (!pre.ok) for (const reason of pre.reasons) findings.push(`${label}: ${reason}`);
   findings.push(...commandFindings(piece.description, label, rules));

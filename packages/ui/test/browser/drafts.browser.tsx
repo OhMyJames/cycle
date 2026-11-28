@@ -4,6 +4,7 @@ import { userEvent } from "vitest/browser";
 import type { SessionSummary } from "../../src/api.ts";
 import { fakeBridge, summary } from "../fake-bridge.ts";
 import { boxText, press, ready, write } from "./box.ts";
+import { mountApp } from "./mount.tsx";
 import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
@@ -18,39 +19,40 @@ const sessions: SessionSummary[] = [
 ];
 
 const mount = async () => {
-  const script = fakeBridge({
-    connected: true,
-    capabilities: { queue: true, files: true, folders: true, sessionMentions: true },
-  });
-  script.bridge.sessions = async () => sessions;
-  script.bridge.searchFiles = async (_host, _session, query) => ({
-    root: "/work",
-    entries: query.startsWith("s")
-      ? [
-          { path: "src/main.ts", kind: "file" as const },
-          { path: "src/lib", kind: "folder" as const },
-        ]
-      : [],
-    truncated: false,
-  });
-  script.bridge.agents = async () => [
+  const app = await mountApp(
+    { capabilities: { queue: true, files: true, folders: true, sessionMentions: true } },
     {
-      id: "fake",
-      name: "Fake",
-      available: true,
-      configSchema: {},
-      promptCapabilities: { image: {} },
+      configure: (script) => {
+        script.bridge.sessions = async () => sessions;
+        script.bridge.searchFiles = async (_host, _session, query) => ({
+          root: "/work",
+          entries: query.startsWith("s")
+            ? [
+                { path: "src/main.ts", kind: "file" as const },
+                { path: "src/lib", kind: "folder" as const },
+              ]
+            : [],
+          truncated: false,
+        });
+        script.bridge.agents = async () => [
+          {
+            id: "fake",
+            name: "Fake",
+            available: true,
+            configSchema: {},
+            promptCapabilities: { image: {} },
+          },
+        ];
+      },
     },
-  ];
-  const store = await renderApp(script.bridge);
-  const user = userEvent.setup();
+  );
   const open = async (title: string) => {
-    await user.click(await screen.findByRole("option", { name: new RegExp(title) }));
+    await app.user.click(await screen.findByRole("option", { name: new RegExp(title) }));
     const box = await screen.findByRole("textbox", { name: "Message" });
     await ready(box);
     return box;
   };
-  return { store, user, open, ...script };
+  return { ...app, open };
 };
 
 const png = (name: string) =>
@@ -212,4 +214,50 @@ test("a draft that comes back shows the mentions it holds as blocks, and other @
   const again = await open("alpha");
   await waitFor(() => expect(chips(again)).toHaveLength(1));
   expect(boxText(again)).toBe("@src/main.ts and @nobody");
+});
+
+test("a long @ session picked in the composer truncates to 20 chars with ... and shows its full name on hover", async () => {
+  const longTitle =
+    "帮我看一下 咱们现在 itsaplan 里面，有哪些 workitem 过期了或者 现在状态已经不对了的 workitem";
+  const script = fakeBridge({
+    connected: true,
+    capabilities: { queue: true, files: true, folders: true, sessionMentions: true },
+  });
+  script.bridge.sessions = async () => [
+    { ...summary("s1"), title: "alpha", lastSeq: 2 },
+    { ...summary("s2"), title: longTitle, lastSeq: 1 },
+  ];
+  script.bridge.searchFiles = async () => ({ root: "/work", entries: [], truncated: false });
+  await renderApp(script.bridge);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("option", { name: /alpha/ }));
+  const box = await screen.findByRole("textbox", { name: "Message" });
+  await ready(box);
+  await pickAt(box, "itsaplan", /itsaplan/);
+  await waitFor(() => expect(chips(box)).toHaveLength(1));
+  const chip = chips(box)[0] as HTMLElement;
+  expect(chip.getAttribute("data-kind")).toBe("session");
+  expect(chip.textContent).toBe("帮我看一下 咱们现在 itsaplan...");
+  // A non-interactive chip inside the editor carries neither button type nor ARIA-prohibited aria-labelledby.
+  expect(chip.hasAttribute("type")).toBe(false);
+  expect(chip.hasAttribute("aria-labelledby")).toBe(false);
+  // Full session name (> 60 chars) appears in the tooltip on hover.
+  await user.hover(chip);
+  const tip = await screen.findByRole("tooltip");
+  expect(tip.textContent).toBe(longTitle);
+  // Draft text still carries the full @label for sending.
+  expect(boxText(box)).toContain("workitem");
+  // Switching sessions and coming back keeps the full session name on the restored chip, and Backspace deletes it whole.
+  await user.click(await screen.findByRole("option", { name: /itsaplan/ }));
+  await user.click(await screen.findByRole("option", { name: /alpha/ }));
+  const restoredBox = await screen.findByRole("textbox", { name: "Message" });
+  await ready(restoredBox);
+  await waitFor(() => expect(chips(restoredBox)).toHaveLength(1));
+  const restoredChip = chips(restoredBox)[0] as HTMLElement;
+  expect(restoredChip.textContent).toBe("帮我看一下 咱们现在 itsaplan...");
+  await user.hover(restoredChip);
+  await waitFor(() => expect(screen.getByRole("tooltip").textContent).toBe(longTitle));
+  await user.click(restoredBox);
+  await userEvent.keyboard("{End}{Backspace}{Backspace}");
+  await waitFor(() => expect(chips(restoredBox)).toHaveLength(0));
 });

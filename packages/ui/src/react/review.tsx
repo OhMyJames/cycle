@@ -2,10 +2,10 @@ import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "@ui-sdk/react
 import { useContext, useMemo } from "react";
 import { agentPathInFolder } from "../files-view.ts";
 import { type Finding, type Review, reviewTally, type ToolItem } from "../model/index.ts";
-import { filesRootOf } from "../store/index.ts";
 import { useI18n } from "./i18n.tsx";
 import { type FileLinks, FileLinksContext, Markdown } from "./markdown.tsx";
-import { useAppState, useAppStore } from "./store-context.tsx";
+import { useScopedFilesRoot } from "./session-scope.tsx";
+import { useAppStore } from "./store-context.tsx";
 
 /**
  * A code review the agent reported (CYCL-138), on a card of its own: a line that says how many findings there are and
@@ -88,7 +88,7 @@ const placeOf = (finding: Finding): string =>
 function FindingRow({ finding }: { finding: Finding }) {
   const { t } = useI18n();
   const store = useAppStore();
-  const filesRoot = useAppState(filesRootOf);
+  const filesRoot = useScopedFilesRoot();
   // A path inside the session's folder can be shown in Files; one outside it, or that climbs out, is only text.
   const inFiles = filesRoot === undefined ? undefined : agentPathInFolder(finding.file, filesRoot);
   const place = placeOf(finding);

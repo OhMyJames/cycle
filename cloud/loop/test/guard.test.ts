@@ -2,24 +2,9 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SqliteStore } from "../src/db/store.ts";
 import { FLOOR, floorHits } from "../src/guard/floor.ts";
-import { Pipeline } from "../src/pipeline.ts";
-import type { Exec } from "../src/types.ts";
-import {
-  CHECKED,
-  config,
-  done,
-  FakeSessions,
-  FakeTracker,
-  greenCi,
-  issue,
-  makeExec,
-  PASS,
-  REVIEW_MERGE,
-  readyDescription,
-  type World,
-} from "./helpers.ts";
+import { type MergeGateInput, mayMerge } from "../src/guard/merge-gate.ts";
+import { runReviewCase } from "./review-case.ts";
 
 let dir: string;
 beforeEach(async () => {
@@ -55,56 +40,9 @@ test("floorHits matches supervisor, guard, REVIEW.md and .github paths only", ()
   expect(floorHits(["packages/client/src/a.ts", "cloud/loop/src/engine/engine.ts"])).toEqual([]);
 });
 
-const runReviewCase = async (changedPathsOutput: string | "fail") => {
-  const w: World = {
-    fail: new Set(),
-    calls: [],
-    dirty: false,
-    qaWrites: false,
-    headSha: "abc",
-    ciResponses: [greenCi("abc")],
-    ciLogs: {},
-    prState: "OPEN",
-    prMerge: [["MERGED", "MERGEABLE"]],
-    mergeTreeOutput: "",
-    ignoredDirs: "",
-  };
-  const baseExec = makeExec(w);
-  const exec: Exec = async (argv, opts) => {
-    if (argv[0] === "gh" && argv[1] === "pr" && argv[2] === "diff") {
-      w.calls.push(argv.join(" "));
-      if (changedPathsOutput === "fail") {
-        return { code: 1, output: "HTTP 500 error reading diff", timedOut: false };
-      }
-      return { code: 0, output: changedPathsOutput, timedOut: false };
-    }
-    return baseExec(argv, opts);
-  };
-  const tracker = new FakeTracker([issue({ description: readyDescription })]);
-  const sessions = new FakeSessions({
-    dev: [done()],
-    qa: [done(`${CHECKED}${PASS}`)],
-    review: [done(`${CHECKED}${REVIEW_MERGE}`)],
-  });
-  const store = SqliteStore.open(dir, () => new Date("2026-11-27T00:00:00Z"));
-  const pipeline = new Pipeline({
-    config: config({ stateDir: dir, repoRoot: join(dir, "repo") }),
-    tracker,
-    sessions,
-    exec,
-    store,
-    clock: { now: () => new Date("2026-11-27T00:00:00Z") },
-    log: () => {},
-    env: { PATH: "/bin", GH_TOKEN: "gh" },
-    sleep: async () => {},
-  });
-  const result = await pipeline.step();
-  const events = await store.events();
-  return { result, tracker, world: w, events };
-};
-
 test("a merge verdict touching a floor path disables auto-merge, escalates with comment, and records floor_hit (CYC-481)", async () => {
   const { result, tracker, world, events } = await runReviewCase(
+    dir,
     "packages/ui/src/a.ts\nREVIEW.md\n.github/workflows/ci.yml\n",
   );
   expect(result).toMatchObject({ status: "delivered", autoMerge: false });
@@ -121,7 +59,7 @@ test("a merge verdict touching a floor path disables auto-merge, escalates with 
 });
 
 test("when changedPaths cannot be read, a merge verdict also escalates and records floor_hit (CYC-481)", async () => {
-  const { result, tracker, world, events } = await runReviewCase("fail");
+  const { result, tracker, world, events } = await runReviewCase(dir, "fail");
   expect(result).toMatchObject({ status: "delivered", autoMerge: false });
   expect(world.calls.some((c) => c.includes("gh pr merge"))).toBe(false);
   expect(tracker.moves).toContain("CYC-1:inReview");
@@ -130,8 +68,51 @@ test("when changedPaths cannot be read, a merge verdict also escalates and recor
 });
 
 test("a merge verdict touching no floor path still enables auto-merge (CYC-481)", async () => {
-  const { result, world, events } = await runReviewCase("packages/client/src/a.ts\n");
+  const { result, world, events } = await runReviewCase(dir, "packages/client/src/a.ts\n");
   expect(result).toMatchObject({ status: "delivered", autoMerge: true });
   expect(world.calls.some((c) => c.includes("gh pr merge") && c.includes("--auto"))).toBe(true);
   expect(events.find((e) => e.kind === "floor_hit")).toBeUndefined();
+});
+
+const okGate: MergeGateInput = {
+  verdict: "merge",
+  reviewedSha: "a1",
+  headNow: "a1",
+  ciAtHead: "passed",
+  changedPaths: ["cloud/loop/src/x.ts"],
+};
+
+test("mayMerge allows only when every condition holds", () => {
+  expect(mayMerge(okGate)).toEqual({ ok: true });
+  expect(mayMerge({ ...okGate, author: { permission: "write", crossRepository: false } })).toEqual({
+    ok: true,
+  });
+  for (const permission of ["maintain", "admin"])
+    expect(mayMerge({ ...okGate, author: { permission, crossRepository: false } }).ok).toBe(true);
+});
+
+test("mayMerge refuses each failing condition", () => {
+  const refused = (patch: Partial<MergeGateInput>) => mayMerge({ ...okGate, ...patch }).ok;
+  for (const verdict of ["reject", "escalate", "system_error"] as const)
+    expect(refused({ verdict })).toBe(false);
+  expect(refused({ headNow: "b2" })).toBe(false);
+  expect(refused({ reviewedSha: "", headNow: "" })).toBe(false);
+  for (const ciAtHead of ["failed", "pending", "unreadable"] as const)
+    expect(refused({ ciAtHead })).toBe(false);
+  expect(refused({ changedPaths: null })).toBe(false);
+  for (const permission of ["read", "triage", "none", ""])
+    expect(refused({ author: { permission, crossRepository: false } })).toBe(false);
+  expect(refused({ author: { permission: "admin", crossRepository: true } })).toBe(false);
+});
+
+test("mayMerge reports floor hits and reasons", () => {
+  const r = mayMerge({
+    ...okGate,
+    changedPaths: ["README.md", "cloud/loop/src/guard/merge-gate.ts"],
+  });
+  expect(r).toEqual({
+    ok: false,
+    reasons: [expect.stringContaining("path floor")],
+    floorHits: ["cloud/loop/src/guard/merge-gate.ts"],
+  });
 });

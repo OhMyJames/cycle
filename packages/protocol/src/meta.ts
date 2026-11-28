@@ -16,6 +16,11 @@ export const META = {
    * the last one it was told, and `cycle update` installs it (docs/protocol.md §3). Other clients do not send it.
    */
   appVersion: "cycle/appVersion",
+  /**
+   * In `initialize`: `true` when the client takes the `_cycle/daemon/update` notification (docs/protocol.md §3). The
+   * daemon sends it to no other client.
+   */
+  updateNotify: "cycle/updateNotify",
   /** In the `initialize` response: what this daemon can do. */
   capabilities: "cycle/capabilities",
   /** In `session/new`: the agent to run. */
@@ -189,6 +194,8 @@ export const CapabilitiesSchema = z.object({
   worktrees: z.boolean().optional(),
   /** `_cycle/daemon/update/read` is there: the daemon's own update state (docs/protocol.md §3, CYC-538). */
   selfUpdate: z.boolean().optional(),
+  /** `pending` carries `state`, `since`, `forceAt`; `_cycle/daemon/update` is sent; "等更新" queues hold (docs/protocol.md §3, §8, CYC-547). */
+  selfUpdateDrain: z.boolean().optional(),
 });
 export type Capabilities = z.infer<typeof CapabilitiesSchema>;
 
@@ -299,6 +306,7 @@ export const ToolResultSchema = z.union([
       timedOutMs: count.optional(),
       background: z.literal(true).optional(),
       exitCode: count.optional(),
+      durationMs: count.optional(),
     }),
   }),
   z.object({

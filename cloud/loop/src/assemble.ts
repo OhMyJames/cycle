@@ -40,7 +40,7 @@ export type SetUpOptions = {
 
 export type ProjectUnit = {
   name: string;
-  pipeline: Pick<Pipeline, "step" | "intervalSeconds">;
+  pipeline: Pick<Pipeline, "step" | "watch" | "intervalSeconds">;
   release: () => Promise<void>;
   close: () => Promise<void>;
   workers: number;
@@ -66,10 +66,12 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
   });
   // Research (CYC-447) is resolved only when it is on; the folder is a document, which `get_project` does not list.
   const research = file.research?.enabled === true ? file.research : null;
+  const design = file.design?.enabled === true ? file.design : null;
   // The planning node (CYC-322), likewise only when it is on.
   const planning = file.planning?.enabled === true ? file.planning : null;
   const {
     research: found,
+    design: designFound,
     planning: planned,
     ...setup
   } = resolveProject(
@@ -83,6 +85,13 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
           documents: await tracker.listDocuments(),
         },
     planning ?? undefined,
+    design === null
+      ? undefined
+      : {
+          type: design.type,
+          folder: design.folder,
+          documents: await tracker.listDocuments(),
+        },
   );
   tracker.setColumns(setup.columns);
   if (planned !== null) tracker.setBacklogColumn(planned.backlogColumn);
@@ -101,6 +110,7 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
   const config = {
     ...defaultConfig({ repoRoot: file.repoRoot, stateDir, ...setup }),
     docsBase: docsBaseOf(file.planUrl, file.projectKey),
+    daemonUpdateHoldMinutes: file.daemonUpdateHoldMinutes,
     ...(file.devAgent !== undefined ? { devAgent: file.devAgent } : {}),
     ...(file.qaAgent !== undefined ? { qaAgent: file.qaAgent } : {}),
     ...(file.reviewAgent !== undefined ? { reviewAgent: file.reviewAgent } : {}),
@@ -114,6 +124,10 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
       research === null || found === null
         ? null
         : { ...found, readRoots: research.readRoots, maxFollowups: research.maxFollowups },
+    design:
+      design === null || designFound === null
+        ? null
+        : { ...designFound, readRoots: design.readRoots, maxFollowups: design.maxFollowups },
     planning:
       planning === null || planned === null
         ? null
@@ -125,6 +139,8 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
             checkMinutes: planning.checkMinutes ?? DEFAULT_CHECK_MINUTES,
             maxAsk: planning.maxAsk ?? DEFAULT_MAX_ASK,
           },
+    prReview:
+      file.prReview?.enabled === true ? { maxReviewsPerPr: file.prReview.maxReviewsPerPr } : null,
     dryRun,
   };
   const tuning = {
@@ -268,8 +284,15 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
     throw error;
   }
   const repoSlug = effectiveRepoUrl !== undefined ? repoDisplayName(effectiveRepoUrl) : undefined;
+  if (config.prReview !== null && (repoSlug === undefined || repoSlug === "repository"))
+    plog(
+      "warning: prReview is enabled but the repository slug cannot be resolved; it will stay idle",
+    );
   const pipeline = new Pipeline({
-    config,
+    config: {
+      ...config,
+      repoSlug: repoSlug !== undefined && repoSlug !== "repository" ? repoSlug : null,
+    },
     tracker,
     sessions,
     exec: runCommand,

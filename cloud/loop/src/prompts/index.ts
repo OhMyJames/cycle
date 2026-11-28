@@ -3,6 +3,7 @@
 // are read is in `../parse/blocks.ts`.
 
 export * from "../parse/blocks.ts";
+export * from "./design.ts";
 export * from "./dev.ts";
 export * from "./graph.ts";
 export * from "./plan.ts";

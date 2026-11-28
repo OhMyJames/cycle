@@ -172,17 +172,24 @@ export const LoopGraphNodeSchema = z.object({
   /** Topological order, from 0. */
   position: z.number().int().min(0),
   origin: z.enum(["planned", "fix"]),
+  /** Who runs the node; absent (older servers) means `dev`. */
+  role: z.enum(["dev", "qa", "research", "design"]).optional(),
   title: z.string().min(1),
   goal: z.string().min(1),
   dependsOn: z.array(z.string().min(1)),
   filesHint: z.array(z.string()),
-  verify: z.array(z.string().min(1)).min(1),
+  /** May be empty for `research` and `design` nodes. */
+  verify: z.array(z.string().min(1)),
   status: LoopGraphNodeStatusSchema,
   sessionId: z.string().nullable(),
   commitSha: z.string().nullable(),
   rounds: z.number().int().min(0),
   lastError: z.string().nullable(),
   summary: z.string().nullable(),
+  /** QA's conclusion once it has one; null for Dev nodes. `status` says whether the run finished, `verdict` what QA found. */
+  verdict: z.enum(["pass", "fail"]).nullable().optional(),
+  /** QA's report in full; only in the full graph of `loop/run/get` and `loop/ticket/get`. */
+  report: z.string().nullable().optional(),
   startedAt: z.string().nullable(),
   finishedAt: z.string().nullable(),
 });
@@ -216,6 +223,8 @@ export const LoopGraphActParamsSchema = z
     verify: z.array(z.string().trim().min(1).max(500)).min(1).max(20).optional(),
     actor: z.string().min(1).max(100),
     actorKind: LoopActorKindSchema,
+    /** Node roles the client understands; without `research` and `design` those nodes are left out of the graph. */
+    roles: z.array(z.string()).optional(),
   })
   .refine((p) => {
     const edits = p.title !== undefined || p.goal !== undefined || p.verify !== undefined;
@@ -301,6 +310,8 @@ export type LoopApiRunsListResult = z.infer<typeof LoopApiRunsListResultSchema>;
 export const LoopRunGetParamsSchema = z.object({
   project: z.string().min(1),
   key: z.string().min(1),
+  /** Node roles the client understands; without `research` and `design` those nodes are left out of the graph. */
+  roles: z.array(z.string()).optional(),
 });
 export type LoopRunGetParams = z.infer<typeof LoopRunGetParamsSchema>;
 
@@ -333,8 +344,8 @@ export const LoopNoticeSchema = z.object({
   id: z.string().min(1),
   project: z.string().min(1),
   kind: LoopNoticeKindSchema,
-  /** The work item key, such as `CYC-390`. */
-  key: z.string().min(1),
+  /** The work item key, such as `CYC-390`; null for a Notice about the Project itself (a `supervisor` one). */
+  key: z.string().min(1).nullable(),
   session: LoopSessionRefSchema.nullable(),
   text: z.string(),
   at: z.string().min(1),
@@ -397,6 +408,8 @@ export type LoopIntentsRetryResult = z.infer<typeof LoopIntentsRetryResultSchema
 export const LoopTicketGetParamsSchema = z.object({
   project: z.string().min(1),
   key: z.string().min(1),
+  /** Node roles the client understands; without `research` and `design` those nodes are left out of the graph. */
+  roles: z.array(z.string()).optional(),
 });
 export type LoopTicketGetParams = z.infer<typeof LoopTicketGetParamsSchema>;
 

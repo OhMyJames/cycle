@@ -4,6 +4,7 @@ import { userEvent } from "vitest/browser";
 import type { AnalyticsStatus } from "../../src/api.ts";
 import { fakeBridge } from "../fake-bridge.ts";
 import { openSettings } from "./account-menu.ts";
+import { mountApp } from "./mount.tsx";
 import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
@@ -11,11 +12,7 @@ afterEach(() => {
   localStorage.clear();
 });
 
-const mount = async (analytics?: AnalyticsStatus) => {
-  const script = fakeBridge({ connected: true, ...(analytics ? { analytics } : {}) });
-  await renderApp(script.bridge);
-  return { user: userEvent.setup(), ...script };
-};
+const mount = (analytics?: AnalyticsStatus) => mountApp(analytics ? { analytics } : {});
 const tracked = (calls: [string, ...unknown[]][]) =>
   calls.filter(([name]) => name === "track").map(([, event, props]) => [event, props]);
 

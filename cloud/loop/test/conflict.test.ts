@@ -188,6 +188,17 @@ const resumeInCi = async (s: ReturnType<typeof setup>, patch: RunPatch) => {
   s.world.ciResponses = [pending];
 };
 
+/** Steps until the run is no longer waiting: a signal on its subject wakes it, as the checker would (CYC-550). */
+const settle = async (s: ReturnType<typeof setup>) => {
+  let result = await s.pipeline.step();
+  for (let i = 0; result.status === "waiting" && i < 5; i++) {
+    for (const w of s.store.waits("CYC-1"))
+      s.store.signal(`${w.subject}:test:${i}`, w.subject, "test");
+    result = await s.pipeline.step();
+  }
+  return result;
+};
+
 const gitCalls = (calls: string[], what: string) => calls.filter((c) => c.includes(what));
 
 test("a conflict found while waiting for CI is merged in the worktree, counted once, with GIT_SAFE", async () => {
@@ -428,7 +439,7 @@ test("a restart in the conflict turn does not merge again and sends the conflict
   s.sessions.script.dev.push(done());
   resolve(s, true);
   s.setDevTurns(1);
-  const result = await s.pipeline.step();
+  const result = await settle(s);
   expect(result.status).toBe("delivered");
   expect(gitCalls(s.world.calls, "merge --no-edit")).toHaveLength(0);
   expect(devPrompts(s).at(-1)).toContain("Conflicted files");
@@ -469,7 +480,7 @@ test("a resend after the merge was already finished does not merge again either"
   s.hook.onConflictTurn = () => {
     s.world.prMerge = [["MERGED", "UNKNOWN"]];
   };
-  const result = await s.pipeline.step();
+  const result = await settle(s);
   expect(result.status).toBe("delivered");
   expect(gitCalls(s.world.calls, "merge --no-edit")).toHaveLength(0);
   expect(devPrompts(s).at(-1)).toContain("Conflicted files");

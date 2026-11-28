@@ -4,6 +4,7 @@ import { userEvent } from "vitest/browser";
 import type { LocationConfig, SessionSummary } from "../../src/api.ts";
 import { fakeBridge, summary } from "../fake-bridge.ts";
 import { sleep } from "./box.ts";
+import { mountApp } from "./mount.tsx";
 import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
@@ -19,12 +20,16 @@ const row = (id: string, over: Partial<SessionSummary> = {}): SessionSummary => 
 });
 
 const mount = async (sessions: SessionSummary[]) => {
-  const script = fakeBridge({ connected: true });
-  script.bridge.sessions = async () => sessions;
-  await renderApp(script.bridge);
-  const user = userEvent.setup();
+  const app = await mountApp(
+    {},
+    {
+      configure: (script) => {
+        script.bridge.sessions = async () => sessions;
+      },
+    },
+  );
   await screen.findAllByRole("option");
-  return { user, ...script };
+  return app;
 };
 
 const switcher = () => screen.getByRole("button", { name: /Switch workspace/ });

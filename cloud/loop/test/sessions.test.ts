@@ -57,6 +57,7 @@ const setup = async (fake: ReturnType<typeof fakeAgent>, record?: RecordEvent) =
     sessions,
     sessionId,
     socket,
+    draining: (on: boolean) => daemon.setDraining(on),
     restartDaemon: async () => {
       daemon = await Daemon.start({
         dataDir: dir,
@@ -406,3 +407,58 @@ test("a cancel is not an answer, and the next turn of the session drops what its
   expect(left.settle("p2", { outcome: "selected", optionId: "reject" })).toBeUndefined();
   expect(left.settle("p3", { outcome: "selected", optionId: "reject" })?.answer).toBe("deny");
 });
+
+test("a prompt sent as the daemon shuts down is sent again once it is back, not a lost session", async () => {
+  let prompts = 0;
+  const { sessions, sessionId, stopDaemon, restartDaemon } = await setup(
+    fakeAgent({
+      onPrompt: async ({ say }) => {
+        prompts++;
+        await say({
+          sessionUpdate: "agent_message_chunk",
+          messageId: "a1",
+          content: { type: "text", text: "ok" },
+        });
+        return undefined;
+      },
+    }),
+  );
+  // Warm the session so it is watched, then shut the daemon down and send in the same breath.
+  await sessions.turn(sessionId, "first", context);
+  const stopping = stopDaemon();
+  const turn = sessions.turn(sessionId, "second", context);
+  await stopping;
+  await restartDaemon();
+  const result = await turn;
+  expect(result.stopReason).toBe("end_turn");
+  expect(result.text).toContain("ok");
+  expect(prompts).toBe(2);
+}, 20_000);
+
+test("a prompt queued while the daemon drains is run once, by the new daemon, and the loop waits for it", async () => {
+  const seen: string[] = [];
+  const { sessions, sessionId, draining, stopDaemon, restartDaemon } = await setup(
+    fakeAgent({
+      onPrompt: async ({ prompt, say }) => {
+        seen.push(JSON.stringify(prompt));
+        await say({
+          sessionUpdate: "agent_message_chunk",
+          messageId: "a1",
+          content: { type: "text", text: "ok" },
+        });
+        return undefined;
+      },
+    }),
+  );
+  await sessions.turn(sessionId, "first", context);
+  draining(true);
+  const turn = sessions.turn(sessionId, "held", context);
+  // Wait until the daemon has queued it, then switch.
+  await new Promise((r) => setTimeout(r, 300));
+  expect(seen).toHaveLength(1);
+  await stopDaemon();
+  await restartDaemon();
+  const result = await turn;
+  expect(result.stopReason).toBe("end_turn");
+  expect(seen).toHaveLength(2);
+}, 20_000);

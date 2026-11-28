@@ -81,6 +81,7 @@ const activeRun = (key: string, phase: "dev" | "blocked" = "dev") => ({
     prUrl: null,
     ciRound: 0,
     ciFailedSha: null,
+    ciWait: null,
     nodeModulesReleased: false,
     conflictRound: 0,
     conflict: null,

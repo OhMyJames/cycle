@@ -1,24 +1,27 @@
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
-import { userEvent } from "vitest/browser";
 import type { SessionSummary } from "../../src/api.ts";
-import { fakeBridge, summary } from "../fake-bridge.ts";
-import { renderApp } from "./render-app.tsx";
+import { summary } from "../fake-bridge.ts";
+import { mountApp } from "./mount.tsx";
 
 afterEach(cleanup);
 
 const row = (id: string, title: string): SessionSummary => ({ ...summary(id), title });
 
 const mount = async (fail?: string) => {
-  const script = fakeBridge({ connected: true });
-  script.bridge.sessions = async () => [row("a", "First"), row("b", "Second")];
   const renamed: unknown[][] = [];
-  script.bridge.renameSession = async (...args) => {
-    renamed.push(args);
-    if (fail !== undefined) throw new Error(fail);
-  };
-  const store = await renderApp(script.bridge);
-  const user = userEvent.setup();
+  const { user, store } = await mountApp(
+    {},
+    {
+      configure: (script) => {
+        script.bridge.sessions = async () => [row("a", "First"), row("b", "Second")];
+        script.bridge.renameSession = async (...args) => {
+          renamed.push(args);
+          if (fail !== undefined) throw new Error(fail);
+        };
+      },
+    },
+  );
   await screen.findAllByRole("option");
   return { user, renamed, store };
 };

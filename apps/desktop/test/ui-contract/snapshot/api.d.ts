@@ -597,6 +597,10 @@ export type SessionSnapshot = {
     permissions: PermissionRequest[];
     version: number;
 };
+export type DaemonDraining = {
+    version: string;
+    forceAt?: string;
+};
 export type UpdateState = {
     current: string;
 } & ({
@@ -709,6 +713,10 @@ export type AppEvent = {
 } | {
     type: "providers";
     locationId: string;
+} | {
+    type: "daemon-update";
+    locationId: string;
+    draining?: DaemonDraining;
 } | {
     type: "plugins";
     locationId: string;
@@ -1034,6 +1042,7 @@ export type LoopGraphNode = {
     id: string;
     position: number;
     origin: "planned" | "fix";
+    role?: "dev" | "qa" | "research" | "design" | undefined;
     title: string;
     goal: string;
     dependsOn: string[];
@@ -1045,6 +1054,8 @@ export type LoopGraphNode = {
     rounds: number;
     lastError: string | null;
     summary: string | null;
+    verdict?: "pass" | "fail" | null | undefined;
+    report?: string | null | undefined;
     startedAt: string | null;
     finishedAt: string | null;
 };
@@ -1100,7 +1111,7 @@ export type LoopNoticeKind = "permission" | "blocked" | "review" | "stuck" | "in
 export type LoopNotice = {
     id: string;
     kind: LoopNoticeKind;
-    identifier: string;
+    identifier: string | null;
     text: string;
     session: {
         kind: string;

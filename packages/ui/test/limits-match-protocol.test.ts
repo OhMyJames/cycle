@@ -3,11 +3,16 @@ import {
   IMAGE_TYPES,
   PROMPT_LIMITS,
   base64Bytes as protocolBase64Bytes,
+  sessionIdOfUri as protocolSessionIdOfUri,
   sessionUri as protocolSessionUri,
   SESSION_URI_PREFIX,
 } from "@cycle/protocol";
 import { ATTACHMENT_LIMITS, base64Bytes, IMAGE_TYPES as uiImageTypes } from "../src/attachments.ts";
-import { sessionUri, SESSION_URI_PREFIX as uiSessionPrefix } from "../src/mention.ts";
+import {
+  sessionIdOfUri,
+  sessionUri,
+  SESSION_URI_PREFIX as uiSessionPrefix,
+} from "../src/mention.ts";
 
 // The page may not import `@cycle/protocol`, so it keeps a copy of what a prompt may carry, to tell the person before
 // anything is sent. These say the two copies are one: a change on one side alone fails here.
@@ -18,7 +23,14 @@ test("the page's limits are the daemon's", () => {
 
 test("the page names a session in a mention as the daemon reads it", () => {
   expect(uiSessionPrefix).toBe(SESSION_URI_PREFIX);
-  for (const id of ["s1", "a/b c", "日本"]) expect(sessionUri(id)).toBe(protocolSessionUri(id));
+  for (const id of ["s1", "a/b c", "日本"]) {
+    const uri = sessionUri(id);
+    expect(uri).toBe(protocolSessionUri(id));
+    expect(sessionIdOfUri(uri)).toBe(protocolSessionIdOfUri(uri));
+  }
+  for (const bad of ["cycle://session/", "cycle://session/%E0%A4%A", "file:///a", ""]) {
+    expect(sessionIdOfUri(bad)).toBe(protocolSessionIdOfUri(bad));
+  }
 });
 
 test("the page takes the same image types as the daemon", () => {

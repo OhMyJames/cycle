@@ -64,6 +64,11 @@
   overflow-wrap: anywhere;
 }
 
+[data-slot="message"][data-role="user"] > span {
+  max-width: 100%;
+  min-width: 0;
+}
+
 /* What was attached to a sent message, above its words and on the same side (CYCL-141). The pictures are a grid of equal
    squares: five to a row where the column is wide, never fewer than three where it is narrow, and as many as there are
    when there are fewer. A square is a fifth of the row, or 6rem when a fifth is smaller, but never more than a third. */
@@ -837,11 +842,18 @@
   background: var(--cycle-surface-raised);
   vertical-align: baseline;
   white-space: nowrap;
+  overflow: clip;
 }
 
 [data-slot="mention-chip"] > svg {
   flex: none;
   color: var(--ui-muted-foreground);
+}
+
+[data-slot="mention-label"] {
+  min-width: 0;
+  overflow: clip;
+  text-overflow: ellipsis;
 }
 
 /* A tool call is a quiet line of text, not a box, and has no icon at all (CYCL-139): the verb in its tense (or the

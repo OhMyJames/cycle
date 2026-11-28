@@ -13,12 +13,12 @@ export type Preflight =
       /** CYC-508: structured Level-2 Task Graph parsed from the Plan document, when present. */
       graphSpecs?: TaskNodeSpec[];
     }
-  | { ok: true; kind: "research"; questions: string[] }
+  | { ok: true; kind: "research" | "design"; questions: string[] }
   | { ok: false; reasons: string[] };
 
 /** `research` is optional so that a caller that only knows Feature and Bug (such as scout) still type-checks. */
 export type PreflightConfig = Pick<Config, "maxCriteria" | "featureTypeId" | "bugTypeId"> &
-  Partial<Pick<Config, "research">>;
+  Partial<Pick<Config, "research" | "design">>;
 
 /** The verify commands a criterion may name (`parseVerify`), as a person or a session reads them. */
 export const ALLOWED_COMMANDS =
@@ -41,6 +41,7 @@ const FEATURE_SECTIONS = ["背景与证据", "范围", "非目标", "涉及面"]
 const BUG_SECTIONS = ["现象", "复现步骤", "预期与实际", "环境与版本", "严重度"];
 /** 「要回答的问题」 and 「结论」 are checked by their own rules below. */
 const RESEARCH_SECTIONS = ["方法与范围", "产出形式"];
+const DESIGN_SECTIONS = ["背景与约束"];
 
 const QUESTIONS = /^(#{1,6})\s*要回答的问题/;
 export const CONCLUSION = "结论";
@@ -133,6 +134,9 @@ export const preflight = (issue: Issue, config: PreflightConfig): Preflight => {
   if (config.research != null && issue.typeId === config.research.typeId) {
     return researchPreflight(issue, config);
   }
+  if (config.design != null && issue.typeId === config.design.typeId) {
+    return designPreflight(issue, config);
+  }
   const reasons: string[] = [];
   if (issue.description.trim() === "") {
     return { ok: false, reasons: ["The work item has no description."] };
@@ -187,6 +191,40 @@ export const researchPreflight = (issue: Issue, config: Pick<Config, "maxCriteri
   return reasons.length > 0
     ? { ok: false, reasons }
     : { ok: true, kind: "research", questions: items.map((item) => item.text) };
+};
+
+/**
+ * A design work item (CYC-545) is fit to be taken when it has its questions (a numbered list, at most `maxCriteria`), its
+ * 「背景与约束」 with content, and a 「结论」 that is still to be written.
+ */
+export const designPreflight = (issue: Issue, config: Pick<Config, "maxCriteria">): Preflight => {
+  if (issue.description.trim() === "") {
+    return { ok: false, reasons: ["The work item has no description."] };
+  }
+  const reasons: string[] = [];
+  const items = listUnder(issue.description, QUESTIONS);
+  if (items.length === 0) {
+    reasons.push(
+      "There is no list of questions (a numbered list under a 「要回答的问题」 heading).",
+    );
+  } else if (items.some((item) => !item.numbered)) {
+    reasons.push("The questions under 「要回答的问题」 must be a numbered list (1. 2. 3.).");
+  }
+  if (items.length > config.maxCriteria) {
+    reasons.push(
+      `It has ${items.length} questions, more than one session can answer (at most ${config.maxCriteria}). Please split it.`,
+    );
+  }
+  const missing = DESIGN_SECTIONS.filter((name) => !hasSection(issue.description, name));
+  if (missing.length > 0) reasons.push(missingSectionsReason(missing));
+  if (!conclusionIsEmpty(issue.description)) {
+    reasons.push(
+      "The 「结论」 section is already written. A design work item is taken only while it is empty or holds one bracketed note.",
+    );
+  }
+  return reasons.length > 0
+    ? { ok: false, reasons }
+    : { ok: true, kind: "design", questions: items.map((item) => item.text) };
 };
 
 /** The comment that sends a work item back, in the words a person reads in the tracker. */

@@ -148,6 +148,51 @@ export const MIGRATIONS: readonly string[] = [
     PRIMARY KEY (run_key, node_id)
   )`,
   `CREATE INDEX graph_nodes_run_pos ON graph_nodes (run_key, position)`,
+  // CYC-540: one review per repo, PR and commit; whoever starts it first claims it.
+  `CREATE TABLE review_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    repo TEXT NOT NULL,
+    pr INTEGER NOT NULL,
+    head_sha TEXT NOT NULL,
+    origin TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'done')),
+    decision TEXT,
+    verdict TEXT,
+    sessions TEXT NOT NULL DEFAULT '[]',
+    commented TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (repo, pr, head_sha)
+  )`,
+  // What a piece of work waits on (a subject string the store does not interpret) and when to look again.
+  `CREATE TABLE waits (
+    owner TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    recheck_at TEXT NOT NULL,
+    woken_at TEXT,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (owner, subject)
+  )`,
+  `CREATE INDEX waits_subject ON waits (subject)`,
+  `CREATE TABLE signals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dedupe TEXT NOT NULL UNIQUE,
+    subject TEXT NOT NULL,
+    source TEXT NOT NULL,
+    at TEXT NOT NULL
+  )`,
+  `CREATE TABLE pr_reviews (
+    repo TEXT NOT NULL,
+    pr INTEGER NOT NULL,
+    reviews INTEGER NOT NULL DEFAULT 0,
+    capped INTEGER NOT NULL DEFAULT 0,
+    last_sha TEXT,
+    PRIMARY KEY (repo, pr)
+  )`,
+  // CYC-542: a graph node has a role (dev / qa), and a QA node a verdict and its report.
+  `ALTER TABLE graph_nodes ADD COLUMN role TEXT NOT NULL DEFAULT 'dev'`,
+  `ALTER TABLE graph_nodes ADD COLUMN verdict TEXT`,
+  `ALTER TABLE graph_nodes ADD COLUMN report TEXT`,
 ];
 
 /** The statements a migration may be made of. */

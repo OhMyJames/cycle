@@ -169,3 +169,10 @@ test("an incomplete last line is not a parse error when the process exits", asyn
   expect(exits).toHaveLength(1);
   expect(exits[0]?.message).toContain("peer exited (0)");
 }, 10_000);
+
+test("an incomplete last line is not a parse error even when the exit comes well after the output ends", async () => {
+  const { rpc, exits } = start();
+  await expect(rpc.request("partial, then linger", {})).rejects.toThrow("peer exited (0)");
+  expect(exits).toHaveLength(1);
+  expect(exits[0]?.message).toContain("peer exited (0)");
+}, 10_000);

@@ -461,6 +461,25 @@ export const TimelineIcon = ({ size = 16, ...rest }: IconProps) => (
   </Svg>
 );
 
+/** iconmcp: maximize-2 */
+export const ExpandIcon = ({ size = 16, ...rest }: IconProps) => (
+  <Svg size={size} {...rest}>
+    <g>
+      <path d="M9.5 2.75 H13.25 V6.5" />
+      <line x1="13.25" y1="2.75" x2="9.25" y2="6.75" />
+      <path d="M6.5 13.25 H2.75 V9.5" />
+      <line x1="2.75" y1="13.25" x2="6.75" y2="9.25" />
+    </g>
+  </Svg>
+);
+
+/** Pencil: something written and not yet sent. */
+export const DraftIcon = ({ size = 16, ...rest }: IconProps) => (
+  <Svg size={size} {...rest}>
+    <path d="M10.5 2.5l3 3-7.5 7.5H3v-3z" />
+  </Svg>
+);
+
 /** iconmcp's grid: unfold (two chevrons apart: show every file's lines) */
 export const UnfoldIcon = ({ size = 16, ...rest }: IconProps) => (
   <Svg size={size} {...rest}>

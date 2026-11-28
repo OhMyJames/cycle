@@ -4,7 +4,15 @@ import type { Criterion } from "../criteria.ts";
 import { formatGraphTable, type TaskGraph } from "../graph.ts";
 import type { Issue } from "../types.ts";
 import { criteriaTable, diffBlock, docBlock, MAX_DIFF } from "./common.ts";
-import type { FullFlowTexts } from "./dev.ts";
+import { type FullFlowTexts, nodeReportBlock } from "./dev.ts";
+
+/** The reports of the graph's research nodes: what the Dev nodes were told, so QA can judge the change by it. */
+const researchReports = (graph: TaskGraph | undefined): string => {
+  const nodes = (graph?.nodes ?? []).filter((n) => n.role === "research" && n.report !== null);
+  return nodes.length === 0
+    ? ""
+    : `\nThe graph's read-only research nodes reported the following; the Dev nodes were told it:\n${nodes.map(nodeReportBlock).join("\n\n")}\n\n`;
+};
 
 export const qaBrief = (
   issue: Issue,
@@ -14,9 +22,10 @@ export const qaBrief = (
   conflictFiles: string[] = [],
   docs?: FullFlowTexts,
   graph?: TaskGraph,
+  previousReport?: string,
 ): string => `You are an independent reviewer for work item ${issue.key}: ${issue.title}. You did not write this change and you are not told how it was made.
 
-You are READ-ONLY. Do not edit, create, delete or commit anything, and do not run the test suites: the loop already ran them and its results are below. You may read files in the current directory (a git worktree holding the change) and use git status, git diff, git log, rg and ls.
+You are READ-ONLY. Do not edit, create, delete or commit anything, and do not run the test suites: the loop already ran them and its results are below. You may read files in the current directory (a git worktree holding the change) and use git status, git diff, git log, rg and ls. The commands you run are already run inside the worktree: do not use \`cd\`, pipes, redirects, \`&&\` or \`;\`, and write each command on its own. The loop's permission rules do not read shell syntax and deny it.
 
 Read AGENTS.md and check the change against its rules (protocol first, analytics that report behavior and never content, the red lines), and against the work item and its criteria.
 
@@ -33,7 +42,11 @@ ${
     ? ""
     : `\nExecution Task Graph (executed sequentially on this branch; verify that all nodes fit together with no integration gaps):\n${formatGraphTable(graph, { includeCommits: true })}\n`
 }
-The loop ran these checks, and these are their results:
+${researchReports(graph)}${
+  previousReport === undefined
+    ? ""
+    : `An earlier independent review of this work item reported the following. Confirm for yourself whether each problem is now solved, and report any that is not:\n---\n${previousReport}\n---\n\n`
+}The loop ran these checks, and these are their results:
 ${checks}
 
 The criteria, each run by the loop, with its result:

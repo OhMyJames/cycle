@@ -2,17 +2,16 @@ import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
-import type { PermissionRequest, SessionSnapshot } from "../../src/api.ts";
 import { displayMode } from "../../src/display-mode.ts";
-import { applyUpdate, emptyConversation } from "../../src/model/index.ts";
 import { App, StoreProvider } from "../../src/react/index.ts";
 import { reveal } from "../../src/reveal.ts";
 import { startedAt } from "../../src/started.ts";
 import { AppStore } from "../../src/store/index.ts";
-import { fakeBridge } from "../fake-bridge.ts";
+import { fakeBridge, summary } from "../fake-bridge.ts";
 import { LONG_CODE_LINES, READING } from "../markdown-samples.ts";
 import { openSettings } from "./account-menu.ts";
 import { findAlert } from "./alert.ts";
+import { history, openSession } from "./mount.tsx";
 import { renderApp } from "./render-app.tsx";
 
 /** The session these tests open, by its view key: what its display mode is kept under. */
@@ -40,54 +39,30 @@ const tool = (id: string, name: string, status: string, rawInput: object) => [
 const state = (extra: object) => u({ sessionUpdate: "state_update", ...extra });
 
 /** The session `s1`, open, with these updates in it; `stopSubagent`: its daemon can stop one sub-agent alone. */
-const openWith = async (
+const openWith = (
   options: {
     stopSubagent?: boolean;
     fs?: boolean;
     stopped?: (childId: string) => Promise<boolean>;
   },
   ...updates: SessionUpdate[]
-) => {
-  const snapshot = (): SessionSnapshot => ({
-    conversation: updates.reduce((c, u) => applyUpdate(c, u), emptyConversation()),
-    permissions: [],
-    version: updates.length,
+) =>
+  openSession(updates, {
+    fake: {
+      ...(options.stopped !== undefined ? { stopSubagent: options.stopped } : {}),
+      ...(options.stopSubagent === true || options.fs === true
+        ? {
+            capabilities: {
+              queue: true,
+              files: true,
+              folders: true,
+              ...(options.stopSubagent === true ? { stopSubagent: true } : {}),
+              ...(options.fs === true ? { fs: true } : {}),
+            },
+          }
+        : {}),
+    },
   });
-  const script = fakeBridge({
-    connected: true,
-    snapshot,
-    ...(options.stopped !== undefined ? { stopSubagent: options.stopped } : {}),
-    ...(options.stopSubagent === true || options.fs === true
-      ? {
-          capabilities: {
-            queue: true,
-            files: true,
-            folders: true,
-            ...(options.stopSubagent === true ? { stopSubagent: true } : {}),
-            ...(options.fs === true ? { fs: true } : {}),
-          },
-        }
-      : {}),
-  });
-  await renderApp(script.bridge);
-  const user = userEvent.setup();
-  await user.click(await screen.findByRole("option", { name: /work/ }));
-  const log = await screen.findByRole("log", { name: "Conversation" });
-  let version = updates.length;
-  const emit = (...batch: SessionUpdate[]) =>
-    act(() => {
-      for (const update of batch) {
-        version += 1;
-        script.emit({ type: "update", locationId: "local", sessionId: "s1", update, version });
-      }
-    });
-  /** The agent asks for leave, as the next thing the session says. */
-  const ask = (request: PermissionRequest) => {
-    version += 1;
-    return act(() => script.emit({ type: "permission", request, version }));
-  };
-  return { user, log, emit, ask, script };
-};
 const open = (...updates: SessionUpdate[]) => openWith({}, ...updates);
 
 /** A turn that ended normally folds its work above its answer: opens each fold, so its rows can be read. */
@@ -171,7 +146,7 @@ test("a call with a description reads as it alone, what it ran only in its toolt
 });
 
 test("a session named with @ is a chip in the sent message, and the record the agent was given is not shown", async () => {
-  const { log } = await open(
+  const { user, log } = await open(
     u({
       sessionUpdate: "user_message",
       messageId: "u1",
@@ -194,17 +169,136 @@ test("a session named with @ is a chip in the sent message, and the record the a
     state({ state: "idle", stopReason: "end_turn" }),
   );
   const chips = await waitFor(() => {
-    const found = [...log.querySelectorAll('[data-slot="mention-chip"]')];
+    const found = [...log.querySelectorAll<HTMLElement>('[data-slot="mention-chip"]')];
     expect(found).toHaveLength(2);
     return found;
   });
-  expect(chips.map((c) => [c.textContent, c.getAttribute("title")])).toEqual([
-    ["Fix the login bug", "Fix the login bug"],
+  expect(chips.map((c) => c.textContent)).toEqual([
+    "Fix the login bug",
     // One the words no longer say is still shown.
-    ["Unsaid", "Unsaid"],
+    "Unsaid",
   ]);
+  // Sessions absent from this location are non-interactive spans, with no duplicate title or invalid button/ARIA attrs.
+  expect(chips.map((c) => c.tagName)).toEqual(["SPAN", "SPAN"]);
+  expect(chips.every((c) => !c.hasAttribute("title"))).toBe(true);
+  expect(chips.every((c) => !c.hasAttribute("type") && !c.hasAttribute("aria-labelledby"))).toBe(
+    true,
+  );
   const message = chips[0]?.closest('[data-slot="message"]');
   expect(message?.textContent).toBe("Go on from Fix the login bug, then @GoneUnsaid");
+  // Hovering shows the tooltip with the full session name.
+  await user.hover(chips[0] as HTMLElement);
+  const tip = await screen.findByRole("tooltip");
+  expect(tip.textContent).toBe("Fix the login bug");
+});
+
+test("a long @ session chip truncates to 20 chars with ..., stays inside the bubble, shows full name on hover, and opens that session on click", async () => {
+  const fullName =
+    "帮我看一下 咱们现在 itsaplan 里面，有哪些 workitem 过期了或者 现在状态已经不对了的 workitem";
+  const said =
+    "帮我看一下 咱们现在 itsaplan 里面，有哪些 workitem 过期了或者 现在状态已经不对了的 workit";
+  const s1History = history(
+    u({
+      sessionUpdate: "user_message",
+      messageId: "u1",
+      content: [
+        { type: "text", text: `看一下咱们 session\n@${said}\n为什么一直在 writing\n@alpha` },
+        {
+          type: "resource_link",
+          name: fullName,
+          uri: "cycle://session/s2",
+          _meta: { "cycle/mention": said },
+        },
+        {
+          type: "resource_link",
+          name: "alpha",
+          uri: "cycle://session/s1",
+          _meta: { "cycle/mention": "alpha" },
+        },
+      ],
+    }),
+    state({ state: "idle", stopReason: "end_turn" }),
+  );
+  const s2History = history(
+    u({
+      sessionUpdate: "user_message",
+      messageId: "u2",
+      content: [{ type: "text", text: "Target session content" }],
+    }),
+    state({ state: "idle", stopReason: "end_turn" }),
+  );
+  const script = fakeBridge({ connected: true });
+  script.bridge.openSession = async (_locationId, sessionId) =>
+    sessionId === "s2" ? s2History : s1History;
+  script.bridge.sessions = async () => [
+    { ...summary("s1"), title: "alpha", lastSeq: 2 },
+    { ...summary("s2"), title: fullName, lastSeq: 1, archived: true },
+  ];
+  await renderApp(script.bridge);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("option", { name: /alpha/ }));
+  const log = await screen.findByRole("log", { name: "Conversation" });
+  // A self-mention stays a non-interactive span, never a dead button.
+  const allChips = [...log.querySelectorAll<HTMLElement>('[data-slot="mention-chip"]')];
+  expect(allChips.map((c) => [c.tagName, c.textContent])).toEqual([
+    ["BUTTON", "帮我看一下 咱们现在 itsaplan..."],
+    ["SPAN", "alpha"],
+  ]);
+  const chip = await within(log).findByRole("button", { name: fullName });
+  expect(chip.getAttribute("data-slot")).toBe("mention-chip");
+  expect(chip.getAttribute("data-kind")).toBe("session");
+  // The chip never overflows its user message bubble, even in a narrow conversation column.
+  const bubble = chip.closest<HTMLElement>('[data-slot="message"]') as HTMLElement;
+  expect(chip.getBoundingClientRect().right).toBeLessThanOrEqual(
+    bubble.getBoundingClientRect().right + 1,
+  );
+  log.style.width = "320px";
+  expect(chip.getBoundingClientRect().right).toBeLessThanOrEqual(
+    bubble.getBoundingClientRect().right + 1,
+  );
+  log.style.width = "";
+  // Hovering shows the full session name in the tooltip.
+  await user.hover(chip);
+  const tip = await screen.findByRole("tooltip");
+  expect(tip.textContent).toBe(fullName);
+  // While the location is away and the target is not cached, clicking does not switch or fire analytics.
+  act(() =>
+    script.emit({
+      type: "location-status",
+      locationId: "local",
+      state: "closed",
+    }),
+  );
+  await user.click(chip);
+  expect(
+    script.calls.filter(
+      ([name, event]) => name === "track" && event === "session_opened_from_mention",
+    ),
+  ).toEqual([]);
+  // Reconnected: keyboard Enter opens the referenced archived session, reveals archived rows in the sidebar, and tracks once.
+  act(() =>
+    script.emit({
+      type: "location-status",
+      locationId: "local",
+      state: "connected",
+    }),
+  );
+  chip.focus();
+  await user.keyboard("{Enter}");
+  await waitFor(() =>
+    expect(screen.getByRole("log", { name: "Conversation" }).textContent).toContain(
+      "Target session content",
+    ),
+  );
+  // The archived session is now shown and selected in the sidebar.
+  await waitFor(() =>
+    expect(screen.getByRole("option", { name: new RegExp(fullName.slice(0, 12)) })).toBeDefined(),
+  );
+  expect(
+    script.calls.filter(
+      ([name, event]) => name === "track" && event === "session_opened_from_mention",
+    ),
+  ).toEqual([["track", "session_opened_from_mention", {}]]);
 });
 
 test("a sent @ is the box's block for a session and for a file or folder inside the session's folder; one outside stays words", async () => {
@@ -1215,6 +1309,35 @@ test("a command opens to itself and its output apart from its errors; a long out
   ]);
 });
 
+test("a command shows how long it ran only from 10 seconds; a quick one, one without a time, or another tool does not", async () => {
+  const ran = (id: string, name: string, input: object, run: object) =>
+    finished(id, name, input, {
+      content: [],
+      _meta: { "cycle/toolResult": { run } },
+    });
+  const factsOf = async (
+    name: string,
+    input: { command?: string; file_path?: string },
+    run: object,
+  ) => {
+    cleanup();
+    await open(
+      you("u1"),
+      ...ran("c", name, { ...input, description: "The call" }, run),
+      state({ state: "idle", stopReason: "end_turn" }),
+    );
+    return (await screen.findByRole("button", { name: /The call|a\.txt/ })).textContent ?? "";
+  };
+  expect(await factsOf("Bash", { command: "make" }, { durationMs: 12000 })).toContain(
+    "took 12 sec",
+  );
+  expect(await factsOf("Bash", { command: "ls" }, { durationMs: 9000 })).not.toContain("took");
+  expect(await factsOf("Bash", { command: "pwd" }, {})).not.toContain("took");
+  expect(await factsOf("Read", { file_path: "/a.txt" }, { durationMs: 30000 })).not.toContain(
+    "took",
+  );
+});
+
 test("a shell command is coloured as bash in the code theme's colours, and is the same words and copy as plain text", async () => {
   const command = 'git show :2:a.md | grep "x" > /tmp/o.txt; n=$(wc -l < a.md) && echo "$n"';
   const { user, log, script } = await open(
@@ -1790,11 +1913,7 @@ test("a long plan does not lengthen the window: nothing scrolls the header off i
   ];
   const script = fakeBridge({
     connected: true,
-    snapshot: (): SessionSnapshot => ({
-      conversation: updates.reduce((c, u) => applyUpdate(c, u), emptyConversation()),
-      permissions: [],
-      version: updates.length,
-    }),
+    snapshot: () => history(...updates),
   });
   const store = new AppStore(script.bridge);
   const user = userEvent.setup();
@@ -2387,4 +2506,37 @@ test("Codex and agy consecutive command cards show every command, hide exit 0 no
   expect(cmdBlock?.textContent).toContain(longAgyCmd);
   const extraInput = log.querySelector('[data-item-id="a1"] [data-slot="tool-input"]');
   expect(extraInput?.textContent).not.toContain(longAgyCmd);
+});
+
+test("while the daemon drains for its update, the box says so with the time it will switch; waiting and done say nothing", async () => {
+  const { emit, script } = await open(you("u1"), state({ state: "idle", stopReason: "end_turn" }));
+  const hint = () => document.querySelector('[data-update="draining"]');
+  expect(hint()).toBeNull();
+  await act(async () =>
+    script.emit({
+      type: "daemon-update",
+      locationId: "local",
+      draining: { version: "0.3.9", forceAt: "2026-11-28T10:30:00Z" },
+    }),
+  );
+  await waitFor(() => expect(hint()?.textContent).toContain("Cycle is updating"));
+  expect(hint()?.textContent).toContain("messages sent now go out after the restart");
+  expect(hint()?.textContent).toMatch(/by .*\d.* at the latest/);
+  // A message the daemon holds for the restart is shown as queued.
+  await emit(
+    u({
+      sessionUpdate: "_cycle/queue_update",
+      hold: "update",
+      entries: [{ queueId: "q1", prompt: [{ type: "text", text: "after the restart" }] }],
+    }),
+  );
+  await waitFor(() =>
+    expect(document.querySelector('[data-slot="queued-message"]')?.textContent).toContain(
+      "after the restart",
+    ),
+  );
+  expect(document.querySelector('[data-slot="queued-tag"]')?.textContent).toBe("Queued");
+  // The switch is done: the notice goes.
+  await act(async () => script.emit({ type: "daemon-update", locationId: "local" }));
+  await waitFor(() => expect(hint()).toBeNull());
 });

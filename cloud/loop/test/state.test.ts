@@ -88,6 +88,7 @@ for (const kind of KINDS) {
       dev: {
         ciRound: 0,
         ciFailedSha: null,
+        ciWait: null,
         nodeModulesReleased: false,
         fullFlowDocs: [],
         conflictRound: 0,
@@ -154,6 +155,7 @@ for (const kind of KINDS) {
       dev: {
         ciRound: 0,
         ciFailedSha: null,
+        ciWait: null,
         nodeModulesReleased: false,
         fullFlowDocs: [],
         conflictRound: 0,

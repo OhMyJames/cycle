@@ -42,8 +42,8 @@ export const CHECK_EVERY_MS = 30 * 60_000;
 export const FIRST_CHECK_MS = 2 * 60_000;
 /** How often, with a version ready, the daemon asks itself whether it is idle. */
 export const APPLY_EVERY_MS = 30_000;
-/** How long nothing may have happened in any session before the daemon counts as idle. */
-export const QUIET_MS = 2 * 60_000;
+/** How long nothing may have happened in any session before the daemon counts as idle: not to switch between two messages. */
+export const QUIET_MS = 15_000;
 /** How long a new version is kept from being cleaned up as the one before, once it runs. */
 export const KEEP_OLD_MS = 10 * 60_000;
 
@@ -69,9 +69,18 @@ export type Skipped =
   | "failed_before"
   | "needs_manual_update";
 
+/** Where a version that is ready stands: looking for a quiet moment, or draining (no new turns; docs/daemon.md "自动更新"). */
+export type UpdatePhase = {
+  state: "waiting" | "draining";
+  /** Epoch ms it entered `state`. */
+  since: number;
+  /** While draining and a force limit is set: epoch ms the daemon switches whatever is still working. */
+  forceAt?: number;
+};
+
 export type SelfUpdateState =
   | { updates: "off"; why: string }
-  | { updates: "on"; pending?: Staged; error?: string; skipped?: Skipped };
+  | { updates: "on"; pending?: Staged; phase?: UpdatePhase; error?: string; skipped?: Skipped };
 
 type Log = Pick<Logger, "info" | "warn">;
 
@@ -97,6 +106,18 @@ export type SelfUpdateDeps = {
   check: (dir: string, version: string) => Promise<void>;
   /** Whether the daemon has had nothing working for a while (`Daemon.quietForUpdate`). */
   idle: () => Promise<boolean>;
+  /** While draining: whether nothing is left to wait for (`Daemon.drainedForUpdate`). */
+  drained?: () => Promise<boolean>;
+  /** Draining starts and ends (`Daemon.setDraining`). */
+  setDraining?: (draining: boolean) => void;
+  /** Before a forced switch: notes what it will cut short, and says how much (`Daemon.noteForcedStop`). */
+  forced?: () => Promise<{ sessions: number; background: number }>;
+  /** The state changed: clients that take it are told (`Daemon.announceUpdate`). */
+  changed?: () => void;
+  /** Minutes in waiting before draining, and in draining before forcing; undefined: not that step. */
+  drainAfterMs?: number | undefined;
+  forceAfterMs?: number | undefined;
+  now?: () => number;
   /** Stops this daemon, switches folders and starts the new one (serve.ts). Does not return when it worked. */
   apply: (staged: Staged) => Promise<void>;
   log: Log;
@@ -237,6 +258,9 @@ export class SelfUpdate {
   #busy = false;
   #applying = false;
   #timers: unknown[] = [];
+  #waitingSince: number | undefined;
+  #drainingSince: number | undefined;
+  #quietTimer: unknown;
 
   constructor(deps: SelfUpdateDeps) {
     this.#d = deps;
@@ -246,9 +270,51 @@ export class SelfUpdate {
     return {
       updates: "on",
       ...(this.#pending !== undefined ? { pending: this.#pending } : {}),
+      ...(this.#phase() !== undefined ? { phase: this.#phase() as UpdatePhase } : {}),
       ...(this.#error !== undefined ? { error: this.#error } : {}),
       ...(this.#skipped !== undefined ? { skipped: this.#skipped } : {}),
     };
+  }
+
+  #now(): number {
+    return (this.#d.now ?? Date.now)();
+  }
+
+  #phase(): UpdatePhase | undefined {
+    if (this.#pending === undefined) return undefined;
+    if (this.#drainingSince !== undefined) {
+      const forceAfter = this.#d.forceAfterMs;
+      return {
+        state: "draining",
+        since: this.#drainingSince,
+        ...(forceAfter !== undefined ? { forceAt: this.#drainingSince + forceAfter } : {}),
+      };
+    }
+    return this.#waitingSince !== undefined
+      ? { state: "waiting", since: this.#waitingSince }
+      : undefined;
+  }
+
+  /** Back to no phase: nothing is pending, or the switch did not work. Draining ends. */
+  #resetPhase(): void {
+    const wasDraining = this.#drainingSince !== undefined;
+    this.#waitingSince = undefined;
+    this.#drainingSince = undefined;
+    if (wasDraining) this.#d.setDraining?.(false);
+    if (wasDraining) this.#d.changed?.();
+  }
+
+  /**
+   * A turn or a background task has ended: look now instead of at the next poll. With a quiet time asked, the look
+   * right after an end finds it not yet over, so one more is made when it is.
+   */
+  nudge(): void {
+    void this.tryApply();
+    const later = this.#d.setTimeout ?? setTimeout;
+    const clear = this.#d.clearInterval ?? clearTimeout;
+    if (this.#quietTimer !== undefined) clear(this.#quietTimer as never);
+    if (this.#pending === undefined) return;
+    this.#quietTimer = later(() => void this.tryApply(), QUIET_MS + 250);
   }
 
   /** Looks for a version staged before this daemon started (by the app, or by a daemon that stopped before switching). */
@@ -270,6 +336,8 @@ export class SelfUpdate {
   stop(): void {
     const clear = this.#d.clearInterval ?? clearInterval;
     for (const timer of this.#timers) clear(timer as never);
+    if (this.#quietTimer !== undefined) clear(this.#quietTimer as never);
+    this.#quietTimer = undefined;
     this.#timers = [];
   }
 
@@ -296,12 +364,42 @@ export class SelfUpdate {
     try {
       await this.#adoptStaged().catch(() => {});
       pending = this.#pending;
-      if (pending === undefined) return false;
-      if (!(await this.#d.idle())) return false;
+      if (pending === undefined) {
+        this.#resetPhase();
+        return false;
+      }
+      const now = this.#now();
+      if (this.#waitingSince === undefined) {
+        this.#waitingSince = now;
+        this.#d.changed?.();
+      }
+      if (
+        this.#drainingSince === undefined &&
+        this.#d.drainAfterMs !== undefined &&
+        now - this.#waitingSince >= this.#d.drainAfterMs
+      ) {
+        this.#drainingSince = now;
+        this.#d.setDraining?.(true);
+        this.#d.log.info("self_update_draining", { to: pending.version });
+        this.#d.changed?.();
+      }
+      if (this.#drainingSince === undefined) {
+        if (!(await this.#d.idle())) return false;
+      } else if (!(await (this.#d.drained ?? this.#d.idle)())) {
+        if (this.#d.forceAfterMs === undefined || now - this.#drainingSince < this.#d.forceAfterMs)
+          return false;
+        const cut = (await this.#d.forced?.()) ?? { sessions: 0, background: 0 };
+        this.#d.log.info("self_update_forced", {
+          to: pending.version,
+          sessions: cut.sessions,
+          background: cut.background,
+        });
+      }
       this.#d.log.info("self_update_switching", { from: this.#d.version, to: pending.version });
       await this.#d.apply(pending);
       return true;
     } catch (error) {
+      this.#resetPhase();
       this.#d.log.warn("self_update_switch_failed", {
         to: pending?.version ?? "",
         error: String(error),

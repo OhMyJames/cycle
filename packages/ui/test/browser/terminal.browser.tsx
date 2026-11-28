@@ -4,6 +4,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { cdp, userEvent } from "vitest/browser";
 import type { TerminalInfo, TerminalProblem } from "../../src/api.ts";
 import { fakeBridge, summary } from "../fake-bridge.ts";
+import { mountApp } from "./mount.tsx";
 import { newTerminal, openPanel, openTab } from "./panel.ts";
 import { renderApp } from "./render-app.tsx";
 
@@ -29,29 +30,34 @@ const mount = async (
     terminal?: boolean;
   } = {},
 ) => {
-  const script = fakeBridge({
-    connected: true,
-    capabilities: {
-      queue: true,
-      files: true,
-      folders: true,
-      fs: true,
-      diff: true,
-      terminal: options.terminal ?? true,
+  const app = await mountApp(
+    {
+      capabilities: {
+        queue: true,
+        files: true,
+        folders: true,
+        fs: true,
+        diff: true,
+        terminal: options.terminal ?? true,
+      },
+      ...(options.terminals !== undefined ? { terminals: options.terminals } : {}),
+      ...(options.terminalProblem !== undefined
+        ? { terminalProblem: options.terminalProblem }
+        : {}),
     },
-    ...(options.terminals !== undefined ? { terminals: options.terminals } : {}),
-    ...(options.terminalProblem !== undefined ? { terminalProblem: options.terminalProblem } : {}),
-  });
-  script.bridge.sessions = async () => [{ ...summary("s1"), title: "first" }];
-  const store = await renderApp(script.bridge);
-  const user = userEvent.setup();
-  await user.click(await screen.findByRole("option", { name: /first/ }));
+    {
+      configure: (script) => {
+        script.bridge.sessions = async () => [{ ...summary("s1"), title: "first" }];
+      },
+    },
+  );
+  await app.user.click(await screen.findByRole("option", { name: /first/ }));
   const tracked = () =>
-    script.calls
+    app.calls
       .filter(([name]) => name === "track")
       .map(([, event, props]) => [event, props])
       .filter(([event]) => String(event).startsWith("terminal"));
-  return { store, user, script, tracked };
+  return { ...app, tracked };
 };
 
 /** What the terminal's screen shows, as text. */

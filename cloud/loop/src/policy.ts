@@ -15,6 +15,7 @@ export type Role =
   | "qa"
   | "review"
   | "research"
+  | "design"
   | "research_qa"
   | "triage"
   | "shape"
@@ -246,6 +247,7 @@ const matchesShape = (
 /** The roles under the research rules: read the worktree and the read roots, nothing else, never ask. */
 const RESEARCH_RULES: ReadonlySet<Role> = new Set([
   "research",
+  "design",
   "research_qa",
   "triage",
   "shape",

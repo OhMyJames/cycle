@@ -11,6 +11,8 @@ export const QUEUE_UPDATE = "_cycle/queue_update";
 export const QueueEntrySchema = z.object({
   queueId: z.string(),
   prompt: z.array(z.unknown()),
+  /** Queued while the daemon drained for an update: sent after the switch, not handed back (docs/protocol.md §8). */
+  hold: z.literal("update").optional(),
 });
 export type QueueEntry = z.infer<typeof QueueEntrySchema>;
 
@@ -28,6 +30,8 @@ export const QueueUpdateSchema = z.object({
   returnId: z.string().optional(),
   returned: z.array(QueueEntrySchema).optional(),
   reason: QueueReasonSchema.optional(),
+  /** The queue is held because the daemon is draining to update; its entries are sent after the switch (docs/protocol.md §8). */
+  hold: z.literal("update").optional(),
 });
 export type QueueUpdate = z.infer<typeof QueueUpdateSchema>;
 

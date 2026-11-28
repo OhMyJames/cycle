@@ -1,7 +1,8 @@
-import { Button } from "@ui-sdk/react/button";
 import { useEffect, useState } from "react";
 import type { ContextState } from "../model/conversation.ts";
 import { useI18n } from "./i18n.tsx";
+import { MessageIcon } from "./icons.tsx";
+import { NoticeLine } from "./notice-line.tsx";
 import { sessionTitle } from "./session-list.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
 
@@ -19,7 +20,8 @@ const dismissals = new Map<string, string | undefined>();
 
 /**
  * Whether to suggest carrying on in a new session: the conversation is long, or it was left long enough for the cache to
- * expire while it is big. Only when the session is idle and the daemon can hand its record to another session.
+ * expire while it is big. Only when the session is idle, nothing it started still runs in the background (what that
+ * brings back comes to this session, not to a new one), and the daemon can hand its record to another session.
  */
 export function useContinueHint(params: {
   locationId: string;
@@ -67,6 +69,7 @@ export function useContinueHint(params: {
     sessionId !== undefined &&
     session !== undefined &&
     idle &&
+    (session.background ?? 0) === 0 &&
     connected &&
     canMention &&
     !dismissed;
@@ -85,38 +88,30 @@ export function useContinueHint(params: {
   };
 }
 
-/** The row in the composer's tray: what the length costs, and how to leave it behind. */
-export function ContinueRow({
-  reason,
-  locationId,
-  sessionId,
-  onDismiss,
-}: {
-  reason: HintReason;
-  locationId: string;
-  sessionId: string;
-  onDismiss: () => void;
-}) {
+/**
+ * The session's notice about it, under the title bar (DESIGN.md §4.4, "会话提示栏"): what the length costs, and how to
+ * leave it behind. Advice, not a fault: the plain tone, with what else is said of the session, not over the input box.
+ */
+export function ContinueNotice(params: Parameters<typeof useContinueHint>[0]) {
   const { t } = useI18n();
   const store = useAppStore();
-  const session = useAppState((s) =>
-    s.sessions[locationId]?.find((x) => x.sessionId === sessionId),
-  );
-  if (session === undefined) return null;
-  const carryOn = () => {
-    if (store.continueInNewSession(locationId, sessionId, sessionTitle(session))) {
-      store.track("continue_hint_used", { reason });
-    }
-  };
+  const { reason, session, dismiss } = useContinueHint(params);
+  const { locationId, sessionId } = params;
+  if (reason === undefined || session === undefined || sessionId === undefined) return null;
   return (
-    <div data-slot="extension-row" data-kind="continue" role="status">
-      <span data-slot="continue-text">{t(`composer.continue.${reason}`)}</span>
-      <Button data-variant="outline" onClick={carryOn}>
-        {t("composer.continue.action")}
-      </Button>
-      <Button data-variant="ghost" onClick={onDismiss}>
-        {t("composer.continue.dismiss")}
-      </Button>
-    </div>
+    <NoticeLine
+      kind="continue"
+      tone="info"
+      icon={<MessageIcon />}
+      text={t(`composer.continue.${reason}`)}
+      action={{
+        label: t("composer.continue.action"),
+        onAction: () => {
+          if (store.continueInNewSession(locationId, sessionId, sessionTitle(session)))
+            store.track("continue_hint_used", { reason });
+        },
+      }}
+      onDismiss={dismiss}
+    />
   );
 }

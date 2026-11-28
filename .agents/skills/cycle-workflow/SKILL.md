@@ -22,12 +22,10 @@ flowchart TD
     classDef human fill:#fde68a,stroke:#b45309,color:#1c1917
     classDef loop fill:#bfdbfe,stroke:#1d4ed8,color:#1c1917
     classDef col fill:#f5f5f4,stroke:#78716c,color:#1c1917
-    classDef plan fill:#fff,stroke:#78716c,stroke-dasharray:5 3,color:#57534e
 
     subgraph 需求["需求阶段(人为主)"]
         N["有想法或需求<br/>建工单:标题 + 首段 + 类型<br/>写简单即可"]:::human
         B[("Backlog<br/>未对齐的需求<br/>可无优先级")]:::col
-        HP[("Human Process(提议,CYC-375)<br/>人细化:补规格和验收标准<br/>拆成原子工单,挂 Epic")]:::plan
         G{"人确认<br/>说清做什么和不做什么<br/>验收可验证<br/>范围原子<br/>优先级已填"}:::human
     end
 
@@ -44,9 +42,7 @@ flowchart TD
     end
 
     N --> B
-    B -->|"现状:人直接确认"| G
-    B -.->|"提议:先进这一列"| HP
-    HP -.-> G
+    B -->|"人细化后确认(不另设列,CYC-375)"| G
     G -->|"通过:移到 Todo 并打 auto"| T
     G -->|"不通过:补充"| B
 
@@ -65,7 +61,7 @@ flowchart TD
     BL -->|"人处理后放回 Todo"| T
 ```
 
-- 黄色是人做的,蓝色是 Loop 做的,虚线是还没成立的提议。
+- 黄色是人做的,蓝色是 Loop 做的。
 - 人是进 Todo 的关口;Loop 只在 Todo 之后动作。
 - PR 评审判 `merge` 时 Loop 开启自动合并;改到路径底线(`cloud/loop/src/guard/floor.ts`)的 PR 一律转人。评审标准见根目录 `REVIEW.md`。
 
@@ -104,7 +100,7 @@ flowchart TD
 | Epic     | 容器,有子项,自己不直接实现    | 否             |
 | Feature  | 要新增或改变一个能力          | 是(叶子)       |
 | Bug      | 已有行为不对                  | 是(叶子)       |
-| Design   | 产出一个设计或决定,不产出代码 | 否             |
+| Design   | 产出一个设计或决定,不产出代码 | 是(本地只读的) |
 | Research | 要回答一个问题,产出结论       | 是(本地只读的) |
 
 Task、Tech Governance、Operations 等旧类型不再新建。存量的按内容归到上面五种之一。
@@ -135,7 +131,7 @@ Task、Tech Governance、Operations 等旧类型不再新建。存量的按内�
 
 带 `完整流程` 标签的大档工单，在 `Plan` 文档的 `## 执行图`（或 `## Task Graph`）小节下用 fenced `json` 代码块声明结构化执行图（JSON 数组或 `{ "nodes": [...] }`）：
 
-- 每个节点字段：`id`（1–32 位小写字母、数字、`-` 或 `_`，禁止以 `fix-` 开头）、`title`、`goal`、`dependsOn`（前置节点 `id` 数组）、`filesHint`（预计改动路径数组）、`verify`（非空数组，每条为 Loop 允许的验证命令）。
+- 每个节点字段：`id`（1–32 位小写字母、数字、`-` 或 `_`，禁止以 `fix-` 开头）、`title`、`goal`、`dependsOn`（前置节点 `id` 数组）、`filesHint`（预计改动路径数组）、`verify`（开发节点必须非空，每条为 Loop 允许的验证命令；`role` 为 `research` 的节点可以为空），可选 `role`（只接受 `research`，不写为开发节点）。
 - 约束：规划节点上限 8 个（含整单失败时自动追加的 `fix-*` 修补节点总计上限 12 个）；必须为无环 DAG（无自依赖、无悬空依赖、无环）；每条 `verify` 必须通过命令白名单校验。
 - 兼容与小档：旧大档无 `## 执行图` / `## Task Graph` 小节时退化为 1 节点；小档工单按体量自适应走 1 节点快路径，或由只读 Planner 自动拆出 2–4 个节点执行。
 
@@ -151,7 +147,7 @@ Task、Tech Governance、Operations 等旧类型不再新建。存量的按内�
 
 - **Epic 的正文不列子工单。** 子项靠父子关系显示;正文里列了会随子项增减而过期。要表达先后,用 `blocks` 链接。
 - **Design 和 Research 做完后,回填「结论」小节**,不要往正文末尾追加。结论要回答「要回答的问题」里的每一条。
-- Design 不进 Loop,完成标准写成「哪些问题已有结论」,不需要 `验证：` 命令。
+- Design 的完成标准写成「哪些问题已有结论」,不需要 `验证：` 命令;能进 Loop 的写法见下面「Design 在 Loop 里」。
 - Research 不需要 `验证：` 命令;能进 Loop 的写法见下面「Research 在 Loop 里」。
 
 ### Research 在 Loop 里
@@ -169,6 +165,20 @@ Task、Tech Governance、Operations 等旧类型不再新建。存量的按内�
 - 后续工作起草成 Feature、Bug 工单放进 Backlog,用 `relates` 链接回调研工单,不打 `auto`、不设优先级,等人批准(见「从 Backlog 到 Todo」)。
 
 要联网、要读外部系统(自建 GitLab、网页文档)、要人操作才能回答的,不要打 `auto`,人来做。
+
+### Design 在 Loop 里
+
+只要本地读代码、对比方案就能定下来的 Design,可以打 `auto` 交给 Loop(项目配置里 `design` 段打开才会领)。写法同 Research,Loop 的预检要求:
+
+- 「要回答的问题」是编号列表(1. 2. 3.),条数不超过 `maxCriteria`。
+- 「背景与约束」有内容。
+- 「结论」还没写:空着,或只有一个括号说明。
+
+流程同 Research:设计会话只读,对比备选方案并给出推荐 → 独立 QA 核对 → 发布 → 直接 Done,不经过 In Review。报告建成「设计」目录下的文档并挂到工单,「结论」逐条回答问题,后续工作起草成 Feature、Bug 放进 Backlog。要人拍板、要联网或要人操作才能定的设计,不要打 `auto`。
+
+### Plan 里声明调研节点
+
+功能需求的执行图里,节点可以写 `"role": "research"`,让只读的调研会话先回答一个问题,结论(完整报告)交给依赖它的开发节点。调研节点的 `goal` 写要回答的问题,`verify` 可以不写。只允许 `research`:写 `design` 或 `qa` 预检不通过(QA 节点由 Loop 追加)。调研节点计入规划节点上限 8 和节点总数上限 12。
 
 ### 验收标准(Feature、Bug)
 
@@ -247,10 +257,9 @@ Loop 的「找任务」节点在 Todo 里没有能领的单时,会自己从 Back
 
 下面的规则是目标,代码或流程还没做到。不要把它们当作已经成立,也不要让别人以为有机制保证:
 
-| 规则                             | 现状                                                                          | 跟踪    |
-| -------------------------------- | ----------------------------------------------------------------------------- | ------- |
-| 进 Todo 和打 `auto` 必须由人确认 | 规划节点从代码上做不到;但人和其他 agent 推进时,Loop 不检查是谁推进的,全靠约定 | CYC-375 |
-| Loop 页面里整批批准待批准的工单  | 还没做,先在 itsaplan 里按 `待批准` 筛出来逐张批准                             | CYC-451 |
+| 规则                             | 现状                                                                                                                                                            | 跟踪    |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| 进 Todo 和打 `auto` 必须由人确认 | Loop 页面的批准要人在确认框里点确认(CYC-375、CYC-451);但人和其他 agent 直接在 itsaplan 推进时,Loop 不检查是谁推进的,全靠约定;Loop 接口也还接受运营 agent 的批准 | CYC-553 |
 
 这些改动在 `cloud/loop/`,属于大档,要走 intent / spec / design / plan。落地后,把对应行从这张表删掉,并改相关小节的措辞。
 

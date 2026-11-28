@@ -35,7 +35,9 @@ The gate does not enforce them.
 - A choice that runs without asking, like a mode that never asks for approval, is taken by a press, never by an
   arrow key that happens to land on it, and carries an attention/warning cue so it is never mistaken for safe.
 - A list whose rows can be added, removed or reordered is keyed by an id, not by its index.
-- Text has 4.5:1 against what is behind it, and a control's edge, focus ring and state fill 3:1, in both themes.
+- Text has 4.5:1 against what is behind it, and a control's edge, focus ring and state fill 3:1, in both themes. Two
+  edges are let off, each by the owner's word (DESIGN.md §1.1): the main input box's, and an outline button's in dark
+  (`--cycle-button-border`: its words and fill say it is a button; it is an input's edge again under `prefers-contrast: more`).
   jsdom cannot measure colour: measure in the browser (the gallery) when a token changes.
 - A choice list never shows a bare "Default" or "Recommended": it names the choice and marks it ("Auto (default)").
 - Form dialogs submit on Enter (`<form onSubmit>`), autofocus the first input, and place Cancel on the left of the

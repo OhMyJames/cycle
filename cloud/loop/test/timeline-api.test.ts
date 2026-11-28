@@ -72,6 +72,9 @@ const node = (id: string, position: number, over: Partial<TaskNode> = {}): TaskN
   id,
   position,
   origin: "planned",
+  role: "dev",
+  verdict: null,
+  report: null,
   title: `Node ${id}`,
   goal: `Goal ${id}`,
   dependsOn: [],
@@ -266,6 +269,36 @@ describe("loop/timeline/list (CYC-534)", () => {
     const serialized = JSON.stringify(parsed);
     expect(serialized).not.toContain("/secret/local/");
     expect(logs[0]).toBe("loop api loop/timeline/list entries=3 hasMore=false");
+  });
+
+  test("a QA node is a qa step and its session is not listed twice", async () => {
+    store.transaction((tx) => {
+      tx.put(run("CYC-520", { phase: "delivering", qaSessionId: "sess-qa-520" }));
+      tx.saveGraph(
+        graphOf("CYC-520", [
+          node("n1", 0, { sessionId: "sess-dev-520", status: "passed" }),
+          node("qa-1", 1, {
+            role: "qa",
+            sessionId: "sess-qa-520",
+            status: "passed",
+            verdict: "pass",
+            dependsOn: ["n1"],
+          }),
+        ]),
+      );
+    });
+    const parsed = LoopTimelineListResultSchema.parse(
+      await handler.call(LOOP_TIMELINE_LIST, { project: "CYC" }),
+    );
+    const entry = parsed.entries.find((e) => e.id === "run:CYC-520");
+    if (entry?.entryKind !== "run") throw new Error("expected a run entry");
+    expect(entry.steps.map((x) => [x.role, x.sessionId])).toEqual([
+      ["dev", "sess-dev-520"],
+      ["qa", "sess-qa-520"],
+    ]);
+    // QA nodes are not progress: the summary counts the Dev node only.
+    expect(entry.graph?.total).toBe(1);
+    expect(entry.graph?.passed).toBe(1);
   });
 
   test("paginates deterministically with limit and before cursor (including tied updatedAt)", async () => {

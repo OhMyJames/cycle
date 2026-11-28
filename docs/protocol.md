@@ -60,13 +60,15 @@ ACP 方法和类型已对照 `@agentclientprotocol/sdk` 2.7.0 的 v2 稳定版 J
   "sessionMentions": true,
   "search": true,
   "terminal": true,
-  "selfUpdate": true
+  "selfUpdate": true,
+  "selfUpdateDrain": true
 }
 ```
 
 - **旧 daemon 的降级**:远程 daemon 可能比客户端旧。`sessionOps` 里没有 `markRead` 的 daemon,客户端不发 `_cycle/session/mark_read`;它的列表里没有 `updatedAt`、`cycle/unread`、`cycle/background`,客户端按"缺失"处理,不得报错,也不得把缺失当成 `false` 或 0 以外的意思(规则见 §6)。
 
-- **daemon 自更新的状态(`_cycle/daemon/update/read`,CYC-538)**:`{}` → `{version, updates, pending?}`。`version` 是这个 daemon 自己的版本;`updates` 是 `"on"`(装在可以自己更新的位置,会定时查发布通道)或 `"off"`(从源码运行、装在应用包里、关掉了,或没有内置公钥);`pending` 只在已下载、校验好、等着空闲时切换的新版本存在,形如 `{version}`。daemon 的 `cycle/capabilities` 有 `selfUpdate: true` 时才有这个方法;没有的(旧 daemon)客户端当作没有待装版本。Loop 在领新单前读它:有 `pending` 就不领新单,已在进行的 run 照常(docs/daemon.md "自动更新")。daemon 切换版本就是一次停止和启动:连接断开,客户端照常重连到新版本。
+- **daemon 自更新的状态(`_cycle/daemon/update/read`,CYC-538)**:`{}` → `{version, updates, pending?}`。`version` 是这个 daemon 自己的版本;`updates` 是 `"on"`(装在可以自己更新的位置,会定时查发布通道)或 `"off"`(从源码运行、装在应用包里、关掉了,或没有内置公钥);`pending` 只在已下载、校验好、等着切换的新版本存在,形如 `{version, state?, since?, forceAt?}`(CYC-547):`state` 是 `"waiting"`(等空档:没有回合在跑且安静 15 秒就切换)或 `"draining"`(排空:不再开新回合,新 prompt 一律入队,见 §8);`since` 是进入该阶段的时间(ISO 8601、UTC);`forceAt` 只在 `draining` 时有,是预计兜底(按 `cycle update --now` 打断并切换)的时间。三个字段都可选,旧客户端忽略,没有 `state` 的按 `waiting` 看待。daemon 的 `cycle/capabilities` 有 `selfUpdate: true` 时才有这个方法;没有的(旧 daemon)客户端当作没有待装版本。Loop 在领新单前读它:有 `pending` 就不领新单,已在进行的 run 照常(docs/daemon.md "自动更新")。daemon 切换版本就是一次停止和启动:连接断开,客户端照常重连到新版本。
+- **更新通知(`_cycle/daemon/update`,CYC-547)**:daemon → 客户端,参数同 `_cycle/daemon/update/read` 的结果。阶段变化(新版本就绪、进入 `draining`、切换没成功回到旧版本因而没有 `pending`)时发。切换成功时旧 daemon 已关闭、连接断开,新 daemon 不广播:客户端重连后用 `read` 重读,没有 `pending` 就是切换完成。只发给在 `initialize` 的 `_meta["cycle/updateNotify"]` 里为 `true` 的客户端;能力 `selfUpdateDrain: true` 表示 daemon 支持上面的字段和这条通知。新客户端读旧 daemon(没有 `selfUpdateDrain`)时不会有这些字段,也不会收到通知,按 `read` 的结果或没有待装版本处理;旧客户端读新 daemon 时忽略不认识的字段,不会收到通知。
 - 桌面端在 `initialize` 的 `_meta["cycle/appVersion"]` 里报自己的版本,格式 `x.y.z`,其他格式不记。daemon 把最近一次报来的写进数据目录的 `app-version`,`cycle update` 默认装这个版本。别的客户端不发。
 - 客户端在 `initialize` 的 `capabilities.elicitation.form` 里声明自己能回答表单式的提问(见 §9)。不声明就不会收到 `elicitation/create`。
 - 每个 agent 能收什么样的 prompt 内容、能不能带 MCP 服务器等,不在这里:daemon 的 `initialize` 不依赖具体 agent,放在 `_cycle/agents/list`(§10)。
@@ -439,14 +441,18 @@ session 不是 `idle` 时(`running` 或 `requires_action`),`session/prompt` 不�
   "entries": [{ "queueId": "…", "prompt": [{ "type": "text", "text": "…" }] }],
   "returnId": "…",
   "returned": [{ "queueId": "…", "prompt": [] }],
-  "reason": "cancelled"
+  "reason": "cancelled",
+  "hold": "update"
 }
 ```
+
+`hold` 可选(CYC-547),只有 `"update"` 一个值:daemon 正在为更新排空,这个队列是因为它扣着不开新回合而排的(§3 `draining`)。没有这个字段(旧 daemon、没有扣着)的快照照常解析。队列里每一条也可带 `hold: "update"`,标出哪几条是等更新而排的(排空之前就在队列里的没有),重启后只有这几条自动发出。
 
 - **`entries` 是状态,`returned` 是事件。** 客户端以最后一条的 `entries` 为当前队列,所以从任意位置补发都能得到它。`returned` 和 `reason` 只在队列被退回的那一条里出现,daemon 只交给最早完成附着且仍在线的一个客户端。客户端**只在它实时到达时**(`replay_complete` 之后)把内容放回输入框;补发过程中遇到的 `returned` 一律忽略,否则重启应用后每次历史里的退回都会再放一遍。
 - **附件字节**照决策 0013 存进 blob(daemon 的提取是递归的,覆盖快照里的 `entries[].prompt[]` 和 `returned[].prompt[]`),同一份内容按 sha256 只存一次,快照反复出现不会反复占用空间。
 - **发出**:turn 以 `idle` 加 `stopReason: "end_turn"` 结束时,daemon 取队头发给 agent,再发一条新的 `_cycle/queue_update`。它的 `user_message` 和直接发的 prompt 一样,来自 agent 收到时的回显(Claude 适配会发),所以也是此时才进历史,历史里的顺序就是真实发生的顺序。
 - **退回,不自动发**:turn 以 `end_turn` 之外的原因结束(`cancelled`、`error`、`max_tokens`、`max_turn_requests`、`refusal`),或者 `session/cancel`、`session/close` 到达时,队列里剩下的**整体退回**:`entries` 清空,原内容放在 `returned`,`reason` 说明原因(`cancelled`、`error`、`closed`、`interrupted`)。客户端把 `returned` 的内容放回输入框,不当作错误显示。宁可退回,也不在用户已经叫停或出错之后替他发出他可能想改的消息。
+- **唯一的例外:等更新而排的消息自动发出(CYC-547)。** daemon 为更新排空时(§3),新 prompt 入队并标 `hold: "update"`。这些消息在切换后由新 daemon 自动发出,不退回:对有这种消息的会话,按 §7 启动 agent、`session/resume`,发第一条,其余照上面"发出"的规则一条接一条,不需要客户端附着。理由:排空是 daemon 自己的决定,用户没有叫停什么,界面事先说了"重启后发出"。切换没成功、回到旧版本时,旧 daemon 同样发出。只有这一种:兜底打断的回合不重放,排空之前就在队列里的消息,重启后照旧以 `interrupted` 退回。
 - **退回时没有客户端附着**(窗口都关了),或者 **daemon 重启**(进程被中断,没有机会退回):daemon 不退回,也不自动发送,队列留着。下一次有客户端附着时,daemon 在补发、`replay_complete` 和状态快照**之后**退回:原因照旧(重启则是 `interrupted`)。队列清空的快照占新的序号，领取通知单独发送。daemon 自己关闭时杀掉 agent 进程,不算退回的理由。
 - 排队退回时,多个客户端附着:先完成附着的客户端领取一批，原发送者断线不影响领取。新客户端握手声明 `_meta["cycle/ackReturns"]`，将退回的内容放入草稿后调用 `_cycle/prompt/ack_return {sessionId, returnId}`。daemon 将确认写入日志并返回 `{acknowledged: true}`；重复确认或来自其他连接的确认返回 `false`。未确认前掉线则转交下一位，重启后仍可领。领取通知没有 seq，普通队列快照照常广播；重放不触发领取。旧客户端按通知送达确认。丢失确认时可能重投，客户端用 queueId 去重。
 - **撤回**:`_cycle/prompt/dequeue`(客户端 → daemon),参数 `{sessionId, queueId}`。成功时响应里带那条 prompt 的内容(`{prompt}`),客户端放回输入框编辑,并发一条 `_cycle/queue_update`。那条已经发出或不在队列里,以 `-32016`(`not_queued`)拒绝。
@@ -736,7 +742,7 @@ Claude 的取法:每个 turn 结束时 Stop hook 的 `session_crons` 是进程�
 - `{read: {startLine, numLines, totalLines?}}`:从第几行起读了几行,文件共几行。
 - `{search: {files, matches?, lines?, more?}}`:找到几个文件,按匹配数或行数计时带上那个数;`more` 为 `true` 是可能还有(被截断、超时、到了上限)。
 - `{fetch: {status, bytes?}}`:取一个网页:HTTP 状态码和取到的字节数。
-- `{run: {interrupted?, timedOutMs?, background?, exitCode?}}`:命令没有照常跑完时怎么了:被中断;超过时限(毫秒)后转到后台;在后台运行(自己要求的、被转过去的);失败时的退出码。照常跑完是 `{run: {}}`。
+- `{run: {interrupted?, timedOutMs?, background?, exitCode?, durationMs?}}`:命令没有照常跑完时怎么了:被中断;超过时限(毫秒)后转到后台;在后台运行(自己要求的、被转过去的);失败时的退出码。另有 `durationMs`:命令实际跑了多久(毫秒,非负整数),只在 agent 给了原生耗时时填,缺省表示未知(不是 0),客户端不据此推断。照常跑完且没有耗时是 `{run: {}}`。
 
 网页搜索的结果是 ACP 自己的 `resource_link` 内容项(`uri` 和标题 `name`,不带页面内容),模型在结果之间写的话是文字项,按出现的顺序。
 MCP 工具的 `title` 是给人看的名字("server · tool"),由 agent 写,客户端不解析工具名。
@@ -1300,20 +1306,20 @@ Loop 页顶部的 Notice 区由桌面主进程从两处派生,不依赖 Loop 服
 
 桌面端和运营 agent 之后只调这组方法,itsaplan 只在 Loop 内部对接一处,不再解析评论、不再写死标签名。决定见 [2026-11-26-loop-api-is-the-only-way-in](../.agents/notes/2026-11-26-loop-api-is-the-only-way-in.md)。**本节取代上文"服务不访问 itsaplan""工单状态按钮(桌面端写 itsaplan)""Notice(桌面端派生)"三处**:桌面端改用这组方法由下一张单做,在那之前它们仍是桌面端现在的行为。`projects/list`、`runs/list`、`events/list` 保持原名;新方法在 `loop/` 下,`loop/projects/list` 与 `projects/list` 同。schema 在 `loop.ts`,每个返回都按它校验。
 
-| 方法                 | 参数                                                                       | 返回                                                       |
-| -------------------- | -------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `loop/projects/list` | 无                                                                         | `{projects}`                                               |
-| `loop/board/get`     | `{project}`                                                                | `{project, columns, stale, readAt}`                        |
-| `loop/runs/list`     | `{project, filter?: {state?}}`                                             | `{project, runs}`                                          |
-| `loop/run/get`       | `{project, key}`                                                           | 阶段、轮次、会话 `{kind,id}`、PR、最近 50 条事件、心跳     |
-| `loop/notices/list`  | `{project?}`                                                               | `{notices}`                                                |
-| `loop/ticket/get`    | `{project, key}`                                                           | 单张工单的详情(见下)                                       |
-| `loop/tickets/act`   | `{project, verb, keys[], reason?, confirmed, actor, actorKind}`            | `{results}`                                                |
-| `loop/intents/retry` | `{project, id?, key?, actor, actorKind}`                                   | `{retried}`(重新排队的 intent 数)                          |
-| `loop/graph/act`     | `{project, key, nodeId, action, title?, goal?, verify?, actor, actorKind}` | `{key, nodeId, action, phase, graph}`                      |
-| `loop/run/cancel`    | `{project, key, actor, actorKind}`                                         | `{cancelled}`                                              |
-| `loop/timeline/list` | `{project, limit?, before?}`                                               | `{project, entries, hasMore, nextBefore, knownSessionIds}` |
-| `loop/status`        | 无                                                                         | `{version, restartedAt, projects}`                         |
+| 方法                 | 参数                                                                               | 返回                                                       |
+| -------------------- | ---------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `loop/projects/list` | 无                                                                                 | `{projects}`                                               |
+| `loop/board/get`     | `{project}`                                                                        | `{project, columns, stale, readAt}`                        |
+| `loop/runs/list`     | `{project, filter?: {state?}}`                                                     | `{project, runs}`                                          |
+| `loop/run/get`       | `{project, key}`                                                                   | 阶段、轮次、会话 `{kind,id}`、PR、最近 50 条事件、心跳     |
+| `loop/notices/list`  | `{project?}`                                                                       | `{notices}`                                                |
+| `loop/ticket/get`    | `{project, key}`                                                                   | 单张工单的详情(见下)                                       |
+| `loop/tickets/act`   | `{project, verb, keys[], reason?, confirmed, actor, actorKind}`                    | `{results}`                                                |
+| `loop/intents/retry` | `{project, id?, key?, actor, actorKind}`                                           | `{retried}`(重新排队的 intent 数)                          |
+| `loop/graph/act`     | `{project, key, nodeId, action, title?, goal?, verify?, actor, actorKind, roles?}` | `{key, nodeId, action, phase, graph}`                      |
+| `loop/run/cancel`    | `{project, key, actor, actorKind}`                                                 | `{cancelled}`                                              |
+| `loop/timeline/list` | `{project, limit?, before?}`                                                       | `{project, entries, hasMore, nextBefore, knownSessionIds}` |
+| `loop/status`        | 无                                                                                 | `{version, restartedAt, projects}`                         |
 
 - **看板**:server 用 `planKey` 读 itsaplan,列按 stateType(backlog、unstarted、started、completed、canceled)再按看板顺序;完成和取消的列只取最近 30 张。卡片有编号、标题、类型名、优先级、标签名、`parent`(父工单 `{key, title}`,取自 `list_issues` 的 `parent`,无父工单为 `null`,旧 server 可不带该字段)、`pendingReason`(带 `待批准` 的卡,取最新评论首行,最多 20 张、140 字,读不到为 `null`)、`phase`(只对 started 列里有未完成 run 的卡,`{name, since}` 取自 run 的 `phase` 和 `updatedAt`,不读 tracker 自定义字段;心跳在 `run/get` 和 `stuck` Notice 里用)。缓存 15 秒;读失败时返回上一次的结果并标 `stale: true`(`readAt` 仍是上次成功的时间);第一次就失败返回 `-32603`,`data.reason` 为 `tracker_unreachable`。
 - **run**:`state` 为 `active`/`blocked`/`done`;`filter.state` 过滤。`run/get` 的会话是 `{kind, id}`(kind:`dev`、`qa`、`review`、`research`、`research_qa`、`triage`、`shape`、`shape_qa`),run 不存在返回 `-32602`,`data.reason` 为 `unknown_run`。桌面端工单抽屉读 `loop/run/get` 展示运行工作流、轮次、心跳、全部会话入口与最近事件,并在 `active` 时提供经确认的「取消本轮」(`loop/run/cancel`)。
@@ -1326,8 +1332,8 @@ Loop 页顶部的 Notice 区由桌面主进程从两处派生,不依赖 Loop 服
   - `acceptance`:正文里 `## 验收标准`(或 `## Acceptance criteria`)一节的各条;`links`:正文和 development 链接里的 PR/MR 地址,只要 https。
   - `attention` 只取 Loop 自己的记录,不解析评论:Blocked 列且 Loop 有该工单 `blocked` 的 run 时为 `{kind: "blocked", text: <原因>, session: {kind,id}|null}`;In Review 列且 `notices` 表里有 `review` 类 Notice(同上文的寿命规则)时为 `{kind: "review", text, prUrl: string|null}`(若较早的已升级 `done` run 未写入 `review` Notice 但 `reviewCommented` 为非 `merge` 结论,仍返回 `{kind: "review", text: "", prUrl}` 以便展示 PR 链接与待评审进度)。Loop 没有记录的(例如人手动移到 Blocked 的)不给 `attention`。
   - 标签和列按名字、stateType 每次从 `get_project` 解析。工单不存在返回 `-32602`,`data.reason` 为 `not_found`;读不到 itsaplan 返回 `-32603`,`data.reason` 为 `tracker_unreachable`。
-- **二级 Task Graph(CYC-512)**:一级工单(run)内部的执行图,依据 CYC-507 与 [边界笔记](../.agents/notes/2026-11-26-loop-work-item-and-task-graph-boundary.md),数据来自 `run_graphs` / `graph_nodes`。卡片可带 `graph` 摘要 `{source, total, passed, failed, blocked, running, currentNodeId, currentNodeTitle}`;`loop/ticket/get` 与 `loop/run/get` 可带完整 `graph`:`{runKey, source, revision, currentNodeId, nodes, createdAt, updatedAt}`,节点按 `position`(拓扑序)排列,字段 `id、position、origin、title、goal、dependsOn、filesHint、verify、status、sessionId、commitSha、rounds、lastError、summary、startedAt、finishedAt`。run 没有执行图时三处都**省略** `graph`。
-  - **`loop/graph/act`**:`action` 为 `retry_node`、`skip_node`、`edit_node`,其余值 `-32602`(`invalid_params`)。`key` 是一级工单号,`nodeId` 是节点 id。需要 `actor`、`actorKind`(缺则 `actor_required`)。
+- **二级 Task Graph(CYC-512)**:一级工单(run)内部的执行图,依据 CYC-507 与 [边界笔记](../.agents/notes/2026-11-26-loop-work-item-and-task-graph-boundary.md),数据来自 `run_graphs` / `graph_nodes`。卡片可带 `graph` 摘要 `{source, total, passed, failed, blocked, running, currentNodeId, currentNodeTitle}`;`loop/ticket/get` 与 `loop/run/get` 可带完整 `graph`:`{runKey, source, revision, currentNodeId, nodes, createdAt, updatedAt}`,节点按 `position`(拓扑序)排列,字段 `id、position、origin、role、title、goal、dependsOn、filesHint、verify、status、sessionId、commitSha、rounds、lastError、summary、verdict、report、startedAt、finishedAt`。`role`(CYC-542、CYC-545,可选)为 `dev`、`qa`、`research` 或 `design`,缺省按 `dev`;`research`、`design` 是只读节点(不改代码、不打提交),产出写在 `summary` 和 `report`,它们的 `verify` 可以为空数组;`loop/run/get` 与 `loop/ticket/get` 的请求参数加可选 `roles: string[]`,表示客户端认识的角色:没带 `roles`,或没包含 `research` / `design` 时,返回的图里去掉这些节点,其他节点的 `dependsOn` 里也去掉它们的 id,摘要计数按去掉后的节点算,被去掉的正是当前节点时 `currentNodeId`、`currentNodeTitle` 为 `null`(旧客户端因此照常解析);`verdict`(可选)为 `pass`、`fail` 或 `null`:Dev 节点为 `null`,QA 节点执行完才有,`status` 仍只表示这次执行是否完成(QA 给出可用结论就是 `passed`,不论通过与否);`report`(可选)是 QA 结论原文,只出现在 `loop/run/get` 与 `loop/ticket/get` 的完整节点里,卡片摘要不带。QA 节点的 `origin` 取 `planned` 或 `fix`(看它跟在哪类 Dev 节点后面),取值不变,旧客户端读到的新字段会被忽略。run 没有执行图时三处都**省略** `graph`。
+  - **`loop/graph/act`**:`action` 为 `retry_node`、`skip_node`、`edit_node`,可选 `roles` 同 `loop/run/get`。非 dev 运行(调研、设计)的阻塞节点重试或跳过后,运行回到该节点的阶段(调研节点 `research`,QA 节点 `research_qa`),不是 `graph_plan`。其余值 `-32602`(`invalid_params`)。`key` 是一级工单号,`nodeId` 是节点 id。需要 `actor`、`actorKind`(缺则 `actor_required`)。
     - `retry_node`:只允许 `blocked`、`failed` 节点;节点重置为 `pending`,`rounds = 0`、`lastError = null`、`sessionId = null`。
     - `skip_node`:只允许 `blocked`、`failed` 节点;节点标为 `skipped`。
     - `edit_node`:只允许 `pending`、`blocked`、`failed` 节点(`running`、`passed`、`skipped` 不可改);可改 `title`、`goal`、`verify`,至少给一个;`verify` 的每条必须通过 `parseVerify` 白名单。

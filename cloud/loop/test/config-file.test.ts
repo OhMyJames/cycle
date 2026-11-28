@@ -424,3 +424,76 @@ test("model and effort per role are optional, and a blank one is refused", () =>
         `invalid ${name}`,
       );
 });
+
+test("prReview is off when left out, and a bad value names the field", () => {
+  expect(parseConfigFile(JSON.stringify(full)).prReview).toBeUndefined();
+  expect(parseConfigFile(JSON.stringify({ ...full, prReview: {} })).prReview).toEqual({
+    enabled: false,
+    maxReviewsPerPr: 5,
+  });
+  expect(
+    parseConfigFile(JSON.stringify({ ...full, prReview: { enabled: true } })).prReview,
+  ).toEqual({ enabled: true, maxReviewsPerPr: 5 });
+  expect(() =>
+    parseConfigFile(JSON.stringify({ ...full, prReview: { enabled: true, maxReviewsPerPr: 0 } })),
+  ).toThrow("prReview.maxReviewsPerPr");
+  expect(() => parseConfigFile(JSON.stringify({ ...full, prReview: { enabled: "yes" } }))).toThrow(
+    "prReview.enabled",
+  );
+});
+
+test("design config: off by default, defaults to the Design type and the 设计 folder", () => {
+  expect(parseConfigFile(JSON.stringify(full)).design).toBeUndefined();
+  expect(
+    parseConfigFile(JSON.stringify({ ...full, design: { enabled: false } })).design?.enabled,
+  ).toBe(false);
+  const on = parseConfigFile(JSON.stringify({ ...full, design: { enabled: true } })).design;
+  expect(on).toMatchObject({ enabled: true, type: "Design", folder: "设计", maxFollowups: 5 });
+  expect(on?.readRoots).toHaveLength(1);
+});
+
+test("design config: bad values are named", () => {
+  const roots = (readRoots: string[]) =>
+    parseConfigFile(JSON.stringify({ ...full, design: { enabled: true, readRoots } }));
+  expect(() => roots(["rel/dir"])).toThrow("design.readRoots must be absolute");
+  expect(() => roots([])).toThrow("design.readRoots");
+  expect(() =>
+    parseConfigFile(JSON.stringify({ ...full, design: { enabled: true, maxFollowups: -1 } })),
+  ).toThrow("design.maxFollowups");
+  expect(() =>
+    parseConfigFile(JSON.stringify({ ...full, design: { enabled: true, typo: 1 } })),
+  ).toThrow("design");
+  expect(() => parseConfigFile(JSON.stringify({ ...full, design: {} }))).toThrow("design.enabled");
+});
+
+test("design on: the Design type is taken and its folder resolved; off, it is not", () => {
+  const p = project(allColumns);
+  p.data.issueTypes.push({ id: 24, name: "Design" });
+  const designDocs = [...documents, { id: 12, title: "设计", parentId: null }];
+  const names2 = { type: "Design", folder: "设计", documents: designDocs };
+  const off = resolveProject(p, names);
+  expect(off.allowedTypeIds).toEqual([1, 2]);
+  expect(off.design).toBeNull();
+  const on = resolveProject(p, names, undefined, undefined, names2);
+  expect(on.allowedTypeIds).toEqual([1, 2, 24]);
+  expect(on.design).toEqual({ typeId: 24, backlogColumn: 30, folderId: 12 });
+  expect(() => resolveProject(p, names, undefined, undefined, { ...names2, documents })).toThrow(
+    'project X: no document named "设计"',
+  );
+  expect(() => resolveProject(project(allColumns), names, undefined, undefined, names2)).toThrow(
+    'no issue type named "Design"',
+  );
+});
+
+test("daemonUpdateHoldMinutes: defaults to 10, accepts 0–60, rejects the rest naming the field", () => {
+  expect(parseConfigFiles(JSON.stringify(base))[0]?.daemonUpdateHoldMinutes).toBe(10);
+  for (const n of [0, 60])
+    expect(
+      parseConfigFiles(JSON.stringify({ ...base, daemonUpdateHoldMinutes: n }))[0]
+        ?.daemonUpdateHoldMinutes,
+    ).toBe(n);
+  for (const bad of [-1, 61, 1.5, "10"])
+    expect(() =>
+      parseConfigFiles(JSON.stringify({ ...base, daemonUpdateHoldMinutes: bad })),
+    ).toThrow("daemonUpdateHoldMinutes");
+});

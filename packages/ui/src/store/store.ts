@@ -24,7 +24,7 @@ import { LocationsSlice } from "./locations.ts";
 import { LoopSlice } from "./loop.ts";
 import { PluginsSlice } from "./plugins.ts";
 import { ProvidersSlice } from "./providers.ts";
-import { SessionsSlice } from "./sessions.ts";
+import { SessionsSlice, type SessionTarget } from "./sessions.ts";
 import { BLANK_KEY, viewKey } from "./state.ts";
 import { TerminalsSlice } from "./terminals.ts";
 import { VaultSlice } from "./vault.ts";
@@ -197,6 +197,15 @@ export class AppStore extends StoreBase {
       case "plan-usage":
         this.#locations.planUsageTold(event);
         return;
+      case "daemon-update":
+        this.set((s) => {
+          const { [event.locationId]: _gone, ...rest } = s.daemonDraining;
+          return {
+            daemonDraining:
+              event.draining === undefined ? rest : { ...rest, [event.locationId]: event.draining },
+          };
+        });
+        return;
       case "connectors":
         this.#connectors.changed(event.locationId);
         return;
@@ -325,14 +334,19 @@ export class AppStore extends StoreBase {
 
   focusSession = this.#sessions.focus;
   selectSession = this.#sessions.select;
+  openSessionView = this.#sessions.openView;
 
   /**
    * Sends what the box in view holds: the blank conversation's first message, which makes its session, or a message of
-   * the open session.
+   * the open session (or an explicitly targeted session, such as one opened in Timeline's right panel).
    */
-  send = async (options: { steer?: boolean; via?: SendVia } = {}): Promise<void> => {
-    const { blank } = this.getState();
-    if (blank !== undefined) return this.#blank.send(blank);
+  send = async (
+    options: { steer?: boolean; via?: SendVia; target?: SessionTarget } = {},
+  ): Promise<void> => {
+    if (options.target === undefined) {
+      const { blank } = this.getState();
+      if (blank !== undefined) return this.#blank.send(blank);
+    }
     return this.#sessions.send(options);
   };
 
@@ -385,13 +399,17 @@ export class AppStore extends StoreBase {
   loadLoopNotices = this.#loop.loadNotices;
   takeLoopRequest = this.#loop.takeRequest;
 
-  /** Shows the session a Notice names in place of the Loop page; false when no connected location has it. */
-  joinLoopSession = (sessionId: string): boolean => {
-    const found = Object.entries(this.getState().sessions)
+  /** Finds which location holds a non-archived session by id, or undefined when none has it. */
+  findLoopSessionLocation = (sessionId: string): string | undefined =>
+    Object.entries(this.getState().sessions)
       .flatMap(([locationId, list]) =>
         list.filter((x) => !x.archived && x.sessionId === sessionId).map(() => locationId),
       )
       .at(0);
+
+  /** Shows the session a Notice names in place of the Loop page; false when no connected location has it. */
+  joinLoopSession = (sessionId: string): boolean => {
+    const found = this.findLoopSessionLocation(sessionId);
     if (found === undefined) return false;
     this.set((s) => ({ focusRequests: s.focusRequests + 1 }));
     void this.focusSession(found, sessionId);

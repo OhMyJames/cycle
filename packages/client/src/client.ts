@@ -41,6 +41,7 @@ import {
   connectorsRemove,
   connectorsUpdate,
   type DaemonUpdateState,
+  DaemonUpdateStateSchema,
   daemonUpdateRead,
   diffFile,
   diffStatus,
@@ -201,6 +202,11 @@ export type ClientEvents = {
   connectorsChanged?: () => void;
   /** The owner's model providers were added, changed or removed: read them and the agents again (docs/protocol.md §10). */
   providersChanged?: () => void;
+  /**
+   * The daemon's update state changed: a phase began, or the switch is done (then `pending` is gone). Sent only to a
+   * client that says it takes it, which this one does when it has this handler (docs/protocol.md §3, CYC-547).
+   */
+  daemonUpdate?: (state: DaemonUpdateState) => void;
   /** An agent's plugins or their sources changed: list them again (docs/protocol.md §15). */
   pluginsChanged?: (agentId: string) => void;
   /** An agent's defaults were changed, here or by another client. */
@@ -250,6 +256,11 @@ export type ClientOptions = {
   appVersion?: string;
   /** Waits between attempts to reconnect, in ms. */
   backoff?: { first: number; max: number };
+  /**
+   * How long a prompt sent while the connection is being re-made waits for it, in ms (default 30 000). Past that the
+   * prompt fails as when not connected. A daemon switching to a new version is the usual reason (CYC-547).
+   */
+  promptWaitMs?: number;
   name?: string;
 };
 
@@ -491,6 +502,7 @@ export class CycleClient {
     content: ContentBlock[],
     options: { steer?: boolean; promptSuggestions?: boolean } = {},
   ): Promise<string> {
+    await this.#untilConnected(this.#options.promptWaitMs ?? 30_000);
     const meta = {
       ...(options.steer === true ? { [META.steer]: true } : {}),
       ...(options.promptSuggestions !== undefined
@@ -972,6 +984,22 @@ export class CycleClient {
     return (await this.#request(method.name, params)) as ResultOf<M>;
   }
 
+  /** While the connection is being re-made, waits for it, up to `ms`; in any other state returns at once. */
+  async #untilConnected(ms: number): Promise<void> {
+    if (this.#state !== "reconnecting") return;
+    const reconnecting = this.#reconnecting;
+    if (reconnecting === undefined) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, ms);
+    });
+    try {
+      await Promise.race([reconnecting, timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async #request(method: string, params: unknown): Promise<unknown> {
     return this.#api().request(method as never, params as never);
   }
@@ -1115,6 +1143,14 @@ export class CycleClient {
         () => this.#events.providersChanged?.(),
       )
       .onNotification(
+        NOTIFICATIONS.daemonUpdate,
+        (p: unknown) => p,
+        ({ params }) => {
+          const told = DaemonUpdateStateSchema.safeParse(params);
+          if (told.success) this.#events.daemonUpdate?.(told.data);
+        },
+      )
+      .onNotification(
         PLUGINS_CHANGED,
         (p: unknown) => p,
         ({ params }) => {
@@ -1136,6 +1172,7 @@ export class CycleClient {
         _meta: {
           [META.protocolVersion]: this.#options.protocolVersion ?? CYCLE_PROTOCOL_VERSION,
           ...(this.#options.ackReturns ? { [META.ackReturns]: true } : {}),
+          ...(this.#events.daemonUpdate !== undefined ? { [META.updateNotify]: true } : {}),
           ...(this.#options.appVersion !== undefined
             ? { [META.appVersion]: this.#options.appVersion }
             : {}),

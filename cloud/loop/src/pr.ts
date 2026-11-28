@@ -2,7 +2,7 @@ import type { Criterion } from "./criteria.ts";
 import { formatGraphTable, type TaskGraph } from "./graph.ts";
 import type { CiStatus, Forge, ReadCiStatusResult } from "./ports/forge.ts";
 import type { ReviewVerdict } from "./prompts/index.ts";
-import type { Clock, Issue } from "./types.ts";
+import type { Issue } from "./types.ts";
 
 export { DEFAULT_CI_CHECKS } from "./ports/forge.ts";
 
@@ -159,71 +159,54 @@ ${checks}
 `;
 };
 
-export type WaitForCiResult =
+export type ReadCiOnceResult =
   | { outcome: "passed"; status: CiStatus }
   | { outcome: "failed"; status: CiStatus; logs: string }
-  | { outcome: "timeout"; status: CiStatus | null }
+  | { outcome: "pending"; status: CiStatus }
   | { outcome: "conflict"; status: CiStatus }
   | { outcome: "error"; error: string };
 
 /**
- * Polls CI status until all required checks pass, any finishes red (and returns its failure logs), or timeout/error.
+ * Reads CI once (CYC-550): passed, failed (with the failure logs), conflict (still running, but the PR conflicts with
+ * its base) or pending. The dev step and the checker both call this, so they agree on whether CI is done.
  */
-export const waitForCi = async (input: {
+export const readCiOnce = async (input: {
   prRef: string;
   requiredChecks?: readonly string[] | undefined;
   expectedHeadSha?: string | undefined;
   forge: Forge;
   cwd: string;
   commandTimeoutMs: number;
-  pollIntervalMs: number;
-  timeoutMs: number;
-  clock: Clock;
-  sleep: (ms: number) => Promise<void>;
   /** Job links of a red attempt that was just rerun: while only these are red, the new attempt has not shown up yet. */
   staleFailedUrls?: ReadonlySet<string> | undefined;
-  /** Wraps each status read, so a caller can retry a failed one without restarting the wait (CYC-444). */
+  /** Wraps the status read, so a caller can retry a failed one (CYC-444). */
   guardRead?: (read: () => Promise<ReadCiStatusResult>) => Promise<ReadCiStatusResult>;
-}): Promise<WaitForCiResult> => {
-  const startedAt = input.clock.now().getTime();
-  const maxPolls =
-    input.pollIntervalMs > 0
-      ? Math.max(1, Math.ceil(input.timeoutMs / input.pollIntervalMs) + 1)
-      : 100;
-  let lastStatus: CiStatus | null = null;
-
-  for (let attempt = 0; attempt < maxPolls; attempt++) {
-    const at = { cwd: input.cwd, timeoutMs: input.commandTimeoutMs };
-    const poll = () =>
-      input.forge.ciStatus(at, input.prRef, input.expectedHeadSha, input.requiredChecks);
-    const read = await (input.guardRead ? input.guardRead(poll) : poll());
-    if (!read.ok) return { outcome: "error", error: read.error };
-    lastStatus = read.status;
-    if (read.status.state === "passed") return { outcome: "passed", status: read.status };
-    const stale = input.staleFailedUrls;
-    const onlyOldAttempt =
-      stale !== undefined &&
-      read.status.state === "failed" &&
-      read.status.failed.every((c) => c.detailsUrl !== null && stale.has(c.detailsUrl));
-    if (read.status.state === "failed" && !onlyOldAttempt) {
-      const logs = await input.forge.failedLogs(at, read.status.failed);
-      return { outcome: "failed", status: read.status, logs };
-    }
-    // GitHub runs no CI on a PR that conflicts with its base, so pending checks would never finish. UNKNOWN (not yet
-    // computed) and unreadable states keep waiting.
-    const merge = await input.forge.prMergeStatus(at, input.prRef);
-    if (merge.ok && merge.status === "conflicting") {
-      return { outcome: "conflict", status: read.status };
-    }
-    const elapsed = input.clock.now().getTime() - startedAt;
-    if (elapsed >= input.timeoutMs || attempt + 1 >= maxPolls) {
-      return { outcome: "timeout", status: lastStatus };
-    }
-    const remaining = Math.max(0, input.timeoutMs - elapsed);
-    await input.sleep(Math.min(input.pollIntervalMs, remaining));
+  /** The checker only needs to know that CI is done: it does not fetch the logs of a red run. */
+  withLogs?: boolean;
+}): Promise<ReadCiOnceResult> => {
+  const at = { cwd: input.cwd, timeoutMs: input.commandTimeoutMs };
+  const poll = () =>
+    input.forge.ciStatus(at, input.prRef, input.expectedHeadSha, input.requiredChecks);
+  const read = await (input.guardRead ? input.guardRead(poll) : poll());
+  if (!read.ok) return { outcome: "error", error: read.error };
+  if (read.status.state === "passed") return { outcome: "passed", status: read.status };
+  const stale = input.staleFailedUrls;
+  const onlyOldAttempt =
+    stale !== undefined &&
+    read.status.state === "failed" &&
+    read.status.failed.every((c) => c.detailsUrl !== null && stale.has(c.detailsUrl));
+  if (read.status.state === "failed" && !onlyOldAttempt) {
+    const logs =
+      input.withLogs === false ? "" : await input.forge.failedLogs(at, read.status.failed);
+    return { outcome: "failed", status: read.status, logs };
   }
-
-  return { outcome: "timeout", status: lastStatus };
+  // GitHub runs no CI on a PR that conflicts with its base, so pending checks would never finish. UNKNOWN (not yet
+  // computed) and unreadable states count as pending.
+  const merge = await input.forge.prMergeStatus(at, input.prRef);
+  if (merge.ok && merge.status === "conflicting") {
+    return { outcome: "conflict", status: read.status };
+  }
+  return { outcome: "pending", status: read.status };
 };
 
 /**

@@ -132,14 +132,16 @@ const durationText = (startIso: string | null, endIso: string | null): string | 
 
 export function LoopTimeline({
   projectKey,
+  activeSessionId,
   onOpenTicket,
   onOpenKanban,
-  onSessionOpened,
+  onOpenSession,
 }: {
   projectKey: string;
+  activeSessionId?: string | undefined;
   onOpenTicket: (identifier: string) => void;
   onOpenKanban: () => void;
-  onSessionOpened: (projectKey: string, sessionId: string) => void;
+  onOpenSession: (projectKey: string, locationId: string, sessionId: string) => void;
 }) {
   const { t } = useI18n();
   const store = useAppStore();
@@ -171,14 +173,14 @@ export function LoopTimeline({
   };
 
   const openSession = (sessionId: string, entryKind: "run" | "plan", role: SessionOriginRole) => {
-    const ok = store.joinLoopSession(sessionId);
-    if (!ok) {
+    const locationId = store.findLoopSessionLocation(sessionId);
+    if (locationId === undefined) {
       setMissingSession(true);
       return;
     }
     setMissingSession(false);
     store.track("loop_timeline_session_opened", { entry_kind: entryKind, role });
-    onSessionOpened(projectKey, sessionId);
+    onOpenSession(projectKey, locationId, sessionId);
   };
 
   const entries = typeof state === "object" && state.kind === "ok" ? state.entries : [];
@@ -353,6 +355,7 @@ export function LoopTimeline({
                       key={entry.id}
                       entry={entry}
                       expanded={isExpanded(entry)}
+                      activeSessionId={activeSessionId}
                       onToggle={() => toggleEntry(entry)}
                       onOpenTicket={onOpenTicket}
                       onOpenSession={(sessionId, role) => openSession(sessionId, "run", role)}
@@ -362,6 +365,7 @@ export function LoopTimeline({
                       key={entry.id}
                       entry={entry}
                       expanded={isExpanded(entry)}
+                      activeSessionId={activeSessionId}
                       onToggle={() => toggleEntry(entry)}
                       onOpenTicket={onOpenTicket}
                       onOpenSession={(sessionId, role) => openSession(sessionId, "plan", role)}
@@ -391,12 +395,14 @@ export function LoopTimeline({
 function RunTimelineCard({
   entry,
   expanded,
+  activeSessionId,
   onToggle,
   onOpenTicket,
   onOpenSession,
 }: {
   entry: LoopTimelineRunEntry;
   expanded: boolean;
+  activeSessionId?: string | undefined;
   onToggle: () => void;
   onOpenTicket: (identifier: string) => void;
   onOpenSession: (sessionId: string, role: SessionOriginRole) => void;
@@ -469,6 +475,7 @@ function RunTimelineCard({
             {asGraph ? (
               <TimelineDag
                 steps={graphSteps}
+                activeSessionId={activeSessionId}
                 tone={(status) => STEP_TONE[status]}
                 duration={(step) => durationText(step.startedAt, step.finishedAt)}
                 onOpenSession={(step) => onOpenSession(step.sessionId as string, step.role)}
@@ -511,6 +518,7 @@ function RunTimelineCard({
                         <button
                           type="button"
                           data-slot="loop-timeline-session-btn"
+                          data-active={step.sessionId === activeSessionId ? "" : undefined}
                           aria-label={t("loop.timeline.openSessionFor", {
                             target: showLabel ? step.label : roleLabel,
                           })}
@@ -535,12 +543,14 @@ function RunTimelineCard({
 function PlanTimelineCard({
   entry,
   expanded,
+  activeSessionId,
   onToggle,
   onOpenTicket,
   onOpenSession,
 }: {
   entry: LoopTimelinePlanEntry;
   expanded: boolean;
+  activeSessionId?: string | undefined;
   onToggle: () => void;
   onOpenTicket: (identifier: string) => void;
   onOpenSession: (sessionId: string, role: SessionOriginRole) => void;
@@ -611,6 +621,7 @@ function PlanTimelineCard({
                     <button
                       type="button"
                       data-slot="loop-timeline-session-btn"
+                      data-active={entry.triageSessionId === activeSessionId ? "" : undefined}
                       aria-label={t("loop.timeline.openSessionFor", {
                         target: t("loop.run.session.triage"),
                       })}
@@ -665,6 +676,7 @@ function PlanTimelineCard({
                           <button
                             type="button"
                             data-slot="loop-timeline-session-btn"
+                            data-active={item.shapeSessionId === activeSessionId ? "" : undefined}
                             aria-label={t("loop.timeline.openSessionFor", {
                               target: `${item.key} ${t("loop.run.session.shape")}`,
                             })}
@@ -678,6 +690,7 @@ function PlanTimelineCard({
                           <button
                             type="button"
                             data-slot="loop-timeline-session-btn"
+                            data-active={item.qaSessionId === activeSessionId ? "" : undefined}
                             aria-label={t("loop.timeline.openSessionFor", {
                               target: `${item.key} ${t("loop.run.session.shape_qa")}`,
                             })}

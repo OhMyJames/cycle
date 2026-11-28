@@ -1,10 +1,8 @@
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
-import { userEvent } from "vitest/browser";
 import type { StorageAgent, StorageCleanAnswer } from "../../src/api.ts";
-import { fakeBridge } from "../fake-bridge.ts";
 import { openSettings } from "./account-menu.ts";
-import { renderApp } from "./render-app.tsx";
+import { mountApp } from "./mount.tsx";
 
 afterEach(() => {
   cleanup();
@@ -27,19 +25,22 @@ const mount = async (
   storage: { agents: StorageAgent[]; cleanAnswer?: StorageCleanAnswer },
   capable = true,
 ) => {
-  const script = fakeBridge({
-    connected: true,
-    capabilities: { queue: true, files: true, folders: true, agentSetup: true, storage: capable },
-    storage,
-  });
-  script.bridge.agents = async () => [
-    { id: "claude", name: "Claude", available: true, configSchema: {} },
-  ];
-  await renderApp(script.bridge);
-  const user = userEvent.setup();
-  await openSettings(user);
-  await user.click(await screen.findByRole("tab", { name: "Claude" }));
-  return { user, ...script };
+  const app = await mountApp(
+    {
+      capabilities: { queue: true, files: true, folders: true, agentSetup: true, storage: capable },
+      storage,
+    },
+    {
+      configure: (script) => {
+        script.bridge.agents = async () => [
+          { id: "claude", name: "Claude", available: true, configSchema: {} },
+        ];
+      },
+    },
+  );
+  await openSettings(app.user);
+  await app.user.click(await screen.findByRole("tab", { name: "Claude" }));
+  return app;
 };
 
 const storageGroup = async () =>

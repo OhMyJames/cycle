@@ -82,7 +82,7 @@ Claude SDK 的类型只在适配器里;页面读的是 ACP 的字段(`name`、`k
 - **展示差异的根因在 L2→L1 的结构化字段不齐，不在界面。** 界面已按 ACP 字段加 `_meta["cycle/toolResult"]` 统一画命令、diff、读写行号、搜索计数、网页状态、子 agent 和计划;Claude 填得最齐,Codex 和 agy 有几处只给纯文本。
 - **只按字段画，不按 agent 名字分支。** ACP 已有语义的(`diff`、`locations`、`resource_link`、`rawInput`)在各适配里填齐，不另造扩展;只有数字和布尔的摘要进 `_meta["cycle/toolResult"]`(`edit`、`read`、`search`、`fetch`、`run`),不放内容文字;`_meta["cycle/stream"]` 标 stderr。缺字段只让对应信息不显示，不报错、不丢行。
 - **摘要的取法**(无 agent 特判):agent 写的目的句(`rawInput.description`)→ 只读命令的语义标签(Searched / Read / Listed)→ `command`、路径、`pattern`、`url`、`query` 中第一个非空的 → `locations[0].path` → 输入里第一行短文字 → ACP `title`。
-- **现状差距**(2026-11-27 核对代码):Codex 的 `fileChange` 只发纯文本 diff,没有 ACP `diff` 块和增删计数，进不了 Diff 标签;Codex 的 MCP 标题是 `server/tool`,结果是转义的 JSON;agy 读文件不填 `toolResult.read`,搜索不填 `toolResult.search`;Codex、agy 的命令输出不分 stdout 和 stderr;agy 的 `invoke_subagent` 只是普通工具行;命令耗时(Codex 原生有 `durationMs`)没进 L1。这几处由 CYC-516～521 跟踪。
+- **现状差距**(2026-11-27 核对代码):Codex 的 `fileChange` 已翻成每个文件一个 ACP `diff` 块加 `toolResult.edit` 增删计数(CYC-516),能进 Diff 标签;Codex 的 MCP 标题是 `server/tool`,结果是转义的 JSON;agy 读文件、搜索已分别填 `toolResult.read`(`startLine`、`numLines`、可选 `totalLines`)和 `toolResult.search`(`files`、可选 `matches`、`lines`、`more`),只在工具完成且数字齐全时填,取不到就不填(CYC-518);但 agy 真实的读文件、搜索 `rawOutput` 字段名**未验证**(仓库里没有真实样例,现按 `start_line`/`num_lines`/`total_lines` 和 `num_files`/`num_matches`/`num_lines`/`truncated` 假设取值),需用真实 agy 输出核对;Codex、agy 的命令输出不分 stdout 和 stderr;agy 的 `invoke_subagent` 只是普通工具行;命令耗时:Codex 的 `durationMs` 已填进 `toolResult.run.durationMs`(CYC-519),Claude、agy 暂无原生值、不填。这几处由 CYC-516～521 跟踪。
 
 ## 长内容和复制(现状,打算改的在 PR2、3)
 

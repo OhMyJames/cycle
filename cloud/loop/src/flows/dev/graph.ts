@@ -31,11 +31,14 @@ import {
   nodeDevBrief,
   nodeFixBrief,
   nodeHandoffBrief,
+  nodeResearchBrief,
+  nodeResearchFixBrief,
   parseProgress,
   parseQuestion,
 } from "../../prompts/index.ts";
 import type { RunPatch } from "../../store.ts";
 import { type Issue, SessionLost, type TurnResult } from "../../types.ts";
+import { checkResearch, parseResearch } from "../research/output.ts";
 import { type DevRun, type FlowHost, type Save, where } from "./context.ts";
 import { docTexts } from "./docs.ts";
 import { restoreNodeModules } from "./node-modules.ts";
@@ -72,12 +75,12 @@ const ensureNodeSession = async (
   if (node.sessionId !== null) return { graph, node, sessionId: node.sessionId };
   const { config } = h.d;
   const created = await h.d.sessions.create({
-    role: "dev",
+    role: node.role === "research" || node.role === "design" ? "research" : "dev",
     run: run.key,
     agent: config.devAgent,
     ...(config.devModel ? { model: config.devModel } : {}),
     ...(config.devEffort ? { effort: config.devEffort } : {}),
-    title: `[${run.key} · ${node.id}] Dev`,
+    title: `[${run.key} · ${node.id}] ${node.role === "research" ? "Research" : node.role === "design" ? "Design" : "Dev"}`,
     cwd: config.repoRoot,
     worktree: { base: config.baseRef, name: branchOf(issue.number) },
   });
@@ -236,10 +239,14 @@ export async function graphPlan(h: FlowHost, run: DevRun, issue: Issue, save: Sa
     nowIso,
     target.id,
   );
-  await save({ phase: "dev", dev: { activeNodeId: target.id } }, (tx) => {
-    tx.saveGraph(nextGraph);
-    postGraphReadyComment(tx, run, issue, nextGraph);
-  });
+  // A QA node (retried from the graph UI) is executed by the QA phase, never by a Dev session.
+  await save(
+    { phase: target.role === "qa" ? "qa" : "dev", dev: { activeNodeId: target.id } },
+    (tx) => {
+      tx.saveGraph(nextGraph);
+      postGraphReadyComment(tx, run, issue, nextGraph);
+    },
+  );
 }
 
 /**
@@ -256,7 +263,6 @@ export async function nodeDev(
   const { config, store, clock } = h.d;
   const worktree = h.need(run.worktree ?? undefined);
   const nodeId = h.need(run.dev.activeNodeId ?? undefined);
-  await restoreNodeModules(h, run, worktree, save);
 
   let graph = await store.loadGraph(run.key);
   if (graph === undefined) {
@@ -266,6 +272,11 @@ export async function nodeDev(
   if (node === undefined) {
     throw new Blocked(`执行图中不存在节点 ${nodeId}。`);
   }
+  if (node.role === "research" || node.role === "design") {
+    await readOnlyNode(h, run, issue, graph, node, save);
+    return;
+  }
+  await restoreNodeModules(h, run, worktree, save);
 
   let sessionId: string;
   ({ graph, node, sessionId } = await ensureNodeSession(h, run, issue, graph, node, save));
@@ -370,6 +381,130 @@ export async function nodeDev(
 }
 
 /**
+ * A read-only node (`research`; `design` for the single-node tickets): a read-only session on the shared worktree,
+ * checked by a snapshot before and after, its `<summary>` and `<report>` kept on the node. No `verify`, no checkpoint.
+ * A reply that fails the output rules is sent back in the same session; `rounds` counts them up to `maxFixRounds`.
+ */
+async function readOnlyNode(
+  h: FlowHost,
+  run: DevRun,
+  issue: Issue,
+  startGraph: TaskGraph,
+  startNode: TaskNode,
+  save: Save,
+): Promise<void> {
+  const { config, store, clock } = h.d;
+  const worktree = h.need(run.worktree ?? undefined);
+  const bounds = { readRoots: config.research?.readRoots ?? [] };
+  const { graph, node, sessionId } = await ensureNodeSession(
+    h,
+    run,
+    issue,
+    startGraph,
+    startNode,
+    save,
+  );
+
+  const prompt =
+    node.lastError !== null
+      ? nodeResearchFixBrief(node, node.rounds, node.lastError)
+      : nodeResearchBrief(issue, node, bounds);
+  const turnOptions = {
+    role: "research" as const,
+    worktree,
+    timeoutMs: config.turnTimeoutMs,
+    readRoots: bounds.readRoots,
+  };
+  const before = await h.snapshot(worktree);
+  const result = await h.turn(run.key, sessionId, prompt, turnOptions);
+  await store.event(run.key, "research_turn", {
+    round: run.round,
+    nodeId: node.id,
+    nodeRound: node.rounds,
+    stop: result.stopReason,
+  });
+  const after = await h.snapshot(worktree);
+  if (before !== after) {
+    throw new Blocked(
+      `调研节点 \`${node.id}\` 的会话修改了工作区（提交或文件状态变了），自动化不信任这次调研结果。`,
+    );
+  }
+  h.mustHaveEnded(`调研 (${node.id})`, result);
+
+  // The graph's research node has no ticket questions: its goal stands for them. Its follow-up drafts are ignored.
+  const output = { ...parseResearch(result.text), followups: [] };
+  const findings = checkResearch(output, [node.goal], {
+    maxCriteria: config.maxCriteria,
+    featureTypeId: config.featureTypeId,
+    bugTypeId: config.bugTypeId,
+    maxFollowups: 0,
+  });
+  const nowIso = clock.now().toISOString();
+  if (findings.length > 0) {
+    const errorText = `The loop's checks found:\n${findings.map((f) => `- ${f}`).join("\n")}`;
+    const nextRounds = node.rounds + 1;
+    await store.appendProgress(run.key, run.round, `[${node.id}] ${errorText}`);
+    if (nextRounds >= Math.max(1, config.maxFixRounds)) {
+      await store.saveGraph(
+        updateGraphNode(
+          graph,
+          node.id,
+          { status: "blocked", rounds: nextRounds, lastError: errorText },
+          nowIso,
+          node.id,
+        ),
+      );
+      await store.event(run.key, "graph_node_failed", {
+        nodeId: node.id,
+        rounds: nextRounds,
+        blocked: true,
+      });
+      throw new Blocked(
+        `调研节点 \`${node.id}\`（${node.title}）的产出检查失败 ${nextRounds} 次达到上限：\n${tail(errorText, 1200)}`,
+        "dev",
+      );
+    }
+    const retryGraph = updateGraphNode(
+      graph,
+      node.id,
+      { status: "running", rounds: nextRounds, lastError: errorText },
+      nowIso,
+      node.id,
+    );
+    await save({ phase: "dev" }, (tx) => {
+      tx.saveGraph(retryGraph);
+      tx.event(run.key, "graph_node_failed", {
+        nodeId: node.id,
+        rounds: nextRounds,
+        blocked: false,
+      });
+    });
+    return;
+  }
+
+  await store.appendProgress(
+    run.key,
+    run.round,
+    `[${node.id}] The reply passed the checks.\n\n${output.summary ?? ""}`,
+  );
+  const passed = updateGraphNode(
+    graph,
+    node.id,
+    {
+      status: "passed",
+      summary: output.summary ?? "",
+      report: output.report ?? "",
+      commitSha: null,
+      lastError: null,
+      finishedAt: nowIso,
+    },
+    nowIso,
+    null,
+  );
+  await advanceAfterPass(h, run, node, passed, save);
+}
+
+/**
  * Runs node-local verification commands for the active Task Node. On pass, records the checkpoint commit SHA and
  * advances to the next ready node, or transitions to whole-item `verify` (`activeNodeId = null`) once complete.
  */
@@ -454,7 +589,7 @@ export async function nodeVerify(h: FlowHost, run: DevRun, save: Save): Promise<
   const head = await h.d.workspace.head(where(h, worktree));
   const commitSha = head.ok ? head.sha : null;
 
-  let nextGraph = updateGraphNode(
+  const nextGraph = updateGraphNode(
     graph,
     node.id,
     {
@@ -467,6 +602,20 @@ export async function nodeVerify(h: FlowHost, run: DevRun, save: Save): Promise<
     null,
   );
 
+  await advanceAfterPass(h, run, node, nextGraph, save);
+}
+
+/** After a node passed: starts the next ready node, or enters whole-item verify when the graph is complete. */
+async function advanceAfterPass(
+  h: FlowHost,
+  run: DevRun,
+  node: TaskNode,
+  passedGraph: TaskGraph,
+  save: Save,
+): Promise<void> {
+  const { store, clock } = h.d;
+  const nowIso = clock.now().toISOString();
+  let nextGraph = passedGraph;
   const next = nextReadyNode(nextGraph);
   if (next !== undefined) {
     nextGraph = updateGraphNode(
@@ -476,7 +625,8 @@ export async function nodeVerify(h: FlowHost, run: DevRun, save: Save): Promise<
       nowIso,
       next.id,
     );
-    await save({ phase: "dev", findings: null, dev: { activeNodeId: next.id } }, (tx) => {
+    const phase = next.role === "qa" ? "qa" : "dev";
+    await save({ phase, findings: null, dev: { activeNodeId: next.id } }, (tx) => {
       tx.saveGraph(nextGraph);
       tx.event(run.key, "graph_node_passed", {
         nodeId: node.id,
@@ -516,14 +666,24 @@ export async function scheduleGraphFix(
     title: string;
     findings: string;
     verify?: string[];
+    /** The graph to append to, when the caller holds a newer one than the store (not yet saved). */
+    graph?: TaskGraph;
     save: Save;
     extraPatch?: RunPatch;
   },
 ): Promise<boolean> {
-  const graph = await h.d.store.loadGraph(run.key);
+  const graph = input.graph ?? (await h.d.store.loadGraph(run.key));
   if (graph === undefined) return false;
   const nowIso = h.d.clock.now().toISOString();
-  const appended = appendFixNode(graph, {
+  // An open QA node (a run resumed from `qa` that then failed whole-item verify) is superseded by the fix: skip it,
+  // so it is neither left unfinished nor picked up as a Dev node later.
+  const closed = graph.nodes
+    .filter((n) => n.role === "qa" && n.status !== "passed" && n.status !== "skipped")
+    .reduce(
+      (g, n) => updateGraphNode(g, n.id, { status: "skipped", finishedAt: nowIso }, nowIso),
+      graph,
+    );
+  const appended = appendFixNode(closed, {
     title: input.title,
     goal: input.findings,
     verify: input.verify ?? ["bun run check"],

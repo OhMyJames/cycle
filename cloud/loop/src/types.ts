@@ -190,6 +190,8 @@ export type Config = {
   maxVerifyRetries: number;
   /** A Blocked run waiting this many days gets one `blocked_stale` event; its worktree is kept. 0 turns it off (CYC-449). */
   blockedReminderDays: number;
+  /** Minutes to hold off new work items while a daemon update waits to switch, per pending version; 0 never holds (CYC-561). */
+  daemonUpdateHoldMinutes: number;
   /** Times a GitHub command is run again after a network error, before the loop waits instead (CYC-444). */
   maxNetworkRetries: number;
   /** Waits before each of those retries; the last entry is reused if there are fewer entries than retries. */
@@ -230,11 +232,26 @@ export type Config = {
     readRoots: string[];
     maxFollowups: number;
   } | null;
+  /** Design work items (CYC-545), or null when off: the same shape as `research`, with the design folder and type. */
+  design: {
+    typeId: number;
+    backlogColumn: number;
+    folderId: number;
+    readRoots: string[];
+    maxFollowups: number;
+  } | null;
   /**
    * The planning node (CYC-322), or null when the Project has not turned it on. Label, column and type ids are
    * resolved from the tracker at start; `templates` are the Feature and Bug issue templates' bodies, for the prompt.
    */
   planning: PlanningConfig | null;
+  /**
+   * Pull requests a person opened (CYC-540), or null when the Project has not turned the review of them on (the
+   * default). `maxReviewsPerPr` is how many commits of one pull request are reviewed before the loop stops.
+   */
+  prReview: { maxReviewsPerPr: number } | null;
+  /** `owner/name` of the repository the pull requests are on; null when it is not known. */
+  repoSlug: string | null;
 };
 
 export type PlanningConfig = {
@@ -302,6 +319,7 @@ export const defaultConfig = (
   maxQaRetries: 2,
   maxVerifyRetries: 1,
   blockedReminderDays: 7,
+  daemonUpdateHoldMinutes: 10,
   maxNetworkRetries: 3,
   networkRetryDelaysMs: [10_000, 30_000, 60_000],
   ciPollIntervalMs: 30_000,
@@ -317,7 +335,10 @@ export const defaultConfig = (
   fullFlowLabelId: null,
   docsBase: null,
   research: null,
+  design: null,
   planning: null,
+  prReview: null,
+  repoSlug: null,
   ...partial,
 });
 
@@ -381,8 +402,8 @@ export interface Sessions {
   /** Cancels an in-flight turn for `sessionId` when supported (CYC-484). */
   cancel?(sessionId: string): Promise<boolean>;
   /**
-   * Whether the daemon has a new version of itself waiting to switch to once idle (docs/protocol.md §3, CYC-538). The
-   * loop then takes no new work item, so the daemon gets to idle. False for a daemon that cannot say.
+   * The version the daemon has waiting to switch to once idle (docs/protocol.md §3, CYC-538), or null when none is
+   * waiting. The loop then takes no new work item, so the daemon gets to idle. Null for a daemon that cannot say.
    */
-  updatePending?(): Promise<boolean>;
+  updatePending?(): Promise<string | null>;
 }

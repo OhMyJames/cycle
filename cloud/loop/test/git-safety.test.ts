@@ -204,6 +204,7 @@ test("when a worktree tampers with shared .git/config, loop runs zero credential
       prUrl: null,
       ciRound: 0,
       ciFailedSha: null,
+      ciWait: null,
       nodeModulesReleased: false,
       conflictRound: 0,
       conflict: null,
@@ -306,9 +307,40 @@ test("delivery.git config tamper refuses push/fetch and emits Notice; clean deli
       .every((c) => c.argv.includes(deliveryRepo.dir)),
   ).toBe(true);
 
+  // A PR branch comes in through delivery.git with credentials; the local fetch has none.
+  expect((await ws.push({ cwd: repoRoot, timeoutMs: 15_000 }, "feat/pr")).code).toBe(0);
+  calls.length = 0;
+  const pulled = await ws.fetchPrBranch(
+    { cwd: repoRoot, timeoutMs: 15_000 },
+    "feat/pr",
+    "loop-pr/7",
+  );
+  expect(pulled.code).toBe(0);
+  const localPr = (
+    await runCommand(["git", "rev-parse", "refs/loop-pr/loop-pr/7"], {
+      cwd: repoRoot,
+      env: baseGitEnv(),
+      timeoutMs: 10_000,
+    })
+  ).output.trim();
+  expect(localPr).toBe(headSha);
+  const credPr = calls.filter((c) => c.env.GH_TOKEN !== undefined);
+  expect(credPr).toHaveLength(1);
+  expect(credPr[0]?.argv).toContain(deliveryRepo.dir);
+  expect(
+    (await ws.fetchPrBranch({ cwd: repoRoot, timeoutMs: 5_000 }, "--upload-pack=x", "loop-pr/8"))
+      .code,
+  ).toBe(1);
+
   // Tamper with delivery.git/config -> refused with Notice and zero credentialed git calls.
   calls.length = 0;
   await appendFile(deliveryRepo.configPath, "\n# tampered\n");
+  const blockedPr = await ws.fetchPrBranch(
+    { cwd: repoRoot, timeoutMs: 5_000 },
+    "feat/pr",
+    "loop-pr/9",
+  );
+  expect(blockedPr.code).toBe(1);
   const blockedPush = await ws.push({ cwd: repoRoot, timeoutMs: 10_000 }, "auto/cyc-99");
   expect(blockedPush.code).toBe(1);
   expect(notices.some((n) => n.includes("delivery.git"))).toBe(true);

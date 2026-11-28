@@ -16,6 +16,8 @@ export const enUS = {
 
   // Locations that are away, and starting a session on one of several
   "session.away": "{location} · {state}",
+  // Read by a screen reader on a session row that has an unsent draft
+  "session.hasDraft": "Unsent draft",
   "notice.connecting": "Connecting to {location}…",
   // Ends every line about a location that is not connected, on a page with a box: the box does not say it
   "notice.draftKept": "Your draft is kept.",
@@ -274,7 +276,6 @@ export const enUS = {
   "composer.continue.idle":
     "This session has been idle, so the next reply sends the whole conversation again at full cost.",
   "composer.continue.action": "Continue in new session",
-  "composer.continue.dismiss": "Dismiss hint",
   "composer.dropFiles": "Drop files to attach them",
   // The agent takes images only
   "composer.problem.type": "{name} is not a PNG, JPEG, GIF or WebP image.",
@@ -358,6 +359,10 @@ export const enUS = {
 
   // Messages sent while the agent works, waiting their turn
   "composer.queued.label": "Queued messages",
+  "composer.updating":
+    "Cycle is updating. It restarts when the running tasks end; messages sent now go out after the restart.",
+  "composer.updating.until":
+    "Cycle is updating. It restarts when the running tasks end, by {time} at the latest; messages sent now go out after the restart.",
   "composer.queued.tag": "Queued",
   "composer.queued.edit": "Edit queued message: {preview}",
   "composer.queued.editShort": "Edit",
@@ -452,6 +457,7 @@ export const enUS = {
   "tool.facts.exitCode": "exited with code {code}",
   "tool.facts.timedOut": "ran past {duration}, now in the background",
   "tool.facts.background": "in the background",
+  "tool.facts.took": "took {duration}",
   "session.dismissBackground": {
     one: "Mark 1 unconfirmed background task as ended",
     other: "Mark {count} unconfirmed background tasks as ended",
@@ -678,6 +684,10 @@ export const enUS = {
   "loop.timeline.error.body": "The Loop server did not answer with this project's progress.",
   "loop.timeline.loadMore": "Show more",
   "loop.timeline.openSession": "Open session",
+  "loop.timeline.sessionPanel": "Session",
+  "loop.timeline.sessionFailed": "Could not load the session",
+  "loop.timeline.openFullSession": "Open full session",
+  "loop.timeline.closeSession": "Close session panel",
   "loop.timeline.graph": "Task graph",
   "loop.timeline.waitsFor": "Waits for: {steps}.",
   "loop.timeline.openSessionFor": "Open {target}",
@@ -878,6 +888,12 @@ export const enUS = {
   "loop.graph.collapse": "Collapse node {title}",
   "loop.graph.goal": "Goal",
   "loop.graph.fix": "Fix",
+  "loop.graph.qaSession": "QA session",
+  "loop.graph.researchSession": "Research session",
+  "loop.graph.designSession": "Design session",
+  "loop.graph.verdict.pass": "Approved",
+  "loop.graph.verdict.fail": "Rejected",
+  "loop.graph.report": "QA report",
   "loop.graph.dependsOn": "Depends on",
   "loop.graph.filesHint": "Files",
   "loop.graph.commit": "Commit",

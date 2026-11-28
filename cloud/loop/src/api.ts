@@ -161,7 +161,7 @@ const runState = (run: RunRecord): LoopRunSummary["state"] =>
 const summaryOf = (run: RunRecord): LoopRunSummary => ({
   key: run.key,
   title: run.title,
-  kind: run.kind,
+  kind: run.kind === "design" ? "research" : run.kind,
   phase: run.phase,
   state: runState(run),
   round: run.round,
@@ -170,12 +170,16 @@ const summaryOf = (run: RunRecord): LoopRunSummary => ({
 });
 
 /** A graph in short: counts by status and the node the loop is at. */
-export const graphSummaryOf = (graph: TaskGraph): LoopGraphSummary => {
-  const count = (status: string) => graph.nodes.filter((n) => n.status === status).length;
+export const graphSummaryOf = (full: TaskGraph, roles?: readonly string[]): LoopGraphSummary => {
+  // Counts follow what the client can see: nodes of roles it does not know are left out.
+  const graph = graphOf(full, roles);
+  // Progress counts Dev nodes only: a QA node that rejects is itself `passed`, and QA rounds would inflate it.
+  const devNodes = graph.nodes.filter((n) => n.role !== "qa");
+  const count = (status: string) => devNodes.filter((n) => n.status === status).length;
   const current = graph.nodes.find((n) => n.id === graph.currentNodeId);
   return {
     source: graph.source,
-    total: graph.nodes.length,
+    total: devNodes.length,
     passed: count("passed"),
     failed: count("failed"),
     blocked: count("blocked"),
@@ -185,11 +189,31 @@ export const graphSummaryOf = (graph: TaskGraph): LoopGraphSummary => {
   };
 };
 
+/** Roles an older client does not know; it only gets nodes of these roles when it says it does. */
+const NEW_ROLES: ReadonlySet<string> = new Set(["research", "design"]);
+
+/** Summaries only carry counts and the current node's title, so they count every role. */
+const SUMMARY_ROLES: readonly string[] = ["research", "design"];
+
 /** The full graph as the API sends it: nodes in `position` order. */
-const graphOf = (graph: TaskGraph): LoopGraph => ({
-  ...graph,
-  nodes: [...graph.nodes].sort((a, b) => a.position - b.position),
-});
+const graphOf = (graph: TaskGraph, roles?: readonly string[]): LoopGraph => {
+  const known = (role: string) => !NEW_ROLES.has(role) || (roles?.includes(role) ?? false);
+  const dropped = new Set(graph.nodes.filter((n) => !known(n.role)).map((n) => n.id));
+  const nodes = graph.nodes
+    .filter((n) => !dropped.has(n.id))
+    .map((n) =>
+      n.dependsOn.some((d) => dropped.has(d))
+        ? { ...n, dependsOn: n.dependsOn.filter((d) => !dropped.has(d)) }
+        : n,
+    )
+    .sort((a, b) => a.position - b.position);
+  return {
+    ...graph,
+    currentNodeId:
+      graph.currentNodeId !== null && dropped.has(graph.currentNodeId) ? null : graph.currentNodeId,
+    nodes,
+  };
+};
 
 /** The sessions a run holds, with the role each plays. */
 export const sessionsOf = (run: RunRecord): LoopSessionRef[] => {
@@ -380,7 +404,7 @@ export class LoopApiHandler {
       case LOOP_RUN_GET: {
         const p = LoopRunGetParamsSchema.safeParse(params);
         if (!p.success) throw invalid("invalid_params");
-        return this.#run(this.#project(p.data.project), p.data.key);
+        return this.#run(this.#project(p.data.project), p.data.key, p.data.roles);
       }
       case LOOP_NOTICES_LIST: {
         const p = LoopNoticesListParamsSchema.safeParse(params ?? {});
@@ -394,7 +418,7 @@ export class LoopApiHandler {
       case LOOP_TICKET_GET: {
         const p = LoopTicketGetParamsSchema.safeParse(params);
         if (!p.success) throw invalid("invalid_params");
-        return this.#ticket(this.#project(p.data.project), p.data.key);
+        return this.#ticket(this.#project(p.data.project), p.data.key, p.data.roles);
       }
       case LOOP_TICKETS_ACT:
         return this.#act(params);
@@ -480,7 +504,7 @@ export class LoopApiHandler {
             run !== undefined && !finished(run) && column.stateType === "started"
               ? { name: run.phase, since: run.updatedAt }
               : null,
-          ...(graph === undefined ? {} : { graph: graphSummaryOf(graph) }),
+          ...(graph === undefined ? {} : { graph: graphSummaryOf(graph, SUMMARY_ROLES) }),
         });
       }
       columns.push({ id: column.id, name: column.name, stateType: column.stateType, cards });
@@ -495,7 +519,11 @@ export class LoopApiHandler {
 
   // ---- ticket/get ----
 
-  async #ticket(project: ProjectApi, key: string): Promise<LoopTicketDetail> {
+  async #ticket(
+    project: ProjectApi,
+    key: string,
+    roles?: readonly string[],
+  ): Promise<LoopTicketDetail> {
     const match = /^(.+)-(\d+)$/.exec(key);
     const prefix = prefixOf(project.projectKey);
     if (match === null || match[1]?.toLowerCase() !== prefix.toLowerCase())
@@ -533,7 +561,7 @@ export class LoopApiHandler {
       ...(attention === undefined ? {} : { attention }),
       acceptance: acceptanceOf(issue.description),
       links: linksOf(issue.development, issue.description),
-      ...(graph === undefined ? {} : { graph: graphOf(graph) }),
+      ...(graph === undefined ? {} : { graph: graphOf(graph, roles) }),
     };
   }
 
@@ -581,7 +609,7 @@ export class LoopApiHandler {
 
   // ---- runs ----
 
-  async #run(project: ProjectApi, key: string): Promise<LoopRunDetail> {
+  async #run(project: ProjectApi, key: string, roles?: readonly string[]): Promise<LoopRunDetail> {
     const run = await project.store.load(key);
     if (run === undefined) throw invalid("unknown_run");
     const db = sqlite(project.store);
@@ -600,7 +628,7 @@ export class LoopApiHandler {
       prUrl: run.kind === "dev" ? run.dev.prUrl : null,
       events,
       heartbeat: beat === undefined ? null : { at: beat.at, detail: beat.detail },
-      ...(graph === undefined ? {} : { graph: graphOf(graph) }),
+      ...(graph === undefined ? {} : { graph: graphOf(graph, roles) }),
     };
   }
 
@@ -661,7 +689,8 @@ export class LoopApiHandler {
         id: `${id}:notice:${n.id}`,
         project: id,
         kind,
-        key: n.runKey,
+        // A supervisor Notice is about the Project: its `run_key` is the project key, not a work item.
+        key: kind === "supervisor" ? null : n.runKey,
         session:
           session !== null && n.sessionId !== null ? { kind: session, id: n.sessionId } : null,
         text: n.text,
@@ -785,8 +814,11 @@ export class LoopApiHandler {
       });
       let phase: string = run.phase;
       if (run.phase === "blocked") {
-        phase = "graph_plan";
-        tx.save({ ...run, phase: "graph_plan", blockedReason: null, resumeFrom: null });
+        // Only dev runs have a graph_plan phase; research and design runs resume at the node's phase.
+        const resumed =
+          run.kind === "dev" ? "graph_plan" : node.role === "qa" ? "research_qa" : "research";
+        phase = resumed;
+        tx.save({ ...run, phase: resumed, blockedReason: null, resumeFrom: null });
       }
       tx.action(key, `graph_${action}`, {
         nodeId,
@@ -794,7 +826,7 @@ export class LoopApiHandler {
         actorKind,
         ...(fields.length > 0 ? { fields } : {}),
       });
-      return { key, nodeId, action, phase, graph: graphOf(saved) };
+      return { key, nodeId, action, phase, graph: graphOf(saved, p.data.roles) };
     });
     this.#boards.delete(project.projectKey);
     return result;
@@ -1033,7 +1065,7 @@ export class LoopApiHandler {
           steps.push({
             id: `node:${node.id}`,
             label: node.title,
-            role: "dev",
+            role: node.role === "design" ? "research" : node.role, // the timeline has no design role
             status: node.status,
             sessionId: node.sessionId,
             startedAt: node.startedAt,
@@ -1080,7 +1112,7 @@ export class LoopApiHandler {
         id: `run:${run.key}`,
         key: run.key,
         title: run.title,
-        kind: run.kind,
+        kind: run.kind === "design" ? "research" : run.kind,
         phase: run.phase,
         state: runState(run),
         round: run.round,
@@ -1088,7 +1120,7 @@ export class LoopApiHandler {
         updatedAt: run.updatedAt,
         prUrl: prUrlOf(run),
         blockedReason: run.blockedReason,
-        graph: graph === undefined ? null : graphSummaryOf(graph),
+        graph: graph === undefined ? null : graphSummaryOf(graph, SUMMARY_ROLES),
         steps,
       });
     }
@@ -1147,7 +1179,11 @@ export class LoopApiHandler {
         workers: p.workers,
         working: (await p.store.unfinished())
           .filter((r) => r.phase !== "blocked" && r.phase !== "done")
-          .map((r) => ({ key: r.key, kind: r.kind, phase: r.phase })),
+          .map((r) => ({
+            key: r.key,
+            kind: r.kind === "design" ? "research" : r.kind,
+            phase: r.phase,
+          })),
       })),
     );
     return {
