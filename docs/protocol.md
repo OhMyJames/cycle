@@ -736,7 +736,7 @@ Claude 的取法:每个 turn 结束时 Stop hook 的 `session_crons` 是进程�
 - `{read: {startLine, numLines, totalLines?}}`:从第几行起读了几行,文件共几行。
 - `{search: {files, matches?, lines?, more?}}`:找到几个文件,按匹配数或行数计时带上那个数;`more` 为 `true` 是可能还有(被截断、超时、到了上限)。
 - `{fetch: {status, bytes?}}`:取一个网页:HTTP 状态码和取到的字节数。
-- `{run: {interrupted?, timedOutMs?, background?, exitCode?}}`:命令没有照常跑完时怎么了:被中断;超过时限(毫秒)后转到后台;在后台运行(自己要求的、被转过去的);失败时的退出码。照常跑完是 `{run: {}}`。
+- `{run: {interrupted?, timedOutMs?, background?, exitCode?, durationMs?}}`:命令没有照常跑完时怎么了:被中断;超过时限(毫秒)后转到后台;在后台运行(自己要求的、被转过去的);失败时的退出码。另有 `durationMs`:命令实际跑了多久(毫秒,非负整数),只在 agent 给了原生耗时时填,缺省表示未知(不是 0),客户端不据此推断。照常跑完且没有耗时是 `{run: {}}`。
 
 网页搜索的结果是 ACP 自己的 `resource_link` 内容项(`uri` 和标题 `name`,不带页面内容),模型在结果之间写的话是文字项,按出现的顺序。
 MCP 工具的 `title` 是给人看的名字("server · tool"),由 agent 写,客户端不解析工具名。
