@@ -44,6 +44,9 @@ const setup = async (
     permission: "write",
     paths: opts.paths ?? ["src/a.ts"],
     prState: "OPEN" as "OPEN" | "MERGED",
+    // What the pull request looks like from the second read on (the merge-time recheck), set by a test.
+    laterHead: undefined as { isDraft?: boolean; baseBranch?: string; fails?: boolean } | undefined,
+    headReads: 0,
   };
   const calls: string[] = [];
   const comments: string[] = [];
@@ -53,13 +56,18 @@ const setup = async (
       calls.push("openPrs");
       return { ok: true, prs: state.prs };
     },
-    prHead: async (_a: unknown, ref: string) => ({
-      ok: true,
-      sha: headOf(Number(ref)),
-      state: state.prState,
-      isDraft: false,
-      baseBranch: "main",
-    }),
+    prHead: async (_a: unknown, ref: string) => {
+      state.headReads += 1;
+      const later = state.headReads > 1 ? state.laterHead : undefined;
+      if (later?.fails) return { ok: false, error: "boom" };
+      return {
+        ok: true,
+        sha: headOf(Number(ref)),
+        state: state.prState,
+        isDraft: later?.isDraft ?? false,
+        baseBranch: later?.baseBranch ?? "main",
+      };
+    },
     authorPermission: async () => {
       calls.push("permission");
       return { ok: true, permission: state.permission };
@@ -270,4 +278,50 @@ test("at the review cap one comment says so and the loop stops reviewing", async
   await t.pipeline.step();
   expect(t.comments.length).toBe(n);
   expect(t.sessions.created.length).toBe(1);
+});
+
+const MERGE_REVIEW = [{ text: REVIEW_MERGE, stopReason: "end_turn", timedOut: false }];
+
+test("a merge conclusion on a pull request turned into a draft is not merged; one comment says why", async () => {
+  const t = await setup({ review: MERGE_REVIEW });
+  t.state.laterHead = { isDraft: true };
+  const r = await t.pipeline.step();
+  expect(r).toEqual({ status: "pr_step", key: "pr:o/r#7", outcome: "merge-draft" });
+  expect(t.calls.some((c) => c.startsWith("merge"))).toBe(false);
+  // the review comment and exactly one explanation
+  expect(t.comments.length).toBe(2);
+  expect(t.comments.filter((c) => c.includes("PR 已是草稿")).length).toBe(1);
+  // not recorded as done: when it is ready again it is a new review of the same commit
+  t.state.laterHead = undefined;
+  t.advance(31_000);
+  expect((await t.pipeline.step()).status).toBe("pr_step");
+});
+
+test("a merge conclusion on a pull request moved to another base branch is not merged; one comment says why", async () => {
+  const t = await setup({ review: MERGE_REVIEW });
+  t.state.laterHead = { baseBranch: "release" };
+  const r = await t.pipeline.step();
+  expect(r).toEqual({ status: "pr_step", key: "pr:o/r#7", outcome: "merge-base" });
+  expect(t.calls.some((c) => c.startsWith("merge"))).toBe(false);
+  expect(t.comments.length).toBe(2);
+  expect(t.comments.filter((c) => c.includes("目标分支已不是 main")).length).toBe(1);
+});
+
+test("with draft and base branch unchanged the reviewed commit is merged; an unreadable pull request is retried, not refused", async () => {
+  const ok = await setup({ review: MERGE_REVIEW });
+  ok.state.laterHead = { isDraft: false, baseBranch: "main" };
+  expect(await ok.pipeline.step()).toEqual({
+    status: "pr_step",
+    key: "pr:o/r#7",
+    outcome: "merged",
+  });
+  expect(ok.calls).toContain(`merge 7 ${SHA_A}`);
+
+  const bad = await setup({ review: MERGE_REVIEW });
+  bad.state.laterHead = { fails: true };
+  const r = await bad.pipeline.step();
+  expect(r).toMatchObject({ status: "pr_step", outcome: "gate-unreadable" });
+  expect(bad.calls.some((c) => c.startsWith("merge"))).toBe(false);
+  expect(bad.comments.length).toBe(1);
+  expect(bad.store.waits("pr:o/r#7").length).toBe(1);
 });

@@ -25,6 +25,7 @@ const db = (store: LoopStore) => ({
     store.transaction((tx) => tx.findReviewTask(repo, pr, sha)),
   reviewTask: (repo: string, pr: number, sha: string, origin: string) =>
     store.transaction((tx) => tx.reviewTask(repo, pr, sha, origin)),
+  reopenReviewTask: (id: number) => store.transaction((tx) => tx.reopenReviewTask(id)),
   signal: (dedupe: string, subject: string, source: string) =>
     store.transaction((tx) => tx.signal(dedupe, subject, source)),
   clearWaits: (owner: string) => store.transaction((tx) => tx.clearWaits(owner)),
@@ -363,6 +364,10 @@ export class PrFlow {
           : undefined;
       if (changed !== undefined) {
         await store.event(key, "pr_merge_refused", { reason: changed.kind });
+        // The review of this commit is not kept as finished: once the pull request is back it is reviewed anew.
+        const slug = this.#slug();
+        const task = slug === null ? undefined : db(store).findReviewTask(slug, number, sha);
+        if (task !== undefined) db(store).reopenReviewTask(task.id);
         await commentOnce(
           h,
           input,
