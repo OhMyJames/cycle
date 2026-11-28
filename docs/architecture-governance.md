@@ -41,3 +41,5 @@ Codex 与 agy 曾以互不导入为由复制审批前缀函数。迁移前比较
 埋点门禁按 AST 的 typeOnly 信息检查页面导入。事件字典可以出现在类型位置，混合导入、重导出值、动态加载、相对路径直达 analytics 和直接加载 PostHog 都有回归覆盖。
 
 Electron 通知由 BackgroundNotifications 管理窗口检查、保活、释放与前台恢复。attention.ts 保留会话标题和目标，loop-alerts.ts 保留工单去重、暂缓重试及点击目标。两处均通过既有测试验证。
+
+设置页的二进制诊断共用 UnavailableBinary，空白页和设置页的安装提示来自同一函数。旧 daemon、加载失败和 sign-in 刷新仍由各自的页面负责。

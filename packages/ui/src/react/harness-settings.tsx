@@ -13,6 +13,7 @@ import type {
   LocationStatus,
 } from "../api.ts";
 import { useAgentSetup } from "./agent-setup.ts";
+import { UnavailableBinary } from "./agent-unavailable.tsx";
 import { ConfigForm, RuntimeConfigForm, type RuntimeFieldText } from "./config-form.tsx";
 import { StorageGroup } from "./harness-storage.tsx";
 import { useI18n } from "./i18n.tsx";
@@ -20,8 +21,6 @@ import { LocationScope } from "./location-scope.tsx";
 import { PageGroup, PageRow, PageRows } from "./page-layout.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
-
-const AGY_INSTALL_COMMAND = "curl -fsSL https://antigravity.google/cli/install.sh | bash";
 
 export type HarnessEntry = {
   id: string;
@@ -289,40 +288,20 @@ function HarnessLocationBody({
           }}
         />
       ) : snapshot !== undefined ? (
-        snapshot.binary.problem !== undefined ? (
-          <StateBlock
-            size="inline"
-            align="start"
-            tone="away"
-            title={
-              snapshot.binary.problem === "version_too_old"
-                ? t("settings.harness.unavailable.tooOld", {
-                    agent: agentName,
-                    version: snapshot.binary.version ?? "",
-                    location: location.name,
-                    minVersion: snapshot.binary.minVersion ?? "",
-                  })
-                : snapshot.binary.problem === "probe_failed"
-                  ? t("settings.harness.unavailable.probeFailed", {
-                      agent: agentName,
-                      location: location.name,
-                    })
-                  : t("settings.harness.unavailable.missing", {
-                      agent: agentName,
-                      location: location.name,
-                    })
-            }
-            reason={agentId === "agy" ? AGY_INSTALL_COMMAND : undefined}
-            action={{
-              label: refreshing
-                ? t("settings.harness.account.refreshing")
-                : t("settings.harness.account.refresh"),
-              onAction: () => {
-                if (!refreshing) void fetchSetup({ forceRefresh: true, refreshUsage: true });
-              },
-            }}
-          />
-        ) : null
+        <UnavailableBinary
+          binary={snapshot.binary}
+          agentId={agentId}
+          agentName={agentName}
+          locationName={location.name}
+          action={{
+            label: refreshing
+              ? t("settings.harness.account.refreshing")
+              : t("settings.harness.account.refresh"),
+            onAction: () => {
+              if (!refreshing) void fetchSetup({ forceRefresh: true, refreshUsage: true });
+            },
+          }}
+        />
       ) : null}
 
       {agentInfo !== undefined ? (

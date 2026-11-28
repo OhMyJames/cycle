@@ -13,6 +13,7 @@ import {
   type SignInModalState,
 } from "./agent-account-parts.tsx";
 import { useAgentSetup } from "./agent-setup.ts";
+import { UnavailableBinary } from "./agent-unavailable.tsx";
 import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import { LocationScope } from "./location-scope.tsx";
@@ -21,8 +22,6 @@ import { PlanUsageBars, planRowsOf } from "./plan-usage-bars.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { AGENT_AUTH_DOT, StatusDot } from "./status.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
-
-const AGY_INSTALL_COMMAND = "curl -fsSL https://antigravity.google/cli/install.sh | bash";
 
 const agentWord = (id: string): AgentWord =>
   id === "claude" || id === "codex" || id === "agy" || id === "pi" ? id : "other";
@@ -238,33 +237,13 @@ function SubscriptionGroup({
         ) : null
       ) : (
         <>
-          {snapshot.binary.problem !== undefined ? (
-            <StateBlock
-              size="inline"
-              align="start"
-              tone="away"
-              title={
-                snapshot.binary.problem === "version_too_old"
-                  ? t("settings.harness.unavailable.tooOld", {
-                      agent: agentName,
-                      version: snapshot.binary.version ?? "",
-                      location: location.name,
-                      minVersion: snapshot.binary.minVersion ?? "",
-                    })
-                  : snapshot.binary.problem === "probe_failed"
-                    ? t("settings.harness.unavailable.probeFailed", {
-                        agent: agentName,
-                        location: location.name,
-                      })
-                    : t("settings.harness.unavailable.missing", {
-                        agent: agentName,
-                        location: location.name,
-                      })
-              }
-              reason={agentId === "agy" ? AGY_INSTALL_COMMAND : undefined}
-              action={{ label: t("settings.harness.account.refresh"), onAction: retry }}
-            />
-          ) : null}
+          <UnavailableBinary
+            binary={snapshot.binary}
+            agentId={agentId}
+            agentName={agentName}
+            locationName={location.name}
+            action={{ label: t("settings.harness.account.refresh"), onAction: retry }}
+          />
           {loadError !== undefined ? (
             <StateBlock
               size="inline"
