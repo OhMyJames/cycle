@@ -104,7 +104,7 @@ flowchart TD
 | Epic     | 容器,有子项,自己不直接实现    | 否             |
 | Feature  | 要新增或改变一个能力          | 是(叶子)       |
 | Bug      | 已有行为不对                  | 是(叶子)       |
-| Design   | 产出一个设计或决定,不产出代码 | 否             |
+| Design   | 产出一个设计或决定,不产出代码 | 是(本地只读的) |
 | Research | 要回答一个问题,产出结论       | 是(本地只读的) |
 
 Task、Tech Governance、Operations 等旧类型不再新建。存量的按内容归到上面五种之一。
@@ -135,7 +135,7 @@ Task、Tech Governance、Operations 等旧类型不再新建。存量的按内�
 
 带 `完整流程` 标签的大档工单，在 `Plan` 文档的 `## 执行图`（或 `## Task Graph`）小节下用 fenced `json` 代码块声明结构化执行图（JSON 数组或 `{ "nodes": [...] }`）：
 
-- 每个节点字段：`id`（1–32 位小写字母、数字、`-` 或 `_`，禁止以 `fix-` 开头）、`title`、`goal`、`dependsOn`（前置节点 `id` 数组）、`filesHint`（预计改动路径数组）、`verify`（非空数组，每条为 Loop 允许的验证命令）。
+- 每个节点字段：`id`（1–32 位小写字母、数字、`-` 或 `_`，禁止以 `fix-` 开头）、`title`、`goal`、`dependsOn`（前置节点 `id` 数组）、`filesHint`（预计改动路径数组）、`verify`（开发节点必须非空，每条为 Loop 允许的验证命令；`role` 为 `research` 的节点可以为空），可选 `role`（只接受 `research`，不写为开发节点）。
 - 约束：规划节点上限 8 个（含整单失败时自动追加的 `fix-*` 修补节点总计上限 12 个）；必须为无环 DAG（无自依赖、无悬空依赖、无环）；每条 `verify` 必须通过命令白名单校验。
 - 兼容与小档：旧大档无 `## 执行图` / `## Task Graph` 小节时退化为 1 节点；小档工单按体量自适应走 1 节点快路径，或由只读 Planner 自动拆出 2–4 个节点执行。
 
@@ -151,7 +151,7 @@ Task、Tech Governance、Operations 等旧类型不再新建。存量的按内�
 
 - **Epic 的正文不列子工单。** 子项靠父子关系显示;正文里列了会随子项增减而过期。要表达先后,用 `blocks` 链接。
 - **Design 和 Research 做完后,回填「结论」小节**,不要往正文末尾追加。结论要回答「要回答的问题」里的每一条。
-- Design 不进 Loop,完成标准写成「哪些问题已有结论」,不需要 `验证：` 命令。
+- Design 的完成标准写成「哪些问题已有结论」,不需要 `验证：` 命令;能进 Loop 的写法见下面「Design 在 Loop 里」。
 - Research 不需要 `验证：` 命令;能进 Loop 的写法见下面「Research 在 Loop 里」。
 
 ### Research 在 Loop 里
@@ -169,6 +169,20 @@ Task、Tech Governance、Operations 等旧类型不再新建。存量的按内�
 - 后续工作起草成 Feature、Bug 工单放进 Backlog,用 `relates` 链接回调研工单,不打 `auto`、不设优先级,等人批准(见「从 Backlog 到 Todo」)。
 
 要联网、要读外部系统(自建 GitLab、网页文档)、要人操作才能回答的,不要打 `auto`,人来做。
+
+### Design 在 Loop 里
+
+只要本地读代码、对比方案就能定下来的 Design,可以打 `auto` 交给 Loop(项目配置里 `design` 段打开才会领)。写法同 Research,Loop 的预检要求:
+
+- 「要回答的问题」是编号列表(1. 2. 3.),条数不超过 `maxCriteria`。
+- 「背景与约束」有内容。
+- 「结论」还没写:空着,或只有一个括号说明。
+
+流程同 Research:设计会话只读,对比备选方案并给出推荐 → 独立 QA 核对 → 发布 → 直接 Done,不经过 In Review。报告建成「设计」目录下的文档并挂到工单,「结论」逐条回答问题,后续工作起草成 Feature、Bug 放进 Backlog。要人拍板、要联网或要人操作才能定的设计,不要打 `auto`。
+
+### Plan 里声明调研节点
+
+功能需求的执行图里,节点可以写 `"role": "research"`,让只读的调研会话先回答一个问题,结论(完整报告)交给依赖它的开发节点。调研节点的 `goal` 写要回答的问题,`verify` 可以不写。只允许 `research`:写 `design` 或 `qa` 预检不通过(QA 节点由 Loop 追加)。调研节点计入规划节点上限 8 和节点总数上限 12。
 
 ### 验收标准(Feature、Bug)
 
