@@ -428,6 +428,13 @@ const enableAutoMerge = async (input: {
   return { ok: true };
 };
 
+/**
+ * True when `error` (from `autoMerge(.., true)`) is GitHub refusing auto-merge because the pull request can already be
+ * merged now (`mergeStateStatus` CLEAN). Any other failure is false.
+ */
+export const isCleanStatusError = (error: string): boolean =>
+  /is in clean status/i.test(error) && error.includes("enablePullRequestAutoMerge");
+
 const AutoMergeViewSchema = z.object({ autoMergeRequest: z.unknown().nullable() });
 
 /**
