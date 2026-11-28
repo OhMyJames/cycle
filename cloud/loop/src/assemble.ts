@@ -2,12 +2,13 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { type ProjectApi, sessionOfId } from "./api.ts";
+import { LoopApiHandler, type ProjectApi, sessionOfId } from "./api.ts";
 import { type ConfigFile, readTuning } from "./config-file.ts";
 import { type ImportResult, importLegacyState, needsImport } from "./db/import.ts";
 import { openLoopStore, SqliteStore } from "./db/store.ts";
 import { deadlineFor, recordHeartbeat, WORKER_BEAT_KEY } from "./engine/heartbeat.ts";
 import { effectiveWorkers } from "./loop.ts";
+import { Operator } from "./operator/index.ts";
 import { Pipeline } from "./pipeline.ts";
 import { DEFAULT_TIMEOUT_MS, PlanTracker } from "./plan-mcp.ts";
 import {
@@ -40,7 +41,9 @@ export type SetUpOptions = {
 
 export type ProjectUnit = {
   name: string;
-  pipeline: Pick<Pipeline, "step" | "watch" | "intervalSeconds">;
+  pipeline: Pick<Pipeline, "watch" | "intervalSeconds"> & {
+    step: () => Promise<{ status: string }>;
+  };
   release: () => Promise<void>;
   close: () => Promise<void>;
   workers: number;
@@ -347,5 +350,28 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
       waitingOn: "idle",
       deadline: null,
     });
-  return { name, pipeline, release, close, workers, beat, api };
+  // The operator agent (CYC-486) takes the place of a worker's step when it is woken; one session at a time.
+  const operator = new Operator({
+    config,
+    project: api,
+    handler: new LoopApiHandler({
+      version: "operator",
+      startedAt: clock.now(),
+      now: clock.now,
+      log: () => {},
+      projects: [api],
+    }),
+    sessions,
+    now: clock.now,
+    log: plog,
+    stopped: o.stopped,
+  });
+  const stepped: ProjectUnit["pipeline"] = {
+    step: async () => ((await operator.tick()) ? { status: "operator" } : pipeline.step()),
+    watch: () => pipeline.watch(),
+    get intervalSeconds() {
+      return pipeline.intervalSeconds;
+    },
+  };
+  return { name, pipeline: stepped, release, close, workers, beat, api };
 };
