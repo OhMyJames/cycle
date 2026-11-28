@@ -45,3 +45,29 @@ test("HTTP 400/422/429, SSL certificate and proxy errors, and a bare EOF word ar
   expect(isNetworkError("gh pr view 超时。")).toBe(true);
   expect(isNetworkError("fatal: early EOF")).toBe(true);
 });
+
+test("a reasonless remote rejection is a network error (CYC-559)", () => {
+  expect(
+    isNetworkError(
+      "git push 失败：To https://github.com/OhMyJames/cycle\n ! [remote rejected]   67dc83e426dfda26de76abacfa2072de9f02c36c -> auto/cyc-526 (failed)\nerror: failed to push some refs to 'https://github.com/OhMyJames/cycle'",
+    ),
+  ).toBe(true);
+  expect(isNetworkError(" ! [remote rejected] HEAD -> auto/cyc-1 (Internal Server Error)")).toBe(
+    true,
+  );
+});
+
+test("a remote rejection with a stated reason is not a network error", () => {
+  for (const reason of [
+    "protected branch hook declined",
+    "pre-receive hook declined",
+    "refusing to allow an OAuth App to create or update workflow `.github/workflows/ci.yml` without `workflow` scope",
+    "push declined due to repository rule violations",
+    "secret scan blocked push",
+  ])
+    expect(
+      isNetworkError(
+        ` ! [remote rejected] HEAD -> auto/cyc-1 (${reason})\nerror: failed to push some refs to 'x'`,
+      ),
+    ).toBe(false);
+});

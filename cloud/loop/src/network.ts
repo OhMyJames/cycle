@@ -22,6 +22,8 @@ const NETWORK_PATTERNS: RegExp[] = [
   /(gh|git)\b[^\n]* 超时/,
   /returned error: 50[234]/i,
   /the remote end hung up unexpectedly/i,
+  // GitHub's occasional reasonless rejection of a good push (CYC-559); a rejection with a stated reason is not one.
+  /\[remote rejected\][^\n]*\((failed|internal server error)\)\s*$/im,
 ];
 
 // What an authentication or permission failure looks like; these win over a network-looking line such as
@@ -38,6 +40,8 @@ const NOT_NETWORK_PATTERNS: RegExp[] = [
   /couldn't find remote ref/i,
   /merge conflict/i,
   /\[rejected\]/,
+  // A remote rejection that states a reason (hook declined, protected branch, workflow scope, repository rules, secret scan).
+  /\[remote rejected\][^\n]*\((?!(failed|internal server error)\)\s*$)[^\n]*\)\s*$/im,
   /non-fast-forward/i,
 ];
 
