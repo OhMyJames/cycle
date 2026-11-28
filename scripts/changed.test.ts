@@ -16,6 +16,21 @@ describe("select", () => {
     });
   });
 
+  test("a nested workspace owns its files, including when its parent is listed first", () => {
+    const outer = { name: "outer", dir: "modules/outer", deps: [] };
+    const inner = { name: "inner", dir: "modules/outer/inner", deps: [] };
+    const consumer = { name: "consumer", dir: "apps/consumer", deps: ["inner"] };
+    for (const packages of [
+      [outer, inner, consumer],
+      [inner, outer, consumer],
+    ]) {
+      expect(select(["modules/outer/inner/src/index.ts"], packages)).toEqual({
+        full: false,
+        dirs: ["apps/consumer", "modules/outer/inner"],
+      });
+    }
+  });
+
   test("a leaf package selects only itself", () => {
     expect(select(["apps/desktop/src/a.ts"], pkgs)).toEqual({
       full: false,

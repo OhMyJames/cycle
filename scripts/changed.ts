@@ -28,8 +28,9 @@ export const triggersFull = (file: string): boolean => FULL.some((re) => re.test
 export function select(files: string[], pkgs: Pkg[]): Selection {
   if (files.some(triggersFull)) return { full: true };
   const hit = new Set<string>();
+  const deepestFirst = [...pkgs].sort((a, b) => b.dir.length - a.dir.length);
   for (const file of files) {
-    const owner = pkgs.find((p) => file.startsWith(`${p.dir}/`));
+    const owner = deepestFirst.find((p) => file.startsWith(`${p.dir}/`));
     if (owner) hit.add(owner.name);
   }
   // Add dependents, transitively.
