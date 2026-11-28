@@ -71,6 +71,8 @@ test("it waits while something the session started still runs in the background"
       ];
     },
   });
+  // The length has been counted (the ring says so), and still nothing is offered.
+  await screen.findByText("25%");
   await act(async () => {});
   expect(app.box).toBeTruthy();
   expect(hint()).toBeNull();

@@ -8,6 +8,7 @@ import { PendingRequest } from "./app-main.tsx";
 import { useMarkRead } from "./app-navigation.ts";
 import { Composer } from "./composer.tsx";
 import { mergeConfigSchema } from "./config-form.tsx";
+import { ContinueNotice } from "./continue-hint.tsx";
 import { ConversationView } from "./conversation.tsx";
 import { useI18n } from "./i18n.tsx";
 import { CloseIcon, ExpandIcon } from "./icons.tsx";
@@ -135,6 +136,17 @@ export function LoopSessionPanel({
         shows={view !== undefined ? "session" : "nothing"}
         errors={false}
       />
+      {view !== undefined ? (
+        <ContinueNotice
+          key={`continue:${key}`}
+          locationId={locationId}
+          sessionId={sessionId}
+          sessionKey={key}
+          idle={activity === "idle"}
+          connected={connected}
+          context={context}
+        />
+      ) : null}
       {view !== undefined ? (
         <>
           <ConversationView
