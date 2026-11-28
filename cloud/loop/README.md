@@ -22,7 +22,7 @@ bun cloud/loop/src/pipeline-cli.ts stats       # 自主完成率（只算 Loop �
 
 前提：Cycle daemon 在运行（`$CYCLE_HOME/daemon.sock`），`agy` 与 `claude` 已登录，`gh` 已登录，能推 `origin`。
 
-配置文件可选字段：`planUrl`、`autoLabel`（默认 `auto`）、`featureType`、`bugType`（默认 `Feature`、`Bug`，按名字在 `get_project` 里找类型 id）、`devAgent`、`qaAgent`、`reviewAgent`（默认 `claude`）。`devModel`、`qaModel`、`reviewModel`、`devEffort`、`qaEffort`、`reviewEffort`（可选，非空字符串）：按角色指定会话的模型和思考强度，创建会话后通过 `setConfig` 设置；省略表示沿用 agent 默认配置，空白串校验失败。必填项缺失时启动报错并指出缺哪一项。不再读 `AUTO_LOOP_*` 环境变量；`CYCLE_HOME`、`CYCLE_SOCKET` 仍用于找 daemon。`workers`（正整数，可选）：该 Project 的 worker 数，命令行 `--workers N` 优先，都没有为 1；写错时启动报错并指出是哪个 Project。改配置后重启生效。
+配置文件可选字段：`planUrl`、`autoLabel`（默认 `auto`）、`featureType`、`bugType`（默认 `Feature`、`Bug`，按名字在 `get_project` 里找类型 id）、`devAgent`、`qaAgent`、`reviewAgent`（默认 `claude`）。`devModel`、`qaModel`、`reviewModel`、`devEffort`、`qaEffort`、`reviewEffort`（可选，非空字符串）：按角色指定会话的模型和思考强度，创建会话后通过 `setConfig` 设置；省略表示沿用 agent 默认配置，空白串校验失败。必填项缺失时启动报错并指出缺哪一项。不再读 `AUTO_LOOP_*` 环境变量；`CYCLE_HOME`、`CYCLE_SOCKET` 仍用于找 daemon。`daemonUpdateHoldMinutes`（CYC-561，默认 10，范围 0–60 的整数，0 表示不等）：daemon 下载好新版本、等空闲再切换时，Loop 最多这么多分钟不领新单，超过就照常领单，daemon 等下一个空档再切。默认值比 daemon 的排空时间（`update.drainAfterMinutes`，15 分钟）短，所以 Loop 会在 daemon 排空之前恢复领单；超出范围或不是整数时启动报错并写明字段名。`workers`（正整数，可选）：该 Project 的 worker 数，命令行 `--workers N` 优先，都没有为 1；写错时启动报错并指出是哪个 Project。改配置后重启生效。
 
 ## 把旧状态导入 SQLite（CYC-476）
 

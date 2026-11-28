@@ -110,6 +110,7 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
   const config = {
     ...defaultConfig({ repoRoot: file.repoRoot, stateDir, ...setup }),
     docsBase: docsBaseOf(file.planUrl, file.projectKey),
+    daemonUpdateHoldMinutes: file.daemonUpdateHoldMinutes,
     ...(file.devAgent !== undefined ? { devAgent: file.devAgent } : {}),
     ...(file.qaAgent !== undefined ? { qaAgent: file.qaAgent } : {}),
     ...(file.reviewAgent !== undefined ? { reviewAgent: file.reviewAgent } : {}),

@@ -190,6 +190,8 @@ export type Config = {
   maxVerifyRetries: number;
   /** A Blocked run waiting this many days gets one `blocked_stale` event; its worktree is kept. 0 turns it off (CYC-449). */
   blockedReminderDays: number;
+  /** Minutes to hold off new work items while a daemon update waits to switch, per pending version; 0 never holds (CYC-561). */
+  daemonUpdateHoldMinutes: number;
   /** Times a GitHub command is run again after a network error, before the loop waits instead (CYC-444). */
   maxNetworkRetries: number;
   /** Waits before each of those retries; the last entry is reused if there are fewer entries than retries. */
@@ -317,6 +319,7 @@ export const defaultConfig = (
   maxQaRetries: 2,
   maxVerifyRetries: 1,
   blockedReminderDays: 7,
+  daemonUpdateHoldMinutes: 10,
   maxNetworkRetries: 3,
   networkRetryDelaysMs: [10_000, 30_000, 60_000],
   ciPollIntervalMs: 30_000,

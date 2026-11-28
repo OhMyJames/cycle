@@ -484,3 +484,16 @@ test("design on: the Design type is taken and its folder resolved; off, it is no
     'no issue type named "Design"',
   );
 });
+
+test("daemonUpdateHoldMinutes: defaults to 10, accepts 0–60, rejects the rest naming the field", () => {
+  expect(parseConfigFiles(JSON.stringify(base))[0]?.daemonUpdateHoldMinutes).toBe(10);
+  for (const n of [0, 60])
+    expect(
+      parseConfigFiles(JSON.stringify({ ...base, daemonUpdateHoldMinutes: n }))[0]
+        ?.daemonUpdateHoldMinutes,
+    ).toBe(n);
+  for (const bad of [-1, 61, 1.5, "10"])
+    expect(() =>
+      parseConfigFiles(JSON.stringify({ ...base, daemonUpdateHoldMinutes: bad })),
+    ).toThrow("daemonUpdateHoldMinutes");
+});

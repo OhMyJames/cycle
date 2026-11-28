@@ -167,6 +167,8 @@ export const ConfigFileSchema = z.object({
       forge: z.enum(["github", "gitlab"]).optional(),
     })
     .optional(),
+  /** Minutes the loop stops taking new work items while the daemon has a downloaded version waiting to switch (CYC-561). 0 means not at all. */
+  daemonUpdateHoldMinutes: whole(0, 60).default(10),
   /** Counts, timeouts and the idle interval (CYC-441). Read again before every step while the loop runs. */
   tuning: TuningSchema.optional(),
   research: ResearchSchema.optional(),
