@@ -615,6 +615,7 @@ describe("loop/ticket/get and the move verbs", () => {
   test("actions and chat by column, with and without auto", async () => {
     const cases: [number, number, number[], LoopTicketAction[], LoopTicketChat][] = [
       [70, 1, [], ["approve"], "new"],
+      [85, 1, [12], ["approve", "return"], "new"],
       [71, 2, [], ["to_backlog"], "new"],
       [72, 2, [11], ["to_backlog"], "none"],
       [73, 3, [], ["to_backlog", "to_todo"], "watch"],

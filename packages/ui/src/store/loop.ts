@@ -7,6 +7,7 @@ import type {
   LoopCancelRunResult,
   LoopChatResult,
   LoopGraphNodeAction,
+  LoopGraphNodeEdits,
   LoopManyAction,
   LoopManyItem,
   LoopManyResult,
@@ -225,25 +226,31 @@ export class LoopSlice {
     identifier: string,
     action: LoopAction,
     confirmed = false,
+    reason?: string,
   ): Promise<LoopActResult> => {
-    const result = await this.#kit.bridge
-      .loopAct(projectKey, identifier, action, confirmed)
-      .catch((): LoopActResult => ({ kind: "failed", reason: "offline" }));
+    const req =
+      reason !== undefined
+        ? this.#kit.bridge.loopAct(projectKey, identifier, action, confirmed, reason)
+        : this.#kit.bridge.loopAct(projectKey, identifier, action, confirmed);
+    const result = await req.catch((): LoopActResult => ({ kind: "failed", reason: "offline" }));
     if (result.kind === "ok")
       await Promise.all([this.loadBoard(projectKey), this.loadNotices(projectKey)]);
     return result;
   };
 
-  /** Retries or skips one graph node. A write that went through reads the board again. */
+  /** Retries, skips or edits one graph node. A write that went through reads the board again. */
   actOnGraph = async (
     projectKey: string,
     identifier: string,
     nodeId: string,
     action: LoopGraphNodeAction,
+    edits?: LoopGraphNodeEdits,
   ): Promise<LoopActResult> => {
-    const result = await this.#kit.bridge
-      .loopGraphAct(projectKey, identifier, nodeId, action)
-      .catch((): LoopActResult => ({ kind: "failed", reason: "offline" }));
+    const req =
+      edits !== undefined
+        ? this.#kit.bridge.loopGraphAct(projectKey, identifier, nodeId, action, edits)
+        : this.#kit.bridge.loopGraphAct(projectKey, identifier, nodeId, action);
+    const result = await req.catch((): LoopActResult => ({ kind: "failed", reason: "offline" }));
     if (result.kind === "ok")
       await Promise.all([this.loadBoard(projectKey), this.loadNotices(projectKey)]);
     return result;
@@ -296,8 +303,9 @@ export class LoopSlice {
   };
 
   /** Talk about a ticket with an agent: on success the new session is opened in place of the page. */
-  chat = async (projectKey: string, identifier: string): Promise<LoopChatResult> =>
-    this.#kit.bridge
-      .loopChat(projectKey, identifier)
-      .catch((): LoopChatResult => ({ kind: "failed", reason: "offline" }));
+  chat = async (projectKey: string, identifier: string, agent?: string): Promise<LoopChatResult> =>
+    (agent !== undefined
+      ? this.#kit.bridge.loopChat(projectKey, identifier, agent)
+      : this.#kit.bridge.loopChat(projectKey, identifier)
+    ).catch((): LoopChatResult => ({ kind: "failed", reason: "offline" }));
 }

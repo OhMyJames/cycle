@@ -2,6 +2,9 @@
 // answers (`loop/ticket/get`), with the buttons it allows (approve, back to Backlog, to Todo) and the conversation with
 // an agent. It opens at the right of the board without unmounting it, so the board's scroll, filters and picks stay.
 import { Button } from "@ui-sdk/react/button";
+import { Field, FieldLabel } from "@ui-sdk/react/field";
+import { Input } from "@ui-sdk/react/input";
+import { Menu, MenuContent, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "@ui-sdk/react/menu";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import type {
   LoopAction,
@@ -11,9 +14,16 @@ import type {
   LoopTicketDetail,
 } from "../api.ts";
 import { AgentLink } from "./agent-link.tsx";
-import { ConfirmDialog } from "./dialogs.tsx";
+import { ConfirmDialog, FormDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
-import { CheckIcon, CloseIcon, ErrorCircleIcon, MessageIcon, WarningIcon } from "./icons.tsx";
+import {
+  CheckIcon,
+  ChevronDownIcon,
+  CloseIcon,
+  ErrorCircleIcon,
+  MessageIcon,
+  WarningIcon,
+} from "./icons.tsx";
 import { ExecutionGraph } from "./loop-graph.tsx";
 import { PHASE_WORD, RunWorkflow } from "./loop-run.tsx";
 import { Markdown } from "./markdown.tsx";
@@ -46,6 +56,7 @@ export type Act = (
   ticket: Acted,
   action: LoopAction,
   confirmed?: boolean,
+  reason?: string,
 ) => Promise<string | undefined>;
 
 export function PriorityBadge({ priority }: { priority: string | null }) {
@@ -59,7 +70,7 @@ export function PriorityBadge({ priority }: { priority: string | null }) {
   );
 }
 
-/** The buttons of one ticket. Approving asks first; the others go ahead and report only a failure. */
+/** The buttons of one ticket. Approving confirms first; returning asks for an optional reason; the rest go ahead. */
 export function TicketActions({
   ticket,
   act,
@@ -76,7 +87,22 @@ export function TicketActions({
 }) {
   const { t } = useI18n();
   const [asking, setAsking] = useState(false);
-  if (ticket.actions.length === 0) return null;
+  const [returning, setReturning] = useState(false);
+  const [returnReason, setReturnReason] = useState("");
+  const [returnProblem, setReturnProblem] = useState<string | undefined>();
+  useEffect(() => {
+    void ticket.identifier;
+    setAsking(false);
+    setReturning(false);
+    setReturnReason("");
+    setReturnProblem(undefined);
+  }, [ticket.identifier]);
+  if (ticket.actions.length === 0 && !asking && !returning) return null;
+  const openReturn = () => {
+    setReturnReason("");
+    setReturnProblem(undefined);
+    setReturning(true);
+  };
   return (
     <span data-slot="loop-ticket-actions" data-surface={surface}>
       {ticket.actions.map((action) => {
@@ -93,7 +119,13 @@ export function TicketActions({
             disabled={busyAction !== undefined}
             data-busy={busy ? "" : undefined}
             aria-label={`${t(`loop.act.${action}`)} ${ticket.identifier}`}
-            onClick={() => (action === "approve" ? setAsking(true) : void act(ticket, action))}
+            onClick={() =>
+              action === "approve"
+                ? setAsking(true)
+                : action === "return"
+                  ? openReturn()
+                  : void act(ticket, action)
+            }
           >
             {action === "approve" && (surface === "drawer" || quick) ? (
               <CheckIcon size={12} />
@@ -112,6 +144,35 @@ export function TicketActions({
           confirmLabel={t("loop.act.approve")}
           onConfirm={() => act(ticket, "approve", true)}
         />
+      ) : null}
+      {returning ? (
+        <FormDialog
+          open
+          kind="loop-return"
+          title={t("loop.return.title", { id: ticket.identifier })}
+          description={t("loop.return.body")}
+          submitLabel={t("loop.act.return")}
+          problem={returnProblem}
+          onSubmit={async () => {
+            setReturnProblem(undefined);
+            const error = await act(ticket, "return", false, returnReason);
+            if (error !== undefined) {
+              setReturnProblem(error);
+              return false;
+            }
+            return true;
+          }}
+          onClose={() => setReturning(false)}
+        >
+          <Field name="reason">
+            <FieldLabel>{t("loop.return.reason")}</FieldLabel>
+            <Input
+              autoFocus
+              value={returnReason}
+              onChange={(event) => setReturnReason(event.currentTarget.value)}
+            />
+          </Field>
+        </FormDialog>
       ) : null}
     </span>
   );
@@ -151,6 +212,9 @@ function TicketChat({
 }) {
   const { t } = useI18n();
   const store = useAppStore();
+  const allLocalAgents = useAppState((s) => s.agents.local);
+  const localAgents = (allLocalAgents ?? []).filter((a) => a.available);
+  const [chosenAgent, setChosenAgent] = useState("auto");
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<LoopChatFailure | undefined>();
   const [orphan, setOrphan] = useState<{ locationId: string; sessionId: string } | undefined>();
@@ -161,11 +225,21 @@ function TicketChat({
         {t("loop.chat.watch")}
       </p>
     );
+  const selectedAgent =
+    chosenAgent !== "auto" && localAgents.some((a) => a.id === chosenAgent) ? chosenAgent : "auto";
+  const selectedLabel =
+    selectedAgent === "auto"
+      ? t("loop.chat.agentAuto")
+      : (localAgents.find((a) => a.id === selectedAgent)?.name ?? selectedAgent);
   const start = async () => {
     setBusy(true);
     setFailure(undefined);
     setOrphan(undefined);
-    const result = await store.chatAboutLoopTicket(projectKey, ticket.identifier);
+    const result = await store.chatAboutLoopTicket(
+      projectKey,
+      ticket.identifier,
+      selectedAgent === "auto" ? undefined : selectedAgent,
+    );
     setBusy(false);
     if (result.kind === "failed") {
       setFailure(result.reason);
@@ -188,6 +262,31 @@ function TicketChat({
         <MessageIcon size={14} />
         <span>{t("loop.chat.start")}</span>
       </Button>
+      {localAgents.length >= 2 ? (
+        <Menu>
+          <MenuTrigger
+            data-variant="outline"
+            data-kind="loop-chat-agent"
+            aria-label={`${t("loop.chat.agent")}: ${selectedLabel}`}
+            disabled={busy}
+          >
+            <span>{selectedLabel}</span>
+            <ChevronDownIcon size={12} />
+          </MenuTrigger>
+          <MenuContent>
+            <MenuRadioGroup value={selectedAgent} onValueChange={setChosenAgent}>
+              <MenuRadioItem value="auto" closeOnSelect>
+                {t("loop.chat.agentAuto")}
+              </MenuRadioItem>
+              {localAgents.map((a) => (
+                <MenuRadioItem key={a.id} value={a.id} closeOnSelect>
+                  {a.name}
+                </MenuRadioItem>
+              ))}
+            </MenuRadioGroup>
+          </MenuContent>
+        </Menu>
+      ) : null}
       {failure !== undefined ? (
         <p data-slot="loop-problem" data-kind="loop-chat-failure" role="alert">
           {t(`loop.chat.fail.${failure}`)}

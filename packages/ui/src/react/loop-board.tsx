@@ -487,17 +487,23 @@ export function Board({
     return () => window.removeEventListener("keydown", onKey, true);
   }, [active, picked.size, openIdentifier]);
 
-  const act: Act = async (ticket, action, confirmed) => {
+  const act: Act = async (ticket, action, confirmed, reason) => {
     const key = `${ticket.identifier}:${action}`;
     setProblem(undefined);
     setBusyAction(key);
     try {
-      const result = await store.actOnLoopTicket(projectKey, ticket.identifier, action, confirmed);
+      const result = await store.actOnLoopTicket(
+        projectKey,
+        ticket.identifier,
+        action,
+        confirmed,
+        reason,
+      );
       if (result.kind === "ok") {
         setVersion((v) => v + 1);
         return undefined;
       }
-      if (action !== "approve") setProblem(result.reason);
+      if (action !== "approve" && action !== "return") setProblem(result.reason);
       return t(`loop.fail.${result.reason}`);
     } finally {
       setBusyAction(undefined);

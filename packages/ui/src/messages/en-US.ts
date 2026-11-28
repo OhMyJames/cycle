@@ -700,11 +700,16 @@ export const enUS = {
   "loop.stage.done": "Done",
   "loop.more": "Show {count} more",
   "loop.act.approve": "Approve",
+  "loop.act.return": "Return",
   "loop.act.to_backlog": "Back to Backlog",
   "loop.act.to_todo": "Back to Todo",
   "loop.approve.title": "Approve {id}?",
   "loop.approve.body":
     "It moves to Todo and gets the auto label, so Loop can take it on its next round.",
+  "loop.return.title": "Return {id}?",
+  "loop.return.body":
+    "Removes awaiting approval and marks it to skip in Loop. You can leave a short reason.",
+  "loop.return.reason": "Reason (optional)",
   "loop.pending": "Awaiting approval",
   "loop.pending.all": "Select all",
   "loop.pending.pick": "Select",
@@ -727,15 +732,19 @@ export const enUS = {
   "loop.pending.note": "Planning summary",
   "loop.fail.not_allowed":
     "Nothing was changed: the ticket is no longer where it was. Read the board again.",
+  "loop.fail.invalid_verify":
+    "Nothing was changed: one of the verify commands is not on Loop's allowlist.",
   "loop.fail.offline":
     "Nothing was changed: itsaplan could not be reached. Check the connection and try again.",
   "loop.fail.refused": "Nothing was changed: itsaplan refused the change.",
   "loop.chat.start": "Talk with an agent",
+  "loop.chat.agent": "Agent",
+  "loop.chat.agentAuto": "Auto (default)",
   "loop.chat.openMade": "Open the conversation",
   "loop.chat.watch":
     "Loop is working on this ticket. You can read it here, but not change it with an agent.",
   "loop.chat.fail.needs_model":
-    "No default model is set for Codex. Set one in Settings, then try again.",
+    "No default model is set for this agent. Set one in Settings, then try again.",
   "loop.chat.fail.not_allowed":
     "This ticket is no longer in Backlog or Todo, so no conversation was started.",
   "loop.chat.fail.no_server": "No conversation was started: the Loop server is not running.",
@@ -744,7 +753,7 @@ export const enUS = {
   "loop.chat.fail.failed":
     "No conversation was started: the agent could not start or did not take the message.",
   "loop.chat.fail.no_folder": "No conversation was started: its working folder could not be made.",
-  "loop.chat.fail.auth_required": "Sign in to Codex in Settings, then try again.",
+  "loop.chat.fail.auth_required": "Sign in to this agent in Settings, then try again.",
   "loop.detail.close": "Close ticket",
   "loop.detail.loading": "Loading ticket…",
   "loop.detail.failed": "Could not load the ticket",
@@ -818,6 +827,10 @@ export const enUS = {
   "loop.graph.expand": "Expand node {title}",
   "loop.graph.collapse": "Collapse node {title}",
   "loop.graph.goal": "Goal",
+  "loop.graph.fix": "Fix",
+  "loop.graph.dependsOn": "Depends on",
+  "loop.graph.filesHint": "Files",
+  "loop.graph.commit": "Commit",
   "loop.graph.verify": "Verify",
   "loop.graph.summary": "Summary",
   "loop.graph.lastError": "Last error",
@@ -826,8 +839,20 @@ export const enUS = {
   "loop.graph.sessionMissing": "The node's session is not in the list of any connected location.",
   "loop.graph.retry": "Retry",
   "loop.graph.skip": "Skip",
+  "loop.graph.edit": "Edit",
   "loop.graph.retryLabel": "Retry node {title}",
   "loop.graph.skipLabel": "Skip node {title}",
+  "loop.graph.editLabel": "Edit node {title}",
+  "loop.graph.editTitle": "Edit node",
+  "loop.graph.editBody":
+    "Adjust what this node should do or how Loop verifies it. Verify commands must match Loop's allowlist.",
+  "loop.graph.nodeTitle": "Title",
+  "loop.graph.verifyHint": "One command per line.",
+  "loop.graph.save": "Save node",
+  "loop.graph.skipTitle": "Skip node?",
+  "loop.graph.skipBody":
+    "Loop will mark this node skipped and continue with the next ready node without running it.",
+  "loop.graph.skipConfirm": "Skip node",
   "loop.join": "Join the Dev session",
   "loop.join.missing": "The Dev session is not in the list of any connected location.",
   "loop.alert.blocked": "A ticket is blocked and needs you.",

@@ -251,8 +251,13 @@ const roleOf = (setup: Setup, column: Column): Role | undefined => {
  * The buttons a ticket gets: Done has none, and in Doing a ticket with `auto` is Loop's, so it has none either. The
  * exception is Blocked: Loop has stopped there and waits for a person.
  */
-export const actionsOf = (stateType: string, auto: boolean, role?: Role): LoopTicketAction[] => {
-  if (stateType === "backlog") return ["approve"];
+export const actionsOf = (
+  stateType: string,
+  auto: boolean,
+  role?: Role,
+  pending = false,
+): LoopTicketAction[] => {
+  if (stateType === "backlog") return pending ? ["approve", "return"] : ["approve"];
   if (stateType === "unstarted") return ["to_backlog"];
   if (stateType === "started") return auto && role !== "blocked" ? [] : ["to_backlog", "to_todo"];
   return [];
@@ -497,6 +502,8 @@ export class LoopApiHandler {
     if (column === undefined) throw new ApiError(-32603, "Internal error", "tracker_unreachable");
     const autoId = setup.labelIds.get(project.labels.auto.toLowerCase());
     const auto = autoId !== undefined && issue.labelIds.includes(autoId);
+    const pendingId = setup.labelIds.get(project.labels.pending.toLowerCase());
+    const pending = pendingId !== undefined && issue.labelIds.includes(pendingId);
     const role = roleOf(setup, column);
     const attention =
       role === "blocked" || role === "review"
@@ -508,7 +515,7 @@ export class LoopApiHandler {
       title: issue.title,
       priority: issue.priority,
       column: column.name,
-      actions: actionsOf(column.stateType, auto, role),
+      actions: actionsOf(column.stateType, auto, role, pending),
       chat: chatOf(column.stateType, role, auto),
       body: issue.description,
       ...(attention === undefined ? {} : { attention }),

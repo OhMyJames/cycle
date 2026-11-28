@@ -433,6 +433,48 @@ describe("state buttons (loop/tickets/act with one key)", () => {
     expect(events).toEqual([["loop_ticket_acted", { action: "approve", result: "ok" }]]);
   });
 
+  test("returning a single pending ticket forwards the optional reason and reports only words", async () => {
+    const socket = sock();
+    const server = await fakeLoop(socket, one({ status: "ok" }));
+    const events: unknown[] = [];
+    const result = await actOnTicket(
+      { socket, actor: () => "小明" },
+      "CYC",
+      "CYC-9",
+      "return",
+      false,
+      (e, p) => events.push([e, p]),
+      " 范围太大 ",
+    );
+    await server.close();
+    expect(result).toEqual({ kind: "ok" });
+    expect(server.asked).toEqual([
+      {
+        method: "loop/tickets/act",
+        params: {
+          project: "CYC",
+          verb: "return",
+          keys: ["CYC-9"],
+          confirmed: false,
+          reason: "范围太大",
+          actor: "小明",
+          actorKind: "desktop",
+        },
+      },
+    ]);
+    expect(events).toEqual([["loop_ticket_acted", { action: "return", result: "ok" }]]);
+    expect(JSON.stringify(events)).not.toContain("范围太大");
+
+    // Whitespace-only reason omits `reason`; a server `skipped` maps to `not_allowed`.
+    const sock2 = sock();
+    const srv2 = await fakeLoop(sock2, one({ status: "skipped", reason: "not_pending" }));
+    expect(
+      await actOnTicket({ socket: sock2 }, "CYC", "CYC-9", "return", false, () => {}, "   "),
+    ).toEqual({ kind: "failed", reason: "not_allowed" });
+    await srv2.close();
+    expect(srv2.asked[0]?.params).not.toHaveProperty("reason");
+  });
+
   test("back to Backlog and to Todo are verbs of their own, and need no confirmation", async () => {
     for (const action of ["to_backlog", "to_todo"]) {
       const socket = sock();
@@ -530,8 +572,10 @@ describe("a conversation about a ticket (CYC-389)", () => {
       { cwd: join(dir, "work"), agent: "codex", config: { model: "deepseek-flash" } },
     ]);
     expect(prompts[0]).toContain("CYC-9");
-    // Only the word of the outcome: no ticket, no text.
-    expect(events).toEqual([["loop_ticket_chat", { result: "started" }]]);
+    // Only the fixed words of outcome, agent and picked: no ticket, no text.
+    expect(events).toEqual([
+      ["loop_ticket_chat", { result: "started", agent: "codex", picked: false }],
+    ]);
   });
 
   test("watch and none are not allowed: no session is made", async () => {
@@ -553,7 +597,9 @@ describe("a conversation about a ticket (CYC-389)", () => {
       await close();
       expect(result).toEqual({ kind: "failed", reason: "needs_model" });
       expect(made).toEqual([]);
-      expect(events).toEqual([["loop_ticket_chat", { result: "needs_model" }]]);
+      expect(events).toEqual([
+        ["loop_ticket_chat", { result: "needs_model", agent: "codex", picked: false }],
+      ]);
     }
   });
 
@@ -568,8 +614,8 @@ describe("a conversation about a ticket (CYC-389)", () => {
       reason: "no_server",
     });
     expect(events).toEqual([
-      ["loop_ticket_chat", { result: "no_server" }],
-      ["loop_ticket_chat", { result: "no_server" }],
+      ["loop_ticket_chat", { result: "no_server", agent: "other", picked: false }],
+      ["loop_ticket_chat", { result: "no_server", agent: "other", picked: false }],
     ]);
   });
 
@@ -613,6 +659,100 @@ describe("a conversation about a ticket (CYC-389)", () => {
       sessionId: "s1",
       locationId: "local",
     });
+  });
+
+  test("multi-agent selection picks an available agent with a default model, falls back to any available agent, or uses the chosen agent", async () => {
+    const { loop, close } = await withChat("new");
+    const byAgent = (map: Record<string, Record<string, string>>) => ({
+      ...setup({}),
+      deps: {
+        ...setup({}).deps,
+        agents: async () => [
+          { id: "codex", available: true },
+          { id: "claude", available: true },
+        ],
+        agentDefaults: async (agent: string) => map[agent] ?? {},
+      },
+    });
+    // Auto picks claude because claude has a configured default model while codex does not, preserving other defaults.
+    const a = byAgent({ claude: { model: "claude-sonnet", effort: "high" } });
+    const madeA: unknown[] = [];
+    a.deps.createSession = async (params: unknown) => {
+      madeA.push(params);
+      return "s-claude";
+    };
+    expect(await startTicketChat(loop, a.deps, "CYC", "CYC-9", a.track)).toEqual({
+      kind: "started",
+      locationId: "local",
+      sessionId: "s-claude",
+    });
+    expect(madeA).toEqual([
+      {
+        cwd: join(dir, "work"),
+        agent: "claude",
+        config: { model: "claude-sonnet", effort: "high" },
+      },
+    ]);
+    expect(a.events).toEqual([
+      ["loop_ticket_chat", { result: "started", agent: "claude", picked: false }],
+    ]);
+
+    // When no available agent has a saved default model, falls back to the first available agent with its non-model defaults.
+    const b = byAgent({ codex: { effort: "medium" } });
+    const madeB: unknown[] = [];
+    b.deps.createSession = async (params: unknown) => {
+      madeB.push(params);
+      return "s-fallback";
+    };
+    expect(await startTicketChat(loop, b.deps, "CYC", "CYC-9", b.track)).toEqual({
+      kind: "started",
+      locationId: "local",
+      sessionId: "s-fallback",
+    });
+    expect(madeB).toEqual([
+      { cwd: join(dir, "work"), agent: "codex", config: { effort: "medium" } },
+    ]);
+
+    // Explicit agent preference is honored even when another agent has a default model.
+    const c = byAgent({ codex: { model: "o3" } });
+    const madeC: unknown[] = [];
+    c.deps.createSession = async (params: unknown) => {
+      madeC.push(params);
+      return "s-picked";
+    };
+    expect(await startTicketChat(loop, c.deps, "CYC", "CYC-9", c.track, "claude")).toEqual({
+      kind: "started",
+      locationId: "local",
+      sessionId: "s-picked",
+    });
+    expect(madeC).toEqual([{ cwd: join(dir, "work"), agent: "claude", config: {} }]);
+    expect(c.events).toEqual([
+      ["loop_ticket_chat", { result: "started", agent: "claude", picked: true }],
+    ]);
+
+    // Unavailable preferred agent, empty list, or throwing agents() all fail cleanly.
+    expect(await startTicketChat(loop, c.deps, "CYC", "CYC-9", c.track, "pi")).toEqual({
+      kind: "failed",
+      reason: "failed",
+    });
+    expect(
+      await startTicketChat(loop, { ...c.deps, agents: async () => [] }, "CYC", "CYC-9", c.track),
+    ).toEqual({ kind: "failed", reason: "failed" });
+    expect(
+      await startTicketChat(
+        loop,
+        {
+          ...c.deps,
+          agents: async () => {
+            throw new Error("daemon offline");
+          },
+        },
+        "CYC",
+        "CYC-9",
+        c.track,
+      ),
+    ).toEqual({ kind: "failed", reason: "failed" });
+    await close();
   });
 });
 
@@ -1056,6 +1196,68 @@ describe("graph nodes (loop/graph/act)", () => {
       ["loop_graph_acted", { action: "skip_node", result: "not_allowed" }],
       ["loop_graph_acted", { action: "skip_node", result: "no_server" }],
     ]);
+  });
+
+  test("edit_node sends trimmed edits, maps invalid_verify, and never reports node content", async () => {
+    const socket = sock();
+    let reply: Answer = {
+      result: { key: "CYC-9", nodeId: "n1", action: "edit_node", phase: "graph_plan", graph },
+    };
+    const server = await fakeLoop(socket, () => reply);
+    const events: unknown[] = [];
+    const track = (e: string, p: unknown) => events.push([e, p]);
+
+    expect(
+      await actOnGraph({ socket, actor: () => "小明" }, "CYC", "CYC-9", "n1", "edit_node", track, {
+        title: " Better title ",
+        goal: " Better goal ",
+        verify: [" bun test "],
+      }),
+    ).toEqual({ kind: "ok" });
+    for (const bad of [
+      {},
+      { verify: [""] },
+      { title: "x".repeat(201) },
+      { goal: "x".repeat(4001) },
+      { verify: Array.from({ length: 21 }, () => "bun test") },
+      { verify: ["x".repeat(501)] },
+    ]) {
+      expect(await actOnGraph({ socket }, "CYC", "CYC-9", "n1", "edit_node", track, bad)).toEqual({
+        kind: "failed",
+        reason: "refused",
+      });
+    }
+    expect(server.asked).toHaveLength(1);
+    expect(server.asked[0]).toEqual({
+      method: "loop/graph/act",
+      params: {
+        project: "CYC",
+        key: "CYC-9",
+        nodeId: "n1",
+        action: "edit_node",
+        title: "Better title",
+        goal: "Better goal",
+        verify: ["bun test"],
+        actor: "小明",
+        actorKind: "desktop",
+      },
+    });
+
+    reply = { error: { code: -32602, data: { reason: "invalid_verify" } } };
+    expect(
+      await actOnGraph({ socket }, "CYC", "CYC-9", "n1", "edit_node", track, {
+        verify: ["rm -rf /"],
+      }),
+    ).toEqual({ kind: "failed", reason: "invalid_verify" });
+    await server.close();
+
+    expect(events).toEqual([
+      ["loop_graph_acted", { action: "edit_node", result: "ok" }],
+      ["loop_graph_acted", { action: "edit_node", result: "invalid_verify" }],
+    ]);
+    const serialized = JSON.stringify(events);
+    expect(serialized).not.toContain("Better title");
+    expect(serialized).not.toContain("rm -rf");
   });
 });
 
