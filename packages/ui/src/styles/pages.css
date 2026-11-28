@@ -2559,6 +2559,19 @@ html[data-platform="darwin"] [data-slot="loop-crumb"] {
   background: var(--cycle-surface-hover);
 }
 
+/* A Notice about the Project has no ticket to open: it is text, not a control. */
+span[data-slot="loop-board-alert-chip"],
+span[data-slot="loop-board-alert-chip"]:hover {
+  background: var(--cycle-surface-raised);
+  cursor: default;
+}
+
+div[data-slot="loop-notice-open"],
+div[data-slot="loop-notice-open"]:hover {
+  background: transparent;
+  cursor: default;
+}
+
 [data-slot="loop-board-alert-chip"]:focus-visible {
   outline: 1.5px solid var(--cycle-focus-ring);
   outline-offset: 1px;

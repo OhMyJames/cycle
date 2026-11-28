@@ -1553,8 +1553,8 @@ export type LoopNoticeKind =
 export type LoopNotice = {
   id: string;
   kind: LoopNoticeKind;
-  /** The work item key, `CYC-390`. */
-  identifier: string;
+  /** The work item key, `CYC-390`; null for a Notice about the Project itself, which has no ticket to open. */
+  identifier: string | null;
   text: string;
   session: { kind: string; id: string } | null;
 };

@@ -333,8 +333,8 @@ export const LoopNoticeSchema = z.object({
   id: z.string().min(1),
   project: z.string().min(1),
   kind: LoopNoticeKindSchema,
-  /** The work item key, such as `CYC-390`. */
-  key: z.string().min(1),
+  /** The work item key, such as `CYC-390`; null for a Notice about the Project itself (a `supervisor` one). */
+  key: z.string().min(1).nullable(),
   session: LoopSessionRefSchema.nullable(),
   text: z.string(),
   at: z.string().min(1),

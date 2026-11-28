@@ -758,8 +758,9 @@ export function Board({
         onOpenOverview={onOpenOverview}
         onOpen={(notice) => {
           store.track("loop_notice_opened", { kind: notice.kind });
-          if (notice.session === null || !store.joinLoopSession(notice.session.id))
-            openTicket(notice.identifier);
+          if (notice.session === null || !store.joinLoopSession(notice.session.id)) {
+            if (notice.identifier !== null) openTicket(notice.identifier);
+          }
         }}
       />
       {batchProblem !== undefined ? (
