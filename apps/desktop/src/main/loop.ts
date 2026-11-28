@@ -11,15 +11,21 @@ import {
   LOOP_BOARD_GET,
   LOOP_EVENTS_LIST,
   LOOP_GRAPH_ACT,
+  LOOP_INTENTS_RETRY,
   LOOP_NOTICES_LIST,
+  LOOP_RUN_CANCEL,
+  LOOP_RUN_GET,
   LOOP_RUNS_LIST,
   LOOP_TICKET_GET,
   LOOP_TICKETS_ACT,
   LoopBoardSchema,
   LoopEventsListResultSchema,
   LoopGraphActResultSchema,
+  LoopIntentsRetryResultSchema,
   LoopNoticesListResultSchema,
   LoopProjectsListResultSchema,
+  LoopRunCancelResultSchema,
+  LoopRunDetailSchema,
   LoopRunsListResultSchema,
   LoopTicketDetailSchema,
   LoopTicketsActResultSchema,
@@ -29,6 +35,7 @@ import type {
   LoopAction,
   LoopActResult,
   LoopBoardAnswer,
+  LoopCancelRunResult,
   LoopChatFailure,
   LoopChatResult,
   LoopGraphNodeAction,
@@ -36,6 +43,8 @@ import type {
   LoopManyResult,
   LoopNoticesAnswer,
   LoopProjectsAnswer,
+  LoopRetryIntentsResult,
+  LoopRunAnswer,
   LoopRunsAnswer,
   LoopTicketAnswer,
 } from "@cycle/ui/api";
@@ -143,6 +152,8 @@ export type FeedDeps = {
   call: (method: string, params?: unknown) => Promise<Called>;
   /** Told when the run state differs from the one told last. */
   changed: (runs: LoopRunsAnswer) => void;
+  /** Told when one or more Projects produced new Loop events (even when the set of active keys did not change). */
+  activity?: (projectKeys: string[]) => void;
   /** Follow only once the page has asked for the run state. */
   lazy?: boolean;
 };
@@ -271,13 +282,18 @@ export const loopFeed = (deps: FeedDeps) => {
       // Read now: nothing is known yet, the last answer asked for another look, or it is time (a Project may be new).
       let read = !wasOk || recheck || ticks % RUNS_REREAD_TICKS === 0;
       let fresh = false;
+      let wentAway = false;
+      const activeProjects = new Set<string>();
       seededNow = false;
       if (told?.kind === "ok")
         for (const projectKey of Object.keys(told.running)) {
           const got = await pullOne(projectKey);
-          if (got === "fresh") fresh = true;
-          else if (got === "away") {
+          if (got === "fresh") {
+            fresh = true;
+            activeProjects.add(projectKey);
+          } else if (got === "away") {
             // The server is not there: the others are not asked one by one, the runs say so.
+            wentAway = true;
             read = true;
             break;
           }
@@ -290,13 +306,22 @@ export const loopFeed = (deps: FeedDeps) => {
           let more = false;
           for (const projectKey of Object.keys(runs.running)) {
             const got = await pullOne(projectKey);
-            if (got === "fresh") more = true;
-            else if (got === "away") break;
+            if (got === "fresh") {
+              more = true;
+              activeProjects.add(projectKey);
+            } else if (got === "away") {
+              wentAway = true;
+              break;
+            }
           }
           if (more) runs = await readRuns();
         }
         recheck = fresh || !wasOk;
       }
+      if (activeProjects.size > 0 && !wentAway && misses === 0 && told?.kind === "ok")
+        try {
+          deps.activity?.([...activeProjects]);
+        } catch {}
       // A Project seen for the first time had its log taken as history: its runs are looked at once more.
       if (seededNow) recheck = true;
     } finally {
@@ -364,7 +389,7 @@ export const answerBoard = async (
   return answer;
 };
 
-/** The Project's Notices, as the server answers them. Only how many of the three kinds that are told are reported. */
+/** The Project's Notices, as the server answers them. Only the counts per kind are reported, never content. */
 export const answerNotices = async (
   loop: LoopOptions | undefined,
   projectKey: unknown,
@@ -389,6 +414,8 @@ export const answerNotices = async (
     permission: count("permission"),
     blocked: count("blocked"),
     review: count("review"),
+    stuck: count("stuck"),
+    intent_stuck: count("intent_stuck"),
   });
   return { kind: "ok", notices };
 };
@@ -459,7 +486,13 @@ const identifierOf = (projectKey: unknown, identifier: unknown): string | undefi
     : undefined;
 
 export type Track = <
-  N extends "loop_ticket_opened" | "loop_ticket_acted" | "loop_ticket_chat" | "loop_graph_acted",
+  N extends
+    | "loop_ticket_opened"
+    | "loop_ticket_acted"
+    | "loop_ticket_chat"
+    | "loop_graph_acted"
+    | "loop_run_cancelled"
+    | "loop_intents_retried",
 >(
   event: N,
   props: EventProps<N>,
@@ -506,6 +539,92 @@ export const answerTicket = async (
   const answer = await readTicket(loop, projectKey as string, key);
   if (answer.kind === "ok") track("loop_ticket_opened", {});
   return answer;
+};
+
+/** One ticket's run detail (`loop/run/get`): phase, round, heartbeat, sessions and recent events. */
+export const answerRun = async (
+  loop: LoopOptions | undefined,
+  projectKey: unknown,
+  identifier: unknown,
+): Promise<LoopRunAnswer> => {
+  if (!loop) return { kind: "no_server" };
+  const key = identifierOf(projectKey, identifier);
+  if (key === undefined) return { kind: "unreachable" };
+  const called = await callLoop(loop.socket, LOOP_RUN_GET, { project: projectKey, key });
+  if (called.kind === "no_server") return { kind: "no_server" };
+  if (called.kind === "error")
+    return called.reason === "unknown_run" ? { kind: "none" } : { kind: "unreachable" };
+  const parsed = LoopRunDetailSchema.safeParse(called.result);
+  if (!parsed.success) return { kind: "unreachable" };
+  const { graph, ...rest } = parsed.data;
+  return { kind: "ok", run: { ...rest, ...(graph !== undefined ? { graph } : {}) } };
+};
+
+/** Cancels the active turn of a running Loop ticket (`loop/run/cancel`). Reports only the outcome word. */
+export const cancelLoopRun = async (
+  loop: LoopOptions | undefined,
+  projectKey: unknown,
+  identifier: unknown,
+  track: Track,
+): Promise<LoopCancelRunResult> => {
+  const done = (result: LoopCancelRunResult): LoopCancelRunResult => {
+    track("loop_run_cancelled", {
+      result:
+        result.kind === "ok"
+          ? result.cancelled
+            ? "ok"
+            : "not_running"
+          : (result.reason as Exclude<LoopActFailure, "unconfirmed">),
+    });
+    return result;
+  };
+  const key = identifierOf(projectKey, identifier);
+  if (key === undefined) return { kind: "failed", reason: "refused" };
+  if (!loop) return done({ kind: "failed", reason: "no_server" });
+  const called = await callLoop(loop.socket, LOOP_RUN_CANCEL, {
+    project: projectKey,
+    key,
+    actor: actorOf(loop),
+    actorKind: "desktop",
+  });
+  if (called.kind === "no_server") return done({ kind: "failed", reason: "no_server" });
+  if (called.kind === "error") return done({ kind: "failed", reason: failureOf(called.reason) });
+  const parsed = LoopRunCancelResultSchema.safeParse(called.result);
+  return parsed.success
+    ? done({ kind: "ok", cancelled: parsed.data.cancelled })
+    : done({ kind: "failed", reason: "refused" });
+};
+
+/** Requeues stuck tracker write intents for a ticket (`loop/intents/retry`). Reports only outcome and count. */
+export const retryLoopIntents = async (
+  loop: LoopOptions | undefined,
+  projectKey: unknown,
+  identifier: unknown,
+  track: Track,
+): Promise<LoopRetryIntentsResult> => {
+  const done = (result: LoopRetryIntentsResult): LoopRetryIntentsResult => {
+    track("loop_intents_retried", {
+      result:
+        result.kind === "ok" ? "ok" : (result.reason as Exclude<LoopActFailure, "unconfirmed">),
+      retried: result.kind === "ok" ? result.retried : 0,
+    });
+    return result;
+  };
+  const key = identifierOf(projectKey, identifier);
+  if (key === undefined) return { kind: "failed", reason: "refused" };
+  if (!loop) return done({ kind: "failed", reason: "no_server" });
+  const called = await callLoop(loop.socket, LOOP_INTENTS_RETRY, {
+    project: projectKey,
+    key,
+    actor: actorOf(loop),
+    actorKind: "desktop",
+  });
+  if (called.kind === "no_server") return done({ kind: "failed", reason: "no_server" });
+  if (called.kind === "error") return done({ kind: "failed", reason: failureOf(called.reason) });
+  const parsed = LoopIntentsRetryResultSchema.safeParse(called.result);
+  return parsed.success
+    ? done({ kind: "ok", retried: parsed.data.retried })
+    : done({ kind: "failed", reason: "refused" });
 };
 
 /**

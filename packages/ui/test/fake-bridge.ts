@@ -14,12 +14,15 @@ import type {
   LoopAction,
   LoopActResult,
   LoopBoardAnswer,
+  LoopCancelRunResult,
   LoopChatResult,
   LoopGraphNodeAction,
   LoopManyAction,
   LoopManyResult,
   LoopNoticesAnswer,
   LoopProjectsAnswer,
+  LoopRetryIntentsResult,
+  LoopRunAnswer,
   LoopRunsAnswer,
   LoopTicketAnswer,
   PlanUsage,
@@ -85,6 +88,9 @@ export const fakeBridge = (
     loopRuns?: LoopRunsAnswer;
     loopBoards?: Record<string, LoopBoardAnswer>;
     loopTickets?: Record<string, LoopTicketAnswer>;
+    loopRunDetails?: Record<string, LoopRunAnswer>;
+    loopCancelRun?: LoopCancelRunResult;
+    loopRetryIntents?: LoopRetryIntentsResult;
     /** What a state button comes to. Default: it worked. */
     loopAct?: LoopActResult;
     /** What retrying or skipping a graph node comes to. Default: it worked. */
@@ -711,6 +717,21 @@ export const fakeBridge = (
       "loopTicket",
       async (_projectKey: string, identifier: string): Promise<LoopTicketAnswer> =>
         options.loopTickets?.[identifier] ?? { kind: "no_server" },
+    ),
+    loopRun: record(
+      "loopRun",
+      async (_projectKey: string, identifier: string): Promise<LoopRunAnswer> =>
+        options.loopRunDetails?.[identifier] ?? { kind: "none" },
+    ),
+    loopCancelRun: record(
+      "loopCancelRun",
+      async (_projectKey: string, _identifier: string): Promise<LoopCancelRunResult> =>
+        options.loopCancelRun ?? { kind: "ok", cancelled: true },
+    ),
+    loopRetryIntents: record(
+      "loopRetryIntents",
+      async (_projectKey: string, _identifier: string): Promise<LoopRetryIntentsResult> =>
+        options.loopRetryIntents ?? { kind: "ok", retried: 1 },
     ),
     loopChat: record(
       "loopChat",

@@ -6,22 +6,18 @@
 import { isComposing } from "@ui-sdk/core";
 import { Button } from "@ui-sdk/react/button";
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import type { LoopBoardColumn, LoopNotice, LoopProjectInfo, LoopRunsAnswer } from "../api.ts";
+import type { LoopBoardColumn, LoopProjectInfo, LoopRunsAnswer } from "../api.ts";
 import { useI18n } from "./i18n.tsx";
 import { ChevronRightIcon, RefreshIcon } from "./icons.tsx";
 import { Board } from "./loop-board.tsx";
 import { type LoopView, up, viewProject } from "./loop-nav.ts";
-import { Notices } from "./loop-notices.tsx";
+import { Notices, noticeUrgency, type RetryIntents } from "./loop-notices.tsx";
 import { PageGroup, PageRows } from "./page-layout.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
 
 /** How often the Notices are read again while the page is open. */
 const NOTICES_REFRESH_MS = 30_000;
-
-/** Most urgent first; the kinds the page has no special place for come after. */
-const URGENCY: Record<string, number> = { permission: 0, blocked: 1, review: 2 };
-const urgency = (n: LoopNotice): number => URGENCY[n.kind] ?? 3;
 
 const STATE_OF = {
   backlog: "backlog",
@@ -66,7 +62,19 @@ function Overview({
         ? answer.notices.map((notice) => ({ projectKey: p.projectKey, notice }))
         : [];
     })
-    .sort((a, b) => urgency(a.notice) - urgency(b.notice));
+    .sort((a, b) => noticeUrgency(a.notice) - noticeUrgency(b.notice));
+
+  const retryIntents: RetryIntents = async (projectKey, identifier) => {
+    const result = await store.retryLoopIntents(projectKey, identifier);
+    if (result.kind === "failed") return { ok: false, message: t(`loop.fail.${result.reason}`) };
+    return {
+      ok: true,
+      message:
+        result.retried > 0
+          ? t("loop.notices.retried", { count: result.retried })
+          : t("loop.notices.retryNone"),
+    };
+  };
 
   const refreshAll = async () => {
     setRefreshing(true);
@@ -87,9 +95,9 @@ function Overview({
     <div data-slot="loop-overview" data-kind="loop-overview">
       <Notices
         notices={notices}
+        onRetryIntents={retryIntents}
         onOpen={(projectKey, notice) => {
-          if (notice.kind === "permission" || notice.kind === "blocked" || notice.kind === "review")
-            store.track("loop_notice_opened", { kind: notice.kind });
+          store.track("loop_notice_opened", { kind: notice.kind });
           // The session it names, when it is here; else the ticket's page, where it is joined or its story is read.
           if (notice.session === null || !store.joinLoopSession(notice.session.id))
             onOpenTicket(projectKey, notice.identifier);
@@ -203,9 +211,13 @@ function RunState({ runs, projectKey }: { runs: LoopRunsAnswer | undefined; proj
 /** The sidebar's lower half in the Loop mode: the Overview, then every Project with its Kanban. */
 export function LoopNav({ view, onView }: { view: LoopView; onView: (view: LoopView) => void }) {
   const { t } = useI18n();
-  const { projects, connected } = useAppState((s) => s.loop);
+  const { projects, connected, notices } = useAppState((s) => s.loop);
   const away = connected === false;
   const chosenKey = projects.find((p) => p.projectKey === viewProject(view))?.projectKey;
+  const noticeCount = projects.reduce((sum, p) => {
+    const answer = notices[p.projectKey];
+    return sum + (answer?.kind === "ok" ? answer.notices.length : 0);
+  }, 0);
   return (
     <section data-slot="loop-nav" aria-label={t("loop.nav")}>
       <button
@@ -213,9 +225,17 @@ export function LoopNav({ view, onView }: { view: LoopView; onView: (view: LoopV
         data-slot="loop-nav-item"
         data-kind="loop-nav-overview"
         aria-current={chosenKey === undefined ? "page" : undefined}
+        aria-description={
+          noticeCount > 0 ? t("loop.notices.count", { count: noticeCount }) : undefined
+        }
         onClick={() => onView({ at: "overview" })}
       >
-        {t("loop.overview")}
+        <span>{t("loop.overview")}</span>
+        {noticeCount > 0 ? (
+          <span data-slot="loop-nav-badge" aria-hidden="true">
+            {noticeCount}
+          </span>
+        ) : null}
       </button>
       {projects.length > 0 ? (
         <div data-slot="loop-nav-group">
@@ -283,7 +303,6 @@ export function LoopMain({
   const projectKey = viewProject(view);
   const chosen = projects.find((p) => p.projectKey === projectKey);
   const chosenKey = chosen?.projectKey;
-  const onOverview = chosen === undefined;
   const allKeys = projects.map((p) => p.projectKey).join("\n");
 
   // Entering with nowhere remembered: the board when there is only one Project, else the overview.
@@ -313,10 +332,10 @@ export function LoopMain({
       .sort()
       .join(),
   );
-  // The Notices are on the overview: every Project's, read when it opens, when that set changes, and every so often, so
-  // a new Blocked or escalated ticket shows while the page is open, not only after Refresh.
+  // Read every Project's Notices while the Loop view is open (both Overview and Kanban), so badges and the board's
+  // compact alert strip stay fresh even for single-project users who land straight on Kanban.
   useEffect(() => {
-    if (!onOverview || connected !== true) return;
+    if (connected !== true) return;
     const read = () => {
       for (const key of allKeys.split("\n")) if (key !== "") void store.loadLoopNotices(key);
     };
@@ -324,7 +343,7 @@ export function LoopMain({
     void waiting;
     const timer = setInterval(read, NOTICES_REFRESH_MS);
     return () => clearInterval(timer);
-  }, [store, onOverview, connected, allKeys, waiting]);
+  }, [store, connected, allKeys, waiting]);
   // A notification asked for a Project the server does not have, or whose board cannot be read: no Board will take
   // the request, and it would open an old ticket on a later visit, so it is dropped.
   const request = useAppState((s) => s.loop.request);
@@ -427,6 +446,7 @@ export function LoopMain({
             onOpen={(identifier) =>
               onView({ at: "ticket", projectKey: chosen.projectKey, identifier })
             }
+            onOpenOverview={() => onView({ at: "overview" })}
             onBack={onBack}
             onChatStarted={onClose}
           />

@@ -4,6 +4,7 @@ import type {
   LoopAction,
   LoopActResult,
   LoopBoardAnswer,
+  LoopCancelRunResult,
   LoopChatResult,
   LoopGraphNodeAction,
   LoopManyAction,
@@ -11,6 +12,8 @@ import type {
   LoopManyResult,
   LoopNoticesAnswer,
   LoopProjectInfo,
+  LoopRetryIntentsResult,
+  LoopRunAnswer,
   LoopRunsAnswer,
   LoopTicketAnswer,
 } from "../api.ts";
@@ -27,6 +30,8 @@ export type LoopState = {
   boards: Record<string, LoopBoardAnswer | "loading">;
   /** Each Project's Notices as last read. They are derived from state by main, so a read replaces the last whole. */
   notices: Record<string, LoopNoticesAnswer>;
+  /** Per-Project counter incremented whenever Loop's event stream reports new activity, so open drawers can refresh. */
+  activity: Record<string, number>;
   /** A pressed system notification asks for this ticket's page; `n` counts the asks, so the same ticket can be asked twice. */
   request?: { projectKey: string; identifier: string; n: number };
 };
@@ -34,7 +39,12 @@ export type LoopState = {
 /** The most tickets the Loop server takes in one request. */
 const MANY_CHUNK = 50;
 
-export const initialLoop = (): LoopState => ({ projects: [], boards: {}, notices: {} });
+export const initialLoop = (): LoopState => ({
+  projects: [],
+  boards: {},
+  notices: {},
+  activity: {},
+});
 
 /** How many reads in a row may fail before the Notices last read are dropped. */
 const NOTICE_FAILURES_KEPT = 3;
@@ -88,11 +98,29 @@ export class LoopSlice {
         void this.loadBoard(projectKey);
   };
 
+  /** Main saw new Loop events for these Projects: bump their activity counters and refresh loaded boards and notices. */
+  noteActivity = (projectKeys: string[]): void => {
+    if (projectKeys.length === 0) return;
+    this.#kit.set((s) => {
+      const next = { ...s.loop.activity };
+      for (const key of projectKeys) next[key] = (next[key] ?? 0) + 1;
+      return { loop: { ...s.loop, activity: next } };
+    });
+    const state = this.#kit.state().loop;
+    for (const key of projectKeys) {
+      if (typeof state.boards[key] === "object" && !this.#boardInFlight.has(key))
+        void this.loadBoard(key);
+      if (state.notices[key] !== undefined) void this.loadNotices(key);
+    }
+  };
+
   readonly #boardAsk = new Map<string, number>();
+  readonly #boardInFlight = new Set<string>();
 
   loadBoard = async (projectKey: string): Promise<void> => {
     const ask = (this.#boardAsk.get(projectKey) ?? 0) + 1;
     this.#boardAsk.set(projectKey, ask);
+    this.#boardInFlight.add(projectKey);
     // The run state this read starts with: the cards' `watch` is made from it when main reads the board.
     const started = runKeys(this.#kit.state().loop.runs, projectKey);
     const had = this.#kit.state().loop.boards[projectKey];
@@ -106,6 +134,7 @@ export class LoopSlice {
       .catch(() => ({ kind: "unreachable" }) as const);
     // Only the latest ask for a Project counts: an older read, which may carry an older run state, is dropped.
     if (this.#boardAsk.get(projectKey) !== ask) return;
+    this.#boardInFlight.delete(projectKey);
     // A board that was read stays when a read again fails: it is still the last that is known.
     if (typeof had === "object" && had.kind === "ok" && answer.kind !== "ok") return;
     this.#kit.set((s) => ({
@@ -161,6 +190,34 @@ export class LoopSlice {
     this.#kit.bridge
       .loopTicket(projectKey, identifier)
       .catch(() => ({ kind: "unreachable" }) as const);
+
+  loadRun = (projectKey: string, identifier: string): Promise<LoopRunAnswer> =>
+    this.#kit.bridge
+      .loopRun(projectKey, identifier)
+      .catch(() => ({ kind: "unreachable" }) as const);
+
+  /** Cancels the active turn of a running Loop ticket; refreshes board and notices when accepted. */
+  cancelRun = async (projectKey: string, identifier: string): Promise<LoopCancelRunResult> => {
+    const result = await this.#kit.bridge
+      .loopCancelRun(projectKey, identifier)
+      .catch((): LoopCancelRunResult => ({ kind: "failed", reason: "offline" }));
+    if (result.kind === "ok")
+      await Promise.all([this.loadBoard(projectKey), this.loadNotices(projectKey)]);
+    return result;
+  };
+
+  /** Requeues stuck tracker write intents for a ticket; refreshes notices and board when accepted. */
+  retryIntents = async (
+    projectKey: string,
+    identifier: string,
+  ): Promise<LoopRetryIntentsResult> => {
+    const result = await this.#kit.bridge
+      .loopRetryIntents(projectKey, identifier)
+      .catch((): LoopRetryIntentsResult => ({ kind: "failed", reason: "offline" }));
+    if (result.kind === "ok")
+      await Promise.all([this.loadNotices(projectKey), this.loadBoard(projectKey)]);
+    return result;
+  };
 
   /** A state button. A write that went through reads the board again; one that did not leaves it as it was. */
   act = async (

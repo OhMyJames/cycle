@@ -3,12 +3,19 @@
 // an agent. It opens at the right of the board without unmounting it, so the board's scroll, filters and picks stay.
 import { Button } from "@ui-sdk/react/button";
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import type { LoopAction, LoopChatFailure, LoopTicket, LoopTicketDetail } from "../api.ts";
+import type {
+  LoopAction,
+  LoopChatFailure,
+  LoopRunDetail,
+  LoopTicket,
+  LoopTicketDetail,
+} from "../api.ts";
 import { AgentLink } from "./agent-link.tsx";
 import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import { CheckIcon, CloseIcon, ErrorCircleIcon, MessageIcon, WarningIcon } from "./icons.tsx";
 import { ExecutionGraph } from "./loop-graph.tsx";
+import { PHASE_WORD, RunWorkflow } from "./loop-run.tsx";
 import { Markdown } from "./markdown.tsx";
 import { useNow } from "./now.ts";
 import { StateBlock } from "./state-block.tsx";
@@ -109,15 +116,6 @@ export function TicketActions({
     </span>
   );
 }
-
-/** The run phases the page has words for; any other is shown as the server names it. */
-const PHASE_WORD: Record<string, string> = {
-  dev: "develop",
-  qa: "qa",
-  review: "review",
-  research: "research",
-  research_qa: "researchQa",
-};
 
 /** Where Loop is on a ticket and for how long: "QA · 3 min". */
 export function TicketStage({ phase }: { phase: NonNullable<LoopTicket["phase"]> }) {
@@ -279,6 +277,7 @@ export function TicketDrawer({
   const store = useAppStore();
   const closeRef = useRef<HTMLButtonElement>(null);
   const [ticket, setTicket] = useState<LoopTicketDetail | "loading" | "failed">("loading");
+  const [run, setRun] = useState<LoopRunDetail | undefined>();
   const [retryCount, setRetryCount] = useState(0);
 
   const waitingTitles = useAppState((s) =>
@@ -298,13 +297,14 @@ export function TicketDrawer({
         ? "running"
         : "idle",
   );
+  const activity = useAppState((s) => s.loop.activity[projectKey] ?? 0);
 
   useEffect(() => {
-    // These are dependencies, not read in here: a change of any of them reads the ticket again. Not before the run
-    // state is known: the ticket would be read twice.
+    // These are dependencies, not read in here: a change of any of them reads the ticket and run again. Not before the
+    // run state is known (the ticket would be read twice) and not while the drawer is sliding out.
     void version;
     void retryCount;
-    if (runKey === "unknown") return;
+    if (closing || runKey === "unknown") return;
     void runKey;
     let live = true;
     void store.loadLoopTicket(projectKey, identifier).then((answer) => {
@@ -314,10 +314,30 @@ export function TicketDrawer({
           answer.kind === "ok" ? answer.ticket : typeof had === "object" ? had : "failed",
         );
     });
+    void store.loadLoopRun(projectKey, identifier).then((answer) => {
+      if (!live) return;
+      if (answer.kind === "ok") setRun(answer.run);
+      else if (answer.kind === "none") setRun(undefined);
+    });
     return () => {
       live = false;
     };
-  }, [store, projectKey, identifier, version, retryCount, runKey]);
+  }, [store, projectKey, identifier, version, retryCount, runKey, closing]);
+
+  // Project-wide Loop events refresh only the lightweight run record (including phase, heartbeat, sessions and graph)
+  // without re-fetching full ticket markdown or inflating `loop_ticket_opened` analytics.
+  useEffect(() => {
+    if (closing || activity === 0 || runKey === "unknown") return;
+    let live = true;
+    void store.loadLoopRun(projectKey, identifier).then((answer) => {
+      if (!live) return;
+      if (answer.kind === "ok") setRun(answer.run);
+      else if (answer.kind === "none") setRun(undefined);
+    });
+    return () => {
+      live = false;
+    };
+  }, [store, projectKey, identifier, activity, closing, runKey]);
 
   useEffect(() => {
     closeRef.current?.focus();
@@ -334,6 +354,13 @@ export function TicketDrawer({
   const loaded = typeof ticket === "object" ? ticket : undefined;
   const headTicket = loaded ?? summary;
   const isPending = headTicket?.pending !== undefined;
+  const effectivePhase =
+    run !== undefined
+      ? run.state === "active"
+        ? { name: run.phase, since: run.updatedAt }
+        : undefined
+      : (loaded?.phase ?? summary?.phase);
+  const effectiveGraph = run?.graph ?? loaded?.graph;
 
   return (
     <div data-slot="loop-drawer-layer" data-state={closing ? "closing" : "open"} inert={closing}>
@@ -392,9 +419,9 @@ export function TicketDrawer({
           ) : (
             <>
               <h3 data-slot="loop-detail-title">{ticket.title}</h3>
-              {ticket.phase ? (
+              {effectivePhase ? (
                 <div data-slot="loop-detail-stage">
-                  <TicketStage phase={ticket.phase} />
+                  <TicketStage phase={effectivePhase} />
                 </div>
               ) : null}
 
@@ -459,11 +486,20 @@ export function TicketDrawer({
                 </section>
               ) : null}
 
-              {ticket.graph !== undefined ? (
+              {run !== undefined ? (
+                <RunWorkflow
+                  projectKey={projectKey}
+                  identifier={ticket.identifier}
+                  run={run}
+                  onChanged={() => setRetryCount((n) => n + 1)}
+                />
+              ) : null}
+
+              {effectiveGraph !== undefined ? (
                 <ExecutionGraph
                   projectKey={projectKey}
                   identifier={ticket.identifier}
-                  graph={ticket.graph}
+                  graph={effectiveGraph}
                   onChanged={() => setRetryCount((n) => n + 1)}
                   onJoin={onChatStarted}
                 />

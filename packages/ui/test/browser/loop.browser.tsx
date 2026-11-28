@@ -1415,3 +1415,152 @@ test("a refused retry says why", async () => {
   await user.click(await within(drawer).findByRole("button", { name: "Retry node Node 2" }));
   expect(await within(drawer).findByRole("alert")).toBeTruthy();
 });
+
+test("an In Progress ticket drawer shows run progress, translated stage, heartbeat, sessions, events and cancel", async () => {
+  const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
+  const mine: LoopTicket = {
+    ...ticket(900, "In Progress"),
+    phase: { name: "graph_plan", since: ago(4) },
+  };
+  const user = userEvent.setup();
+  const fake = fakeBridge({
+    connected: true,
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: { CYC: withTickets({ "In Progress": [mine] }) },
+    loopTickets: { "CYC-900": detailOf(mine, { chat: "watch" }) },
+    loopRunDetails: {
+      "CYC-900": {
+        kind: "ok",
+        run: {
+          key: "CYC-900",
+          title: "Ticket 900",
+          kind: "dev",
+          phase: "ci",
+          state: "active",
+          round: 2,
+          startedAt: ago(25),
+          updatedAt: ago(5),
+          blockedReason: null,
+          sessions: [
+            { kind: "dev", id: "sess-dev" },
+            { kind: "qa", id: "sess-qa" },
+          ],
+          prUrl: "https://example.com/pull/90",
+          events: [
+            { ts: ago(20), kind: "claimed" },
+            { ts: ago(5), kind: "ci_wait" },
+          ],
+          heartbeat: { at: ago(20), detail: "Waiting for CI checks" },
+        },
+      },
+    },
+  });
+  fake.bridge.sessions = async () => [{ ...summary("sess-qa"), title: "[CYC-900] QA" }];
+  await renderApp(fake.bridge);
+  await user.click(await screen.findByRole("button", { name: "Loop" }));
+  await user.click(await screen.findByRole("button", { name: "Ticket 900" }));
+  const drawer = await screen.findByRole("complementary", { name: "CYC-900" });
+
+  // Stage uses translated label for `ci` and displays round, stale heartbeat and workflow steps.
+  await within(drawer).findByText(/Waiting on CI · 5 min/);
+  expect(within(drawer).getByText("Round 2")).toBeTruthy();
+  expect(within(drawer).getByText(/No heartbeat for 20 min/)).toBeTruthy();
+  expect(within(drawer).getByText("Waiting for CI checks")).toBeTruthy();
+  expect(
+    drawer.querySelector('[data-slot="loop-run-step"][data-state="active"]')?.textContent,
+  ).toContain("Waiting on CI");
+
+  // Recent events toggle expands to show event kinds.
+  await user.click(within(drawer).getByRole("button", { name: "Recent events (2)" }));
+  expect(within(drawer).getByText("ci_wait")).toBeTruthy();
+
+  // Cancel turn asks for destructive confirmation before calling loopCancelRun.
+  await user.click(within(drawer).getByRole("button", { name: "Cancel turn" }));
+  expect(fake.named("loopCancelRun")).toEqual([]);
+  const dialog = await screen.findByRole("alertdialog");
+  await user.click(within(dialog).getByRole("button", { name: "Cancel turn" }));
+  await waitFor(() =>
+    expect(fake.named("loopCancelRun")).toEqual([["loopCancelRun", "CYC", "CYC-900"]]),
+  );
+  expect(await within(drawer).findByText("Cancelled the current turn.")).toBeTruthy();
+
+  // Clicking a missing session shows an inline alert; clicking an existing session opens it.
+  await user.click(within(drawer).getByRole("button", { name: "Dev session" }));
+  expect(
+    await within(drawer).findByText("That session is not in the list of any connected location."),
+  ).toBeTruthy();
+  await user.click(within(drawer).getByRole("button", { name: "QA session" }));
+  await waitFor(() => expect(fake.named("openSession")[0]?.slice(1)).toEqual(["local", "sess-qa"]));
+
+  // Behaviour-only analytics: `loop_run_viewed` carries no ticket title or heartbeat text.
+  expect(tracked(fake.calls)).toContainEqual([
+    "loop_run_viewed",
+    { kind: "dev", state: "active", sessions: 2 },
+  ]);
+  const sent = JSON.stringify(tracked(fake.calls));
+  expect(sent.includes("Waiting for CI checks")).toBe(false);
+  expect(sent.includes("Ticket 900")).toBe(false);
+});
+
+test("board alert strip, sidebar/nav notice badges, intent retry, and loop-activity live refresh work together", async () => {
+  const user = userEvent.setup();
+  const fake = fakeBridge({
+    connected: true,
+    loopProjects: { kind: "ok", projects: [cycle] },
+    loopBoards: { CYC: board },
+    loopNotices: {
+      CYC: {
+        kind: "ok",
+        notices: [
+          {
+            id: "CYC:intent_stuck:1",
+            kind: "intent_stuck",
+            identifier: "CYC-386",
+            text: "write stuck",
+            session: null,
+          },
+          {
+            id: "CYC:stuck:CYC-387",
+            kind: "stuck",
+            identifier: "CYC-387",
+            text: "no heartbeat",
+            session: null,
+          },
+        ],
+      },
+    },
+    loopRetryIntents: { kind: "ok", retried: 2 },
+  });
+  await renderApp(fake.bridge);
+  await user.click(await screen.findByRole("button", { name: "Loop" }));
+
+  // Single-project board shows the compact alert strip and sidebar/nav badges without breaking exact button names.
+  await screen.findByText("2 items need you");
+  const loopBtn = screen.getByRole("button", { name: "Loop" });
+  expect(loopBtn.querySelector('[data-slot="loop-nav-badge"]')?.textContent).toBe("2");
+  const overviewBtn = screen.getByRole("button", { name: "Overview" });
+  expect(overviewBtn.querySelector('[data-slot="loop-nav-badge"]')?.textContent).toBe("2");
+
+  // Retry write calls loopRetryIntents and displays dismissible status.
+  await user.click(screen.getByRole("button", { name: "Retry write for CYC-386" }));
+  await waitFor(() =>
+    expect(fake.named("loopRetryIntents")).toEqual([["loopRetryIntents", "CYC", "CYC-386"]]),
+  );
+  expect(await screen.findByText("Queued 2 writes to retry.")).toBeTruthy();
+
+  // Clicking a notice chip opens the ticket drawer and tracks `loop_notice_opened`.
+  await user.click(screen.getByRole("button", { name: /CYC-387/ }));
+  await screen.findByRole("complementary", { name: "CYC-387" });
+  expect(tracked(fake.calls)).toContainEqual(["loop_notice_opened", { kind: "stuck" }]);
+
+  // A `loop-activity` event refreshes board and run without re-fetching loopTicket (no `loop_ticket_opened` inflation).
+  const boardsBefore = fake.named("loopBoard").length;
+  const runsBefore = fake.named("loopRun").length;
+  const ticketsBefore = fake.named("loopTicket").length;
+  act(() => fake.emit({ type: "loop-activity", projectKeys: ["CYC"] }));
+  await waitFor(() => {
+    expect(fake.named("loopBoard").length).toBeGreaterThan(boardsBefore);
+    expect(fake.named("loopRun").length).toBeGreaterThan(runsBefore);
+  });
+  expect(fake.named("loopTicket").length).toBe(ticketsBefore);
+});

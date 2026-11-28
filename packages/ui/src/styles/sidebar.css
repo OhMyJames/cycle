@@ -596,3 +596,24 @@
   font-size: var(--cycle-text-meta);
   color: var(--ui-muted-foreground);
 }
+
+[data-slot="loop-nav-badge"] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.125rem;
+  height: 1.125rem;
+  padding: 0 0.3125rem;
+  border-radius: var(--cycle-radius-pill);
+  background: var(--cycle-attention-soft);
+  color: var(--cycle-attention);
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-meta);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+[data-slot="loop-nav-item"] > [data-slot="loop-nav-badge"] {
+  margin-left: auto;
+}
