@@ -44,7 +44,7 @@ const jobs = names.flatMap((name) =>
   ),
 );
 
-/** In the page: what the eye can miss. Overflow, a clipped first session, the message box's edge against its ground. */
+/** In the page: what the eye can miss. Overflow, and a clipped first session. */
 function measureLayout() {
   const root = document.scrollingElement ?? document.documentElement;
   const sidebar = document.querySelector('[data-slot="sidebar"]');
@@ -60,41 +60,10 @@ function measureLayout() {
       visible.bottom <= Math.min(inner.bottom, outer.bottom);
   }
 
-  // The edge of the message is the box round the text, the images and the controls.
-  const input = document
-    .querySelector('[data-slot="composer-input"][contenteditable="true"]')
-    ?.closest('[data-slot="composer-box"]');
-  let composerContrast = null;
-  if (input) {
-    // Canvas resolves CSS colors to sRGB. Sample the outline against the same background it is drawn over.
-    const canvas = document.createElement("canvas");
-    canvas.width = canvas.height = 1;
-    const context = canvas.getContext("2d");
-    if (context === null) throw new Error("no 2d canvas");
-    const surface = getComputedStyle(document.body).backgroundColor;
-    const luminance = (color: string) => {
-      context.fillStyle = surface;
-      context.fillRect(0, 0, 1, 1);
-      context.fillStyle = color;
-      context.fillRect(0, 0, 1, 1);
-      const [r = 0, g = 0, b = 0] = Array.from(context.getImageData(0, 0, 1, 1).data).map((n) => {
-        const v = n / 255;
-        return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
-      });
-      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-    };
-    const style = getComputedStyle(input);
-    const edge = luminance(
-      style.borderTopWidth === "0px" ? style.backgroundColor : style.borderTopColor,
-    );
-    const background = luminance(surface);
-    composerContrast = (Math.max(edge, background) + 0.05) / (Math.min(edge, background) + 0.05);
-  }
   return {
     overflowX: root.scrollWidth - root.clientWidth,
     overflowY: root.scrollHeight - root.clientHeight,
     firstSessionVisible,
-    composerContrast,
   };
 }
 
@@ -269,9 +238,6 @@ for (const r of report) {
     (r.name === "session-groups" || r.name === "many-sessions") &&
       !r.firstSessionVisible &&
       "first session is clipped",
-    r.composerContrast !== null &&
-      r.composerContrast < 3 &&
-      `composer border contrast is ${r.composerContrast.toFixed(2)}:1 (need 3:1)`,
     r.errors.length > 0 && r.errors.join("; "),
   ].filter(Boolean);
   // A tabbed shot says where the focus is, and fails if it is on a control that shows no ring.

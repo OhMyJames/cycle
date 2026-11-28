@@ -9,12 +9,12 @@ import {
 } from "../gallery/shoot-options.ts";
 
 describe("shoot options", () => {
-  test("defaults match the old behavior", () => {
+  test("defaults: both themes, at 1200x800 only", () => {
     const o = parseShootOptions([]);
     expect(o).toMatchObject({
       out: undefined,
       themes: ["light", "dark"],
-      sizes: ["1200x800", "720x480"],
+      sizes: ["1200x800"],
       platform: "",
       crop: undefined,
       format: "png",

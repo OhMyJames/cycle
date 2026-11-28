@@ -84,7 +84,7 @@ export function parseShootOptions(argv: string[]): ShootOptions {
   return {
     out: flag("out"),
     themes: themes as ("light" | "dark")[],
-    sizes: (flag("sizes") ?? "1200x800,720x480").split(","),
+    sizes: (flag("sizes") ?? "1200x800").split(","),
     platform: flag("platform") ?? "",
     crop: crop === undefined ? undefined : parseCrop(crop),
     format: parseFormat(flag("format") ?? "png"),

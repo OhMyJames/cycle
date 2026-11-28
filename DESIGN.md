@@ -65,7 +65,7 @@ Cycle 界面的设计系统：**这个应用长什么样、为什么**，作为�
 - **四档文字**：浅色下对 workspace 为 `18.4 / 8.0 / 6.0 / 3.4:1`；深色下为 `18.2 / 8.4 / 6.9 / 3.9:1`。
 - **`ink-secondary` 与正文拉开一档**（CYCL-139，负责人参照对方产品定）：正文对次要文字约 `2.2–2.3:1`（原来深色只有 1.55，次要文字几乎和正文一样亮），让工具行、引用、思考退到回复之后；次要色在选中行上仍 ≥ 5.9:1。
 - **`ink-muted` 在所有表面上 ≥ 4.5:1**（包括选中行：浅色 4.71、深色 4.92）。
-- **控件边框不用 `border-default`**：`border-default` 只做轻分隔；输入控件与描边按钮边界用 `--cycle-input-border`（未聚焦时深浅色下均 ≥ 3.3:1）。
+- **控件边框不用 `border-default`**：`border-default` 只做轻分隔；输入控件与描边按钮边界用 `--cycle-input-border`（未聚焦时深浅色下均 ≥ 3.3:1）。例外：会话底部的消息输入框用 `border-default`（浅色下约 1.3:1），负责人 2026-11-27 定为例外。
 
 ### 1.2 强调色与功能色
 
@@ -349,13 +349,13 @@ Cycle 界面的设计系统：**这个应用长什么样、为什么**，作为�
 ## 附录 A：状态画廊（Visual Regression）
 
 ```bash
-bun packages/ui/gallery/shoot.ts                                  # 所有场景，浅色和深色，1200x800 和 720x480
+bun packages/ui/gallery/shoot.ts                                  # 所有场景，浅色和深色，1200x800
 bun packages/ui/gallery/shoot.ts permission --themes dark         # 指定场景和主题
-bun packages/ui/gallery/shoot.ts --sizes 1200x800,720x480 --all   # 指定尺寸，列出每张
+bun packages/ui/gallery/shoot.ts --sizes 1200x800,720x480 --all   # 加拍最小窗口宽度 720，列出每张
 bun packages/ui/gallery/shoot.ts permission --crop "[role=dialog]" --format webp --max-width 960   # 裁剪、webp、限宽(文件名带 .crop;webp 质量 100)
 ```
 
-画廊在无界面的 Chromium 中运行（Playwright，每张图一个新的浏览器上下文，2 倍像素，不开窗口、不抢焦点），检查根页面溢出、控制台错误、焦点环、列表首项可见性与输入框边界对比度。在浏览器中预览：`bun packages/ui/gallery/build.ts`，再 `bun scripts/serve-dir.ts packages/ui/gallery/dist`，打开它给出的地址（加 `?s=<场景>` 或 `?s=tokens`）；直接打开文件不行，模块脚本不从 file:// 加载。
+画廊在无界面的 Chromium 中运行（Playwright，每张图一个新的浏览器上下文，2 倍像素，不开窗口、不抢焦点），检查根页面溢出、控制台错误、焦点环与列表首项可见性。在浏览器中预览：`bun packages/ui/gallery/build.ts`，再 `bun scripts/serve-dir.ts packages/ui/gallery/dist`，打开它给出的地址（加 `?s=<场景>` 或 `?s=tokens`）；直接打开文件不行，模块脚本不从 file:// 加载。
 
 核心场景（定义在 `packages/ui/gallery/scenarios.ts`）：`tokens`、`empty`、`empty-conversation`、`conversation`、`streaming`、`permission`、`permission-queue`、`turn-error`、`turn-error-changed`、`turn-error-resent`、`turn-retrying`、`parallel`、`reconnected`、`history-0.3.4`（CYCL-50 的对照样例：并行调用、断线续接、旧历史回放）、`host-down`、`host-reconnecting`、`session-reconnecting`、`many-sessions`、`update-available`、`update-failed`、`daemon-old`、`new-session`、`dialog-add-host`、`dialog-agent-defaults`、`long`、`long-back`、`session-focus`、`turns`、`files`（文件工具的 diff 与计数）、`work`（命令输出与错误、子 agent、压缩、计划条）、`ask`（提问表单）、`web`（搜索结果链接、抓取失败、MCP 与未知工具）、`markdown` / `markdown-top` / `markdown-stream` / `markdown-streaming` / `markdown-link`（CYCL-53 的对照样例：长回答的版式与折叠、逐批流式时视图停在底部且块不重画、链接确认）等。
 
