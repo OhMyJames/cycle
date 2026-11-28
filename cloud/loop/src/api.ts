@@ -846,6 +846,7 @@ export class LoopApiHandler {
     }
     const { verb, keys, reason, confirmed, actor, actorKind } = p.data;
     const project = this.#project(p.data.project);
+    if (verb === "approve" && actorKind !== "desktop") throw invalid("desktop_only");
     if (verb === "approve" && !confirmed) throw invalid("unconfirmed");
     // One write call at a time per Project: two clients approving the same card must not both write.
     const before = this.#writing.get(project.projectKey) ?? Promise.resolve();
