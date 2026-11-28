@@ -328,3 +328,46 @@ test("a session's agent is named only where it tells sessions apart", () => {
   // None can run: the one listed is still the only one there is.
   expect(agentLabel([info("claude", "Claude", false)], "claude")).toBeUndefined();
 });
+
+test("workspacesOf with excludeLoop omits Loop-origin and known legacy Loop sessions from lists and unread counts (CYC-534)", () => {
+  const human = on("local", "h1", {
+    cwd: "/work/cycle",
+    updatedAt: "2026-11-28T01:00:00.000Z",
+    unread: false,
+  });
+  const loopOrigin = on("local", "l1", {
+    cwd: "/work/cycle",
+    updatedAt: "2026-11-28T02:00:00.000Z",
+    unread: true,
+    state: "running",
+    origin: { kind: "loop", project: "CYC", run: "CYC-517", role: "shape" },
+  });
+  const legacyLoop = on("local", "l2", {
+    cwd: "/work/cycle",
+    updatedAt: "2026-11-28T02:30:00.000Z",
+    unread: true,
+  });
+  const loopOnlyWorkspace = on("local", "l3", {
+    cwd: "/work/auto-only",
+    updatedAt: "2026-11-28T02:45:00.000Z",
+    unread: true,
+    origin: { kind: "loop", project: "DOC", run: "DOC-1", role: "dev" },
+  });
+
+  const workspaces = workspacesOf([human, loopOrigin, legacyLoop, loopOnlyWorkspace], {
+    excludeLoop: true,
+    knownLoopSessionIds: new Set(["l2"]),
+  });
+  const cycleWs = workspaces.find((w) => w.cwd === "/work/cycle");
+  const autoOnlyWs = workspaces.find((w) => w.cwd === "/work/auto-only");
+
+  expect(cycleWs?.sessions.map((s) => s.sessionId)).toEqual(["h1"]);
+  expect(cycleWs?.counts).toEqual({ "needs-you": 0, running: 0, background: 0, unread: 0 });
+  // A workspace that only has Loop sessions still appears so its Kanban & Timeline stay reachable.
+  expect(autoOnlyWs?.sessions).toEqual([]);
+  expect(autoOnlyWs?.counts).toEqual({ "needs-you": 0, running: 0, background: 0, unread: 0 });
+
+  // When every workspace only contains Loop sessions, currentWorkspace falls back to the first workspace.
+  const onlyLoop = workspacesOf([loopOnlyWorkspace], { excludeLoop: true });
+  expect(currentWorkspace(onlyLoop, {})?.cwd).toBe("/work/auto-only");
+});

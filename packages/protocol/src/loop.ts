@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SessionOriginRoleSchema } from "./meta.ts";
 
 /**
  * The Loop server's methods, `projects/list` and `runs/list` (docs/protocol.md §17). The Loop server is its own
@@ -106,6 +107,7 @@ export const LOOP_INTENTS_RETRY = "loop/intents/retry";
 export const LOOP_STATUS = "loop/status";
 export const LOOP_GRAPH_ACT = "loop/graph/act";
 export const LOOP_RUN_CANCEL = "loop/run/cancel";
+export const LOOP_TIMELINE_LIST = "loop/timeline/list";
 
 /** The most bytes of one request line; a connection that sends more without a newline is closed. */
 export const LOOP_MAX_LINE_BYTES = 1_048_576;
@@ -469,3 +471,104 @@ export const LoopStatusResultSchema = z.object({
   ),
 });
 export type LoopStatusResult = z.infer<typeof LoopStatusResultSchema>;
+
+/** Paginated chronological progress feed of a Loop Project: runs + graph nodes + planning rounds (CYC-534). */
+export const LoopTimelineListParamsSchema = z.object({
+  project: z.string().min(1),
+  limit: z.number().int().min(1).max(100).default(30),
+  before: z.string().min(1).optional(),
+});
+export type LoopTimelineListParams = z.input<typeof LoopTimelineListParamsSchema>;
+
+export const LoopTimelineStepStatusSchema = z.enum([
+  "pending",
+  "running",
+  "passed",
+  "failed",
+  "blocked",
+  "skipped",
+]);
+export type LoopTimelineStepStatus = z.infer<typeof LoopTimelineStepStatusSchema>;
+
+export const LoopTimelineStepSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  role: SessionOriginRoleSchema,
+  status: LoopTimelineStepStatusSchema,
+  sessionId: z.string().min(1).nullable(),
+  startedAt: z.string().min(1).nullable(),
+  finishedAt: z.string().min(1).nullable(),
+  summary: z.string().nullable(),
+  error: z.string().nullable(),
+});
+export type LoopTimelineStep = z.infer<typeof LoopTimelineStepSchema>;
+
+export const LoopTimelineRunEntrySchema = z.object({
+  entryKind: z.literal("run"),
+  id: z.string().min(1),
+  key: z.string().min(1),
+  title: z.string(),
+  kind: z.enum(["dev", "research"]),
+  phase: z.string().min(1),
+  state: LoopRunStateSchema,
+  round: z.number().int().min(0),
+  startedAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+  prUrl: z.string().nullable(),
+  blockedReason: z.string().nullable(),
+  graph: LoopGraphSummarySchema.nullable(),
+  steps: z.array(LoopTimelineStepSchema),
+});
+export type LoopTimelineRunEntry = z.infer<typeof LoopTimelineRunEntrySchema>;
+
+export const LoopTimelinePlanItemSchema = z.object({
+  key: z.string().min(1),
+  state: z.enum([
+    "waiting",
+    "shape",
+    "shape_qa",
+    "writing",
+    "done",
+    "stopped",
+    "asked",
+    "abandoned",
+  ]),
+  round: z.number().int().min(0),
+  resultKind: z.enum(["rewrite", "split"]).nullable(),
+  splitCount: z.number().int().min(0),
+  stoppedReason: z.string().nullable(),
+  shapeSessionId: z.string().min(1).nullable(),
+  qaSessionId: z.string().min(1).nullable(),
+});
+export type LoopTimelinePlanItem = z.infer<typeof LoopTimelinePlanItemSchema>;
+
+export const LoopTimelinePlanEntrySchema = z.object({
+  entryKind: z.literal("plan"),
+  id: z.string().min(1),
+  planId: z.string().min(1),
+  phase: z.enum(["triage", "shaping", "finished", "abandoned"]),
+  state: z.enum(["active", "done"]),
+  startedAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+  endedAt: z.string().min(1).nullable(),
+  candidateCount: z.number().int().min(0),
+  stoppedReason: z.string().nullable(),
+  triageSessionId: z.string().min(1).nullable(),
+  items: z.array(LoopTimelinePlanItemSchema),
+});
+export type LoopTimelinePlanEntry = z.infer<typeof LoopTimelinePlanEntrySchema>;
+
+export const LoopTimelineEntrySchema = z.discriminatedUnion("entryKind", [
+  LoopTimelineRunEntrySchema,
+  LoopTimelinePlanEntrySchema,
+]);
+export type LoopTimelineEntry = z.infer<typeof LoopTimelineEntrySchema>;
+
+export const LoopTimelineListResultSchema = z.object({
+  project: z.string().min(1),
+  entries: z.array(LoopTimelineEntrySchema),
+  hasMore: z.boolean(),
+  nextBefore: z.string().min(1).nullable(),
+  knownSessionIds: z.array(z.string().min(1)),
+});
+export type LoopTimelineListResult = z.infer<typeof LoopTimelineListResultSchema>;

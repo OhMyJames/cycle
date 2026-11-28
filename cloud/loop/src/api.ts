@@ -13,6 +13,7 @@ import {
   LOOP_STATUS,
   LOOP_TICKET_GET,
   LOOP_TICKETS_ACT,
+  LOOP_TIMELINE_LIST,
   LoopApiRunsListParamsSchema,
   type LoopBoard,
   type LoopCard,
@@ -41,12 +42,17 @@ import {
   LoopTicketGetParamsSchema,
   type LoopTicketResult,
   LoopTicketsActParamsSchema,
+  type LoopTimelineEntry,
+  LoopTimelineListParamsSchema,
+  type LoopTimelineListResult,
+  type LoopTimelineStep,
+  type LoopTimelineStepStatus,
 } from "@cycle/protocol";
 import { parseVerify } from "./criteria.ts";
 import { SqliteStore } from "./db/store.ts";
 import type { TaskGraph } from "./graph.ts";
 import { toIssue } from "./plan-mcp.ts";
-import type { LoopStore, RunRecord } from "./store.ts";
+import { type LoopStore, type PlanRound, prUrlOf, type RunRecord } from "./store.ts";
 import type { Issue, IssueComment } from "./types.ts";
 
 /** What the API uses of itsaplan. `PlanTracker` has all of it; tests give a fake. */
@@ -342,6 +348,7 @@ export class LoopApiHandler {
       LOOP_INTENTS_RETRY,
       LOOP_GRAPH_ACT,
       LOOP_RUN_CANCEL,
+      LOOP_TIMELINE_LIST,
       LOOP_STATUS,
     ].includes(method);
   }
@@ -397,6 +404,11 @@ export class LoopApiHandler {
         return this.#graphAct(params);
       case LOOP_RUN_CANCEL:
         return this.#cancelRun(params);
+      case LOOP_TIMELINE_LIST: {
+        const p = LoopTimelineListParamsSchema.safeParse(params);
+        if (!p.success) throw invalid("invalid_params");
+        return this.#timeline(this.#project(p.data.project), p.data.limit, p.data.before);
+      }
       case LOOP_STATUS:
         return this.#status();
       default:
@@ -958,6 +970,140 @@ export class LoopApiHandler {
     return { cancelled };
   }
 
+  // ---- timeline (CYC-534) ----
+
+  async #timeline(
+    project: ProjectApi,
+    limit: number,
+    before: string | undefined,
+  ): Promise<LoopTimelineListResult> {
+    const [runs, plans] = await Promise.all([project.store.all(), project.store.plans()]);
+    const known = new Set<string>();
+    const addKnown = (id: string | null | undefined) => {
+      if (id !== null && id !== undefined && id !== "") known.add(id);
+    };
+    const db = sqlite(project.store);
+    if (db !== null) {
+      for (const notice of db.notices()) addKnown(notice.sessionId);
+    }
+
+    const entries: LoopTimelineEntry[] = [];
+    for (const run of runs) {
+      for (const replaced of run.replacedSessions) addKnown(replaced);
+      const graph = await project.store.loadGraph(run.key);
+      const steps: LoopTimelineStep[] = [];
+      const seenSessions = new Set<string>();
+      if (graph !== undefined) {
+        const ordered = [...graph.nodes].sort((a, b) => a.position - b.position);
+        for (const node of ordered) {
+          addKnown(node.sessionId);
+          if (node.sessionId !== null) seenSessions.add(node.sessionId);
+          steps.push({
+            id: `node:${node.id}`,
+            label: node.title,
+            role: "dev",
+            status: node.status,
+            sessionId: node.sessionId,
+            startedAt: node.startedAt,
+            finishedAt: node.finishedAt,
+            summary: node.summary,
+            error: node.lastError,
+          });
+        }
+      }
+      const activeSession = sessionOfPhase(
+        run,
+        run.phase === "blocked" ? (run.resumeFrom ?? run.phase) : run.phase,
+      );
+      for (const ref of sessionsOf(run)) {
+        addKnown(ref.id);
+        if (seenSessions.has(ref.id)) continue;
+        seenSessions.add(ref.id);
+        const status: LoopTimelineStepStatus =
+          run.phase === "done"
+            ? "passed"
+            : run.phase === "blocked"
+              ? activeSession?.id === ref.id
+                ? "blocked"
+                : "passed"
+              : activeSession?.id === ref.id
+                ? "running"
+                : "passed";
+        steps.push({
+          id: `session:${ref.kind}:${ref.id}`,
+          label: ref.kind,
+          role: ref.kind,
+          status,
+          sessionId: ref.id,
+          startedAt: null,
+          finishedAt: null,
+          summary: null,
+          error: null,
+        });
+      }
+      entries.push({
+        entryKind: "run",
+        id: `run:${run.key}`,
+        key: run.key,
+        title: run.title,
+        kind: run.kind,
+        phase: run.phase,
+        state: runState(run),
+        round: run.round,
+        startedAt: run.startedAt,
+        updatedAt: run.updatedAt,
+        prUrl: prUrlOf(run),
+        blockedReason: run.blockedReason,
+        graph: graph === undefined ? null : graphSummaryOf(graph),
+        steps,
+      });
+    }
+
+    for (const plan of plans) {
+      addKnown(plan.triageSessionId);
+      for (const item of plan.queue) {
+        addKnown(item.shapeSessionId);
+        addKnown(item.qaSessionId);
+      }
+      entries.push(planTimelineEntry(plan));
+    }
+
+    entries.sort((a, b) =>
+      b.updatedAt > a.updatedAt
+        ? 1
+        : b.updatedAt < a.updatedAt
+          ? -1
+          : b.id > a.id
+            ? 1
+            : b.id < a.id
+              ? -1
+              : 0,
+    );
+
+    let filtered = entries;
+    if (before !== undefined) {
+      const sep = before.indexOf("|");
+      const cursorTs = sep === -1 ? before : before.slice(0, sep);
+      const cursorId = sep === -1 ? "" : before.slice(sep + 1);
+      filtered = entries.filter(
+        (e) =>
+          e.updatedAt < cursorTs ||
+          (e.updatedAt === cursorTs && cursorId !== "" && e.id < cursorId),
+      );
+    }
+
+    const page = filtered.slice(0, limit);
+    const hasMore = filtered.length > limit;
+    const last = page[page.length - 1];
+    return {
+      project: project.projectKey,
+      entries: page,
+      hasMore,
+      nextBefore: hasMore && last !== undefined ? `${last.updatedAt}|${last.id}` : null,
+      knownSessionIds: [...known],
+    };
+  }
+
   // ---- status ----
 
   async #status(): Promise<LoopStatusResult> {
@@ -1017,6 +1163,30 @@ const SESSION_KINDS = [
 const sessionKindOf = (kind: string | null): LoopSessionKind | null =>
   kind !== null && SESSION_KINDS.includes(kind) ? (kind as LoopSessionKind) : null;
 
+const planTimelineEntry = (plan: PlanRound): Extract<LoopTimelineEntry, { entryKind: "plan" }> => ({
+  entryKind: "plan",
+  id: `plan:${plan.id}`,
+  planId: plan.id,
+  phase: plan.phase,
+  state: plan.phase === "finished" || plan.phase === "abandoned" ? "done" : "active",
+  startedAt: plan.startedAt,
+  updatedAt: plan.updatedAt,
+  endedAt: plan.endedAt,
+  candidateCount: plan.candidates.length,
+  stoppedReason: plan.stoppedReason,
+  triageSessionId: plan.triageSessionId,
+  items: plan.queue.map((item) => ({
+    key: item.key,
+    state: item.state,
+    round: item.round,
+    resultKind: item.output?.kind ?? null,
+    splitCount: item.created.length,
+    stoppedReason: item.stoppedReason,
+    shapeSessionId: item.shapeSessionId,
+    qaSessionId: item.qaSessionId,
+  })),
+});
+
 /** The counts a call reports, and nothing of what is in it. */
 const counts = (method: string, result: unknown): string => {
   const r = rec(result);
@@ -1029,6 +1199,8 @@ const counts = (method: string, result: unknown): string => {
   if (method === LOOP_NOTICES_LIST) return `notices=${list(r.notices).length}`;
   if (method === LOOP_TICKET_GET || method === LOOP_GRAPH_ACT) return "ok";
   if (method === LOOP_API_RUNS_LIST) return `runs=${list(r.runs).length}`;
+  if (method === LOOP_TIMELINE_LIST)
+    return `entries=${list(r.entries).length} hasMore=${r.hasMore === true}`;
   if (method === LOOP_BOARD_GET)
     return `cards=${list(r.columns).reduce((n, c) => n + list(c.cards).length, 0)} stale=${r.stale === true}`;
   return "ok";

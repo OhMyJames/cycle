@@ -168,6 +168,17 @@ function AppWindow() {
   const loopProjects = useAppState((s) => s.loop.projects);
   const loopConnected = useAppState((s) => s.loop.connected);
   const workspaceRepos = useAppState((s) => s.loop.workspaceRepos);
+  const knownLoopSessions = useAppState((s) => s.loop.knownSessions);
+  const knownLoopSessionIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const list of Object.values(knownLoopSessions)) {
+      for (const id of list) ids.add(id);
+    }
+    return ids;
+  }, [knownLoopSessions]);
+  const [timelineReturn, setTimelineReturn] = useState<
+    { projectKey: string; sessionId: string } | undefined
+  >(undefined);
   const loopNoticeCount = useAppState((s) =>
     s.loop.projects.reduce((sum, p) => {
       const answer = s.loop.notices[p.projectKey];
@@ -184,6 +195,7 @@ function AppWindow() {
     session,
     blank,
     pinned,
+    knownLoopSessionIds,
   });
   const trust = useWorkspaceTrust(nav.current, status, panel !== "none");
   useMarkRead(session, status, places.base === "sessions");
@@ -215,6 +227,12 @@ function AppWindow() {
     return matchLoopProject(loopProjects, workspaceRepos[workspace.cwd]);
   };
   const currentLoopProject = matchedProjectOf(nav.current);
+  // Preload known Loop session IDs for the matched project so legacy pre-CYC-534 Loop sessions stay out of the sidebar.
+  useEffect(() => {
+    if (!ready || loopConnected !== true || currentLoopProject === undefined) return;
+    if (Object.hasOwn(knownLoopSessions, currentLoopProject.projectKey)) return;
+    void store.loadLoopTimeline(currentLoopProject.projectKey);
+  }, [ready, loopConnected, currentLoopProject, knownLoopSessions, store]);
   const syncWorkspaceForProject = (projectKey: string) => {
     const project = loopProjects.find((p) => p.projectKey === projectKey);
     if (project === undefined) return;
@@ -428,6 +446,7 @@ function AppWindow() {
         showArchived={nav.showArchived}
         pinned={pinned}
         onSelectSession={(chosen) => {
+          setTimelineReturn(undefined);
           const alreadyOpen =
             blank === undefined &&
             chosen.locationId === selectedLocation &&
@@ -513,6 +532,23 @@ function AppWindow() {
               shows={blank !== undefined ? "blank" : view !== undefined ? "session" : "nothing"}
             />
             {blank === undefined ? <WorktreeSetupNotice worktree={session?.worktree} /> : null}
+            {blank === undefined &&
+            timelineReturn !== undefined &&
+            session?.sessionId === timelineReturn.sessionId ? (
+              <div data-slot="loop-timeline-return">
+                <span>{t("loop.timeline.viewingLoopSession")}</span>
+                <Button
+                  data-variant="ghost"
+                  onClick={() => {
+                    const back = timelineReturn.projectKey;
+                    setTimelineReturn(undefined);
+                    places.openLoopProject(back, "timeline", "timeline");
+                  }}
+                >
+                  {t("loop.timeline.backToTimeline")}
+                </Button>
+              </div>
+            ) : null}
           </ShellNotices>
           {blank !== undefined ? (
             <BlankConversationView
@@ -604,6 +640,9 @@ function AppWindow() {
               }}
               onBack={places.loopBack}
               onClose={places.leaveLoop}
+              onTimelineSessionOpened={(projectKey, sessionId) =>
+                setTimelineReturn({ projectKey, sessionId })
+              }
               active={place.id === "loop"}
             />
           </Place>
@@ -660,6 +699,7 @@ function AppWindow() {
         status={status}
         sessions={sessionsByLocation}
         agents={agentsByLocation}
+        knownLoopSessionIds={knownLoopSessionIds}
         onPick={async (locationId, sessionId) => {
           // An archived session is not in the list unless archived ones are shown: show them, or the pick would select a hidden row.
           if (sessionsByLocation[locationId]?.find((s) => s.sessionId === sessionId)?.archived)

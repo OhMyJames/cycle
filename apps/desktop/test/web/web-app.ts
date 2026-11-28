@@ -171,6 +171,7 @@ export const startWebApp = async (options: WebAppOptions): Promise<WebApp> => {
     workspaceRepo: () => null,
     loopRuns: () => ({ kind: "disconnected" }),
     loopBoard: () => ({ kind: "no_server" }),
+    loopTimeline: () => ({ kind: "no_server" }),
     loopTicket: () => ({ kind: "no_server" }),
     loopRun: () => ({ kind: "none" }),
     loopCancelRun: () => ({ kind: "failed", reason: "no_server" }),

@@ -22,6 +22,7 @@ export async function claim(h: FlowHost, run: DevRun, issue: Issue, save: Save):
     if (fetched.code !== 0) throw new Blocked(`git fetch 失败：${tail(fetched.output)}`);
     const created = await sessions.create({
       role: "dev",
+      run: run.key,
       agent: config.devAgent,
       ...(config.devModel ? { model: config.devModel } : {}),
       ...(config.devEffort ? { effort: config.devEffort } : {}),

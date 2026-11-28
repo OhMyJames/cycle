@@ -27,6 +27,7 @@ export const MAIN_METHODS = [
   "workspaceRepo",
   "loopRuns",
   "loopBoard",
+  "loopTimeline",
   "loopTicket",
   "loopRun",
   "loopCancelRun",

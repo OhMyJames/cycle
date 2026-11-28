@@ -20,6 +20,7 @@ import {
   LOOP_RUNS_LIST,
   LOOP_TICKET_GET,
   LOOP_TICKETS_ACT,
+  LOOP_TIMELINE_LIST,
   LoopBoardSchema,
   LoopEventsListResultSchema,
   LoopGraphActResultSchema,
@@ -31,6 +32,7 @@ import {
   LoopRunsListResultSchema,
   LoopTicketDetailSchema,
   LoopTicketsActResultSchema,
+  LoopTimelineListResultSchema,
 } from "@cycle/protocol";
 import type {
   LoopActFailure,
@@ -50,6 +52,7 @@ import type {
   LoopRunAnswer,
   LoopRunsAnswer,
   LoopTicketAnswer,
+  LoopTimelineAnswer,
 } from "@cycle/ui/api";
 
 export type LoopOptions = {
@@ -943,6 +946,41 @@ export const answerRuns = async (
   const runs: LoopRunsAnswer = feed ? await feed.read() : { kind: "disconnected" };
   track("loop_runs_read", { result: runs.kind });
   return runs;
+};
+
+/** Reads one page of a Loop Project's chronological progress (CYC-534); reports outcome only. */
+export const answerTimeline = async (
+  loop: LoopOptions | undefined,
+  projectKey: unknown,
+  options: unknown,
+  track: (event: "loop_timeline_read", props: { result: LoopTimelineAnswer["kind"] }) => void,
+): Promise<LoopTimelineAnswer> => {
+  if (loop === undefined) return { kind: "no_server" };
+  if (!validKey(projectKey)) return { kind: "unreachable" };
+  const opts =
+    typeof options === "object" && options !== null ? (options as Record<string, unknown>) : {};
+  const limit =
+    typeof opts.limit === "number" &&
+    Number.isInteger(opts.limit) &&
+    opts.limit >= 1 &&
+    opts.limit <= 100
+      ? opts.limit
+      : undefined;
+  const before = typeof opts.before === "string" && opts.before !== "" ? opts.before : undefined;
+  const reply = await callLoop(loop.socket, LOOP_TIMELINE_LIST, {
+    project: projectKey,
+    ...(limit !== undefined ? { limit } : {}),
+    ...(before !== undefined ? { before } : {}),
+  });
+  let answer: LoopTimelineAnswer;
+  if (reply.kind === "no_server") answer = { kind: "no_server" };
+  else if (reply.kind !== "ok") answer = { kind: "unreachable" };
+  else {
+    const parsed = LoopTimelineListResultSchema.safeParse(reply.result);
+    answer = parsed.success ? { kind: "ok", ...parsed.data } : { kind: "unreachable" };
+  }
+  track("loop_timeline_read", { result: answer.kind });
+  return answer;
 };
 
 /**

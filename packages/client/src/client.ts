@@ -79,6 +79,7 @@ import {
   providersRemove,
   providersSave,
   type ResultOf,
+  type SessionOrigin,
   type SessionPageOptions,
   type StorageAgent,
   type StorageCleanProblem,
@@ -430,10 +431,13 @@ export class CycleClient {
     environment?: unknown;
     /** Make a worktree and run the session in it (docs/protocol.md §6 "Worktree"). Only to a daemon that has `worktrees`. */
     worktree?: { base?: string; name?: string };
+    /** Who started the session (docs/protocol.md §6 "会话来源"). Absent for human sessions. */
+    origin?: SessionOrigin;
   }): Promise<string> {
     const meta: Record<string, unknown> = {};
     if (params.agent !== undefined) meta[META.agent] = params.agent;
     if (params.config !== undefined) meta[META.config] = params.config;
+    if (params.origin !== undefined) meta[META.origin] = params.origin;
     if (params.environment !== undefined) {
       if (this.#capabilities.environments !== true)
         throw new Error("This daemon is too old to take an environment");

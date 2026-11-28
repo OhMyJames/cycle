@@ -29,6 +29,8 @@ export type SearchDialogProps = {
   agents: Record<string, AgentInfo[]>;
   onPick: (locationId: string, sessionId: string) => void;
   onNewSession: () => void;
+  /** Session IDs known to Loop's store for hiding Loop sessions by default in Search (CYC-534). */
+  knownLoopSessionIds?: ReadonlySet<string>;
 };
 
 /**
@@ -62,8 +64,10 @@ export function SearchDialog(props: SearchDialogProps) {
       })),
       away,
       showArchived: true,
+      excludeLoop: true,
+      knownLoopSessionIds: props.knownLoopSessionIds,
     },
-  );
+  ).filter((w) => w.sessions.length > 0);
   // A row's value names it; what it stands for is looked up, not parsed out of the text (an id may hold any character).
   const rowValue = (locationId: string, sessionId: string) => `session:${locationId}/${sessionId}`;
   const rows = new Map<string, { locationId: string; sessionId: string }>();

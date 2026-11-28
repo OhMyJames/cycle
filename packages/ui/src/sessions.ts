@@ -110,9 +110,18 @@ export type Workspace = {
   counts: Counts;
 };
 
+/** True when a session was created by Loop (via `_meta["cycle/origin"]` or known to Loop's store, CYC-534). */
+export const isLoopSession = (
+  session: Pick<SessionSummary, "sessionId" | "origin">,
+  knownLoopSessionIds?: ReadonlySet<string>,
+): boolean =>
+  session.origin?.kind === "loop" || knownLoopSessionIds?.has(session.sessionId) === true;
+
 /**
  * Every workspace: grouped by location (this computer first, then in the order the locations are listed), and inside a location the
  * one with the newest session first. A workspace with only archived sessions is there only when they are asked for.
+ * When `excludeLoop` is set (CYC-534), Loop-origin sessions are left out of `sessions` and `counts` (while a workspace
+ * that only has Loop sessions still stays selectable in the switcher so its Kanban & Timeline remain reachable).
  */
 export const workspacesOf = (
   sessions: readonly SessionSummary[],
@@ -120,24 +129,42 @@ export const workspacesOf = (
     locations = [],
     away,
     showArchived = false,
+    excludeLoop = false,
+    knownLoopSessionIds,
   }: {
     locations?: readonly LocationLabel[] | undefined;
     away?: ReadonlySet<string> | undefined;
     showArchived?: boolean | undefined;
+    excludeLoop?: boolean | undefined;
+    knownLoopSessionIds?: ReadonlySet<string> | undefined;
   } = {},
 ): Workspace[] => {
-  const byKey = new Map<string, SessionSummary[]>();
+  const byKey = new Map<
+    string,
+    { locationId: string; cwd: string; sessions: SessionSummary[]; latest: SessionSummary }
+  >();
   for (const session of sessions.toSorted(newest)) {
     if (session.archived && !showArchived) continue;
-    const list = byKey.get(workspaceKey(session));
-    if (list === undefined) byKey.set(workspaceKey(session), [session]);
-    else list.push(session);
+    const key = workspaceKey(session);
+    const loop = excludeLoop && isLoopSession(session, knownLoopSessionIds);
+    const existing = byKey.get(key);
+    if (existing === undefined) {
+      byKey.set(key, {
+        locationId: session.locationId,
+        cwd: folderOf(session),
+        sessions: loop ? [] : [session],
+        latest: session,
+      });
+    } else if (!loop) {
+      existing.sessions.push(session);
+    }
   }
-  const known = [...byKey].map(([key, list]) => ({
+  const known = [...byKey].map(([key, item]) => ({
     key,
-    locationId: list[0]?.locationId ?? "",
-    cwd: list[0] !== undefined ? folderOf(list[0]) : "",
-    sessions: list,
+    locationId: item.locationId,
+    cwd: item.cwd,
+    sessions: item.sessions,
+    latest: item.latest,
   }));
   const names = namesOf(known, locations);
   const rank = (locationId: string): number => {
@@ -146,23 +173,30 @@ export const workspacesOf = (
     return local ? -1 : at === -1 ? locations.length : at;
   };
   return known
-    .map((w): Workspace => {
+    .map((w) => {
       const counts = noCounts();
       for (const session of w.sessions) {
         const mark = markOf(session, away);
         if (mark !== undefined) counts[mark] += 1;
       }
-      return { ...w, name: names.get(w.key) ?? "", counts };
+      return {
+        key: w.key,
+        locationId: w.locationId,
+        cwd: w.cwd,
+        sessions: w.sessions,
+        name: names.get(w.key) ?? "",
+        counts,
+        latest: w.latest,
+      };
     })
     .toSorted((a, b) => {
-      const left = a.sessions[0];
-      const right = b.sessions[0];
+      const left = a.sessions[0] ?? a.latest;
+      const right = b.sessions[0] ?? b.latest;
       return (
-        rank(a.locationId) - rank(b.locationId) ||
-        (left !== undefined && right !== undefined ? younger(left, right) : 0) ||
-        before(a.key, b.key)
+        rank(a.locationId) - rank(b.locationId) || younger(left, right) || before(a.key, b.key)
       );
-    });
+    })
+    .map(({ latest: _latest, ...workspace }): Workspace => workspace);
 };
 
 const parts = (folder: string): string[] => folder.split("/").filter(Boolean);
@@ -225,7 +259,10 @@ export const currentWorkspace = (
     .filter((s): s is SessionSummary => s !== undefined)
     .toSorted(newest)[0];
   return (
-    named(chosen) ?? (open && named(workspaceKey(open))) ?? named(recent && workspaceKey(recent))
+    named(chosen) ??
+    (open && named(workspaceKey(open))) ??
+    named(recent && workspaceKey(recent)) ??
+    workspaces[0]
   );
 };
 

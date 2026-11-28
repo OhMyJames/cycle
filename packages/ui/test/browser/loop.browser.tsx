@@ -172,6 +172,16 @@ test("clicking Loop always opens Overview; sidebar Kanban and Timeline open the 
   const { user } = await mount({
     loopProjects: { kind: "ok", projects: [cycle] },
     loopBoards: { CYC: board },
+    loopTimelines: {
+      CYC: {
+        kind: "ok",
+        project: "CYC",
+        entries: [],
+        hasMore: false,
+        nextBefore: null,
+        knownSessionIds: [],
+      },
+    },
   });
   // Clicking Loop lands directly on Overview (even with a single project).
   await screen.findByRole("region", { name: "Projects" });
@@ -180,9 +190,9 @@ test("clicking Loop always opens Overview; sidebar Kanban and Timeline open the 
   // Sidebar Kanban opens the project's Kanban board.
   await user.click(await screen.findByRole("button", { name: "Kanban" }));
   await screen.findByRole("region", { name: "In Progress" });
-  // Sidebar Timeline opens the Timeline placeholder, with a button back to Kanban.
+  // Sidebar Timeline opens the Timeline view, with a button back to Kanban when empty.
   await user.click(await screen.findByRole("button", { name: "Timeline" }));
-  await screen.findByText("Loop timeline is coming soon");
+  await screen.findByText("No Loop activity yet");
   await user.click(screen.getByRole("button", { name: "Open Kanban" }));
   await screen.findByRole("region", { name: "In Progress" });
   // Clicking Loop in the top actions always returns to Overview.
@@ -1101,6 +1111,24 @@ test("sidebar keeps New/Search/Connectors/Loop at top, shows Kanban and Timeline
     connected: true,
     loopProjects: { kind: "ok", projects: [cycle, docs] },
     loopBoards: { CYC: board, DOC: board },
+    loopTimelines: {
+      CYC: {
+        kind: "ok",
+        project: "CYC",
+        entries: [],
+        hasMore: false,
+        nextBefore: null,
+        knownSessionIds: [],
+      },
+      DOC: {
+        kind: "ok",
+        project: "DOC",
+        entries: [],
+        hasMore: false,
+        nextBefore: null,
+        knownSessionIds: [],
+      },
+    },
     workspaceRepos: {
       "/work/cycle-v1": "CLAWDOT/CYCLE",
       "/work/plain": null,
@@ -1142,9 +1170,9 @@ test("sidebar keeps New/Search/Connectors/Loop at top, shows Kanban and Timeline
   expect(kanbanBtn.getAttribute("aria-current")).toBe("page");
   expect(timelineBtn.getAttribute("aria-current")).toBeNull();
 
-  // Clicking Timeline opens the placeholder page with breadcrumbs and a button to Kanban.
+  // Clicking Timeline opens the Timeline view with breadcrumbs and a button to Kanban when empty.
   await user.click(timelineBtn);
-  expect(await screen.findByText("Loop timeline is coming soon")).toBeTruthy();
+  expect(await screen.findByText("No Loop activity yet")).toBeTruthy();
   expect(screen.getByRole("navigation", { name: "Where you are" }).textContent).toBe(
     "Cycle/Timeline",
   );
@@ -1983,4 +2011,268 @@ test("board alert strip, sidebar notice badge, intent retry, and loop-activity l
     expect(fake.named("loopRun").length).toBeGreaterThan(runsBefore);
   });
   expect(fake.named("loopTicket").length).toBe(ticketsBefore);
+});
+
+test("CYC-534: Loop sessions stay out of the sidebar session list and appear on the project Timeline with filters, pagination, and one-click return", async () => {
+  const nowIso = new Date().toISOString();
+  const earlierIso = new Date(Date.now() - 3 * 86_400_000).toISOString();
+  const user = userEvent.setup();
+  const timelineAnswer = (opts?: { limit?: number; before?: string }) =>
+    opts?.before !== undefined
+      ? {
+          kind: "ok" as const,
+          project: "CYC",
+          entries: [
+            {
+              entryKind: "run" as const,
+              id: "run:CYC-501",
+              key: "CYC-501",
+              title: "Older research ticket",
+              kind: "research" as const,
+              phase: "done",
+              state: "done" as const,
+              round: 1,
+              startedAt: earlierIso,
+              updatedAt: earlierIso,
+              prUrl: null,
+              blockedReason: null,
+              graph: null,
+              steps: [
+                {
+                  id: "session:research:sess-res-501",
+                  label: "research",
+                  role: "research" as const,
+                  status: "passed" as const,
+                  sessionId: "sess-res-501",
+                  startedAt: null,
+                  finishedAt: null,
+                  summary: null,
+                  error: null,
+                },
+              ],
+            },
+          ],
+          hasMore: false,
+          nextBefore: null,
+          knownSessionIds: ["sess-legacy-loop", "sess-dev-517", "sess-shape-517", "sess-res-501"],
+        }
+      : {
+          kind: "ok" as const,
+          project: "CYC",
+          entries: [
+            {
+              entryKind: "run" as const,
+              id: "run:CYC-517",
+              key: "CYC-517",
+              title: "Implement timeline page",
+              kind: "dev" as const,
+              phase: "qa",
+              state: "active" as const,
+              round: 2,
+              startedAt: nowIso,
+              updatedAt: nowIso,
+              prUrl: "https://github.com/clawdot/cycle/pull/390",
+              blockedReason: null,
+              graph: {
+                source: "plan_doc" as const,
+                total: 2,
+                passed: 1,
+                failed: 0,
+                blocked: 0,
+                running: 1,
+                currentNodeId: "n2",
+                currentNodeTitle: "Wire UI",
+              },
+              steps: [
+                {
+                  id: "node:n1",
+                  label: "Protocol schema",
+                  role: "dev" as const,
+                  status: "passed" as const,
+                  sessionId: "sess-dev-517",
+                  startedAt: nowIso,
+                  finishedAt: nowIso,
+                  summary: "Added origin and timeline RPC",
+                  error: null,
+                },
+              ],
+            },
+            {
+              entryKind: "plan" as const,
+              id: "plan:2026-11-28T00-00-00-000Z",
+              planId: "2026-11-28T00-00-00-000Z",
+              phase: "finished" as const,
+              state: "done" as const,
+              startedAt: nowIso,
+              updatedAt: nowIso,
+              endedAt: nowIso,
+              candidateCount: 3,
+              stoppedReason: null,
+              triageSessionId: "sess-legacy-loop",
+              items: [
+                {
+                  key: "CYC-517",
+                  state: "stopped" as const,
+                  round: 1,
+                  resultKind: null,
+                  splitCount: 0,
+                  stoppedReason: "QA found missing test",
+                  shapeSessionId: "sess-shape-517",
+                  qaSessionId: null,
+                },
+              ],
+            },
+          ],
+          hasMore: true,
+          nextBefore: `${nowIso}|plan:2026-11-28T00-00-00-000Z`,
+          knownSessionIds: ["sess-legacy-loop", "sess-dev-517", "sess-shape-517", "sess-res-501"],
+        };
+  const fake = fakeBridge({
+    connected: true,
+    loopProjects: { kind: "ok", projects: [cycle] },
+    workspaceRepos: { "/work": cycle.repo.displayName },
+    loopBoards: { CYC: withTickets({ "In Progress": [ticket(517, "In Progress")] }) },
+    loopTickets: { "CYC-517": detailOf(ticket(517, "In Progress")) },
+    loopTimelines: { CYC: timelineAnswer },
+  });
+  fake.bridge.sessions = async () => [
+    { ...summary("human-1"), title: "My own chat", updatedAt: nowIso },
+    {
+      ...summary("sess-dev-517"),
+      title: "[CYC-517] Dev",
+      unread: true,
+      state: "running",
+      updatedAt: nowIso,
+      origin: { kind: "loop", project: "CYC", run: "CYC-517", role: "dev" },
+    },
+    {
+      ...summary("sess-legacy-loop"),
+      title: "[plan-2026] Triage",
+      unread: true,
+      updatedAt: nowIso,
+    },
+  ];
+
+  await renderApp(fake.bridge);
+  // Sidebar lists only human-initiated sessions; both origin-stamped and known legacy Loop sessions are hidden.
+  await screen.findByRole("option", { name: /My own chat/ });
+  await waitFor(() => {
+    expect(screen.queryByRole("option", { name: /\[CYC-517\] Dev/ })).toBeNull();
+    expect(screen.queryByRole("option", { name: /\[plan-2026\] Triage/ })).toBeNull();
+  });
+
+  // Open project Timeline from sidebar.
+  await user.click(await screen.findByRole("button", { name: "Timeline" }));
+  await screen.findByText("Implement timeline page");
+  expect(screen.getByText("Protocol schema")).toBeTruthy();
+  expect(screen.getByText("Plan round · 3 checked, 0 shaped")).toBeTruthy();
+
+  // Filter by Needs attention -> shows the plan round with a stopped item, hides active dev run.
+  await user.click(screen.getByRole("button", { name: "Needs attention" }));
+  expect(screen.queryByText("Implement timeline page")).toBeNull();
+  expect(screen.getByText("Plan round · 3 checked, 0 shaped")).toBeTruthy();
+  expect(tracked(fake.calls)).toContainEqual([
+    "loop_timeline_filtered",
+    { status: "attention", kind: "all" },
+  ]);
+
+  // Reset filter to All, then load more via pagination.
+  await user.click(screen.getByRole("button", { name: "All" }));
+  await user.click(screen.getByRole("button", { name: "Show more" }));
+  await screen.findByText("Older research ticket");
+
+  // Search narrows to CYC-517.
+  const search = screen.getByRole("searchbox", { name: "Filter by ticket or step…" });
+  await user.type(search, "CYC-517");
+  expect(screen.queryByText("Older research ticket")).toBeNull();
+  expect(screen.getByText("Implement timeline page")).toBeTruthy();
+
+  // Clicking a step's session button opens that session, emits behavior-only analytics, and offers Back to Timeline.
+  await user.click(screen.getByRole("button", { name: "Open Protocol schema" }));
+  await waitFor(() =>
+    expect(fake.named("openSession").some(([, , sid]) => sid === "sess-dev-517")).toBe(true),
+  );
+  expect(tracked(fake.calls)).toContainEqual([
+    "loop_timeline_session_opened",
+    { entry_kind: "run", role: "dev" },
+  ]);
+  // One-click Back to Timeline returns straight to Timeline.
+  await user.click(await screen.findByRole("button", { name: "Back to Timeline" }));
+  await screen.findByText("Implement timeline page");
+
+  // Clicking a ticket key opens the ticket drawer.
+  await user.click(screen.getAllByRole("button", { name: "CYC-517" })[0] as HTMLElement);
+  await screen.findByRole("complementary", { name: "CYC-517" });
+});
+
+test("CYC-534: Timeline shows inline alert when a session is unavailable and renders error state", async () => {
+  const nowIso = new Date().toISOString();
+  const user = userEvent.setup();
+  const fake = fakeBridge({
+    connected: true,
+    loopProjects: { kind: "ok", projects: [cycle, docs] },
+    workspaceRepos: {
+      "/work/cycle": cycle.repo.displayName,
+      "/work/docs": docs.repo.displayName,
+    },
+    loopTimelines: {
+      CYC: {
+        kind: "ok",
+        project: "CYC",
+        entries: [
+          {
+            entryKind: "run",
+            id: "run:CYC-520",
+            key: "CYC-520",
+            title: "Gone session run",
+            kind: "dev",
+            phase: "dev",
+            state: "active",
+            round: 1,
+            startedAt: nowIso,
+            updatedAt: nowIso,
+            prUrl: null,
+            blockedReason: null,
+            graph: null,
+            steps: [
+              {
+                id: "session:dev:missing-session",
+                label: "dev",
+                role: "dev",
+                status: "running",
+                sessionId: "missing-session",
+                startedAt: null,
+                finishedAt: null,
+                summary: null,
+                error: null,
+              },
+            ],
+          },
+        ],
+        hasMore: false,
+        nextBefore: null,
+        knownSessionIds: [],
+      },
+      DOC: { kind: "unreachable" },
+    },
+  });
+  fake.bridge.sessions = async () => [
+    { ...summary("h1"), cwd: "/work/cycle", title: "Cycle chat", updatedAt: nowIso },
+    { ...summary("h2"), cwd: "/work/docs", title: "Docs chat", updatedAt: nowIso },
+  ];
+  await renderApp(fake.bridge);
+  await user.click(await screen.findByRole("button", { name: "Timeline" }));
+  await screen.findByText("Gone session run");
+
+  // Opening a missing session shows an inline alert and does not emit loop_timeline_session_opened.
+  await user.click(screen.getByRole("button", { name: "Open Dev session" }));
+  expect(
+    await screen.findByText("That session is not in the list of any connected location."),
+  ).toBeTruthy();
+  expect(tracked(fake.calls).some(([e]) => e === "loop_timeline_session_opened")).toBe(false);
+
+  // Switching to Docs workspace shows the unreachable error state with retry.
+  await user.click(screen.getByRole("button", { name: /Switch workspace/ }));
+  await user.click(await screen.findByRole("menuitem", { name: /docs/ }));
+  expect(await screen.findByText("Could not load the timeline")).toBeTruthy();
 });

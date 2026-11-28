@@ -332,4 +332,26 @@ describe("the dictionary", () => {
       "long",
     ]);
   });
+
+  test("CYC-534 Loop timeline events accept fixed enums only and reject free text", () => {
+    expect(EVENTS.loop_timeline_read.safeParse({ result: "ok" }).success).toBe(true);
+    expect(
+      EVENTS.loop_timeline_filtered.safeParse({ status: "attention", kind: "plan" }).success,
+    ).toBe(true);
+    expect(
+      EVENTS.loop_timeline_session_opened.safeParse({ entry_kind: "run", role: "graph_planner" })
+        .success,
+    ).toBe(true);
+    expect(
+      EVENTS.loop_timeline_filtered.safeParse({ status: "all", kind: "all", query: "CYC-534" })
+        .success,
+    ).toBe(false);
+    expect(
+      EVENTS.loop_timeline_session_opened.safeParse({
+        entry_kind: "plan",
+        role: "shape",
+        sessionId: "secret-id",
+      }).success,
+    ).toBe(false);
+  });
 });

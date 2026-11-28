@@ -210,6 +210,28 @@ export const EVENTS = {
     view: z.enum(["kanban", "timeline"]),
     from: z.enum(["sidebar", "overview", "timeline", "notification"]),
   }),
+  /** The Timeline page read a Loop Project's chronological progress (CYC-534): only whether it worked. */
+  loop_timeline_read: o({ result: z.enum(["ok", "no_server", "unreachable"]) }),
+  /** The person changed a status or kind filter on the Loop Timeline page (CYC-534); never search text or ticket keys. */
+  loop_timeline_filtered: o({
+    status: z.enum(["all", "active", "attention"]),
+    kind: z.enum(["all", "dev", "plan", "research"]),
+  }),
+  /** The person opened a session directly from the Loop Timeline page (CYC-534): entry kind and role only. */
+  loop_timeline_session_opened: o({
+    entry_kind: z.enum(["run", "plan"]),
+    role: z.enum([
+      "dev",
+      "qa",
+      "review",
+      "research",
+      "research_qa",
+      "triage",
+      "shape",
+      "shape_qa",
+      "graph_planner",
+    ]),
+  }),
   /** The person asked to check for an update. */
   update_checked: o({ result: z.enum(["available", "up_to_date", "error", "disabled"]) }),
   update_install_started: o({}),
@@ -576,6 +598,8 @@ export const UI_EVENTS = [
   "loop_graph_viewed",
   "loop_graph_node_opened",
   "loop_project_view_opened",
+  "loop_timeline_filtered",
+  "loop_timeline_session_opened",
   "diff_view_changed",
   "diff_file_opened",
   "diff_edit_revealed",

@@ -14,6 +14,7 @@ import {
   gitBranches,
   META,
   type SessionEnvironment,
+  SessionOriginSchema,
   secretKey,
   sessionArchive,
   sessionDismissBackground,
@@ -85,6 +86,7 @@ const row = async (core: Core, sessionId: string, entry: SessionEntry, onlyPromp
       ...(background > 0 ? { [META.background]: background } : {}),
       ...(session.historyError !== undefined ? { [META.historyFailed]: true } : {}),
       ...(entry.config !== undefined ? { [META.config]: entry.config } : {}),
+      ...(entry.origin !== undefined ? { [META.origin]: entry.origin } : {}),
       ...environmentRowMeta(entry),
       ...(entry.usage !== undefined ? { [META.usage]: entry.usage } : {}),
       ...(entry.title !== undefined ? { title: entry.title } : {}),
@@ -122,6 +124,7 @@ const unreadableRow = (sessionId: string, entry: SessionEntry) => {
       [META.state]: "stopped",
       [META.historyFailed]: true,
       ...(entry.config !== undefined ? { [META.config]: entry.config } : {}),
+      ...(entry.origin !== undefined ? { [META.origin]: entry.origin } : {}),
       ...environmentRowMeta(entry),
       ...(entry.usage !== undefined ? { [META.usage]: entry.usage } : {}),
       ...(entry.title !== undefined ? { title: entry.title } : {}),
@@ -144,6 +147,13 @@ export const registerSessions = (app: AgentApp, core: Core): void => {
       definition,
       meta[META.config] === undefined ? {} : meta[META.config],
     );
+    let origin: SessionEntry["origin"];
+    if (meta[META.origin] !== undefined && meta[META.origin] !== null) {
+      const parsedOrigin = SessionOriginSchema.safeParse(meta[META.origin]);
+      if (!parsedOrigin.success)
+        throw new RpcError(INVALID_PARAMS, "The session origin is not one this daemon can read");
+      origin = parsedOrigin.data;
+    }
     // The session's environment (docs/protocol.md §6 "环境"): checked here, before anything is made.
     let environment: SessionEnvironment | undefined;
     if (meta[META.environment] !== undefined) {
@@ -239,6 +249,7 @@ export const registerSessions = (app: AgentApp, core: Core): void => {
       agent: agentId,
       agentSessionId: id,
       cwd: params.cwd,
+      ...(origin !== undefined ? { origin } : {}),
       ...(worktree !== undefined ? { worktree } : {}),
       createdAt: new Date().toISOString(),
       // Not in the list until the person's first message is on record (docs/protocol.md §6).

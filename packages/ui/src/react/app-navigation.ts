@@ -26,6 +26,7 @@ export function useSessionNavigation({
   session,
   blank,
   pinned,
+  knownLoopSessionIds,
 }: {
   locations: LocationConfig[];
   status: Record<string, LocationStatus>;
@@ -35,6 +36,8 @@ export function useSessionNavigation({
   session: SessionSummary | undefined;
   blank: BlankConversation | undefined;
   pinned: ReadonlySet<string>;
+  /** Session IDs known to Loop's store for hiding legacy Loop sessions (CYC-534). */
+  knownLoopSessionIds?: ReadonlySet<string>;
 }) {
   const { t } = useI18n();
   const [showArchived, setShowArchived] = useState(false);
@@ -64,8 +67,10 @@ export function useSessionNavigation({
         locations: locationLabels,
         away: awayLocations,
         showArchived,
+        excludeLoop: true,
+        knownLoopSessionIds,
       }),
-    [sessions, locationLabels, awayLocations, showArchived],
+    [sessions, locationLabels, awayLocations, showArchived, knownLoopSessionIds],
   );
   // A blank conversation is open in place of a session: the sidebar shows its folder, if it has sessions there.
   const openKey =

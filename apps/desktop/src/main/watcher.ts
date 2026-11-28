@@ -8,6 +8,7 @@ import {
   type Conversation,
   emptyConversation,
   type SessionEnvironmentSummary,
+  type SessionOrigin,
   type SessionSnapshot,
   type SessionSummary,
   type WorktreeSummary,
@@ -66,6 +67,36 @@ const sessionSummary = (locationId: string, row: SessionRow): SessionSummary => 
       : {}),
     ...environmentSummaryOf(meta["cycle/environment"]),
     ...worktreeSummaryOf(meta["cycle/worktree"]),
+    ...sessionOriginOf(meta["cycle/origin"]),
+  };
+};
+
+const ORIGIN_ROLES = new Set([
+  "dev",
+  "qa",
+  "review",
+  "research",
+  "research_qa",
+  "triage",
+  "shape",
+  "shape_qa",
+  "graph_planner",
+]);
+
+/** Who started the session (`_meta["cycle/origin"]`, CYC-534). Anything else is treated as absent. */
+const sessionOriginOf = (value: unknown): { origin?: SessionOrigin } => {
+  if (typeof value !== "object" || value === null) return {};
+  const { kind, project, run, role } = value as Record<string, unknown>;
+  if (kind !== "loop") return {};
+  return {
+    origin: {
+      kind: "loop",
+      ...(typeof project === "string" && project.length > 0 ? { project } : {}),
+      ...(typeof run === "string" && run.length > 0 ? { run } : {}),
+      ...(typeof role === "string" && ORIGIN_ROLES.has(role)
+        ? { role: role as NonNullable<SessionOrigin["role"]> }
+        : {}),
+    },
   };
 };
 

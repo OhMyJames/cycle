@@ -26,6 +26,7 @@ import type {
   LoopRunAnswer,
   LoopRunsAnswer,
   LoopTicketAnswer,
+  LoopTimelineAnswer,
   PlanUsage,
   PluginFailure,
   PluginInfo,
@@ -90,6 +91,11 @@ export const fakeBridge = (
     workspaceRepos?: Record<string, string | null>;
     loopRuns?: LoopRunsAnswer;
     loopBoards?: Record<string, LoopBoardAnswer>;
+    /** Per-project Loop timeline answer (or function for pagination tests, CYC-534). */
+    loopTimelines?: Record<
+      string,
+      LoopTimelineAnswer | ((opts?: { limit?: number; before?: string }) => LoopTimelineAnswer)
+    >;
     loopTickets?: Record<string, LoopTicketAnswer>;
     loopRunDetails?: Record<string, LoopRunAnswer>;
     loopCancelRun?: LoopCancelRunResult;
@@ -719,6 +725,17 @@ export const fakeBridge = (
       "loopBoard",
       async (projectKey: string): Promise<LoopBoardAnswer> =>
         options.loopBoards?.[projectKey] ?? { kind: "no_server" },
+    ),
+    loopTimeline: record(
+      "loopTimeline",
+      async (
+        projectKey: string,
+        opts?: { limit?: number; before?: string },
+      ): Promise<LoopTimelineAnswer> => {
+        const entry = options.loopTimelines?.[projectKey];
+        if (typeof entry === "function") return entry(opts);
+        return entry ?? { kind: "no_server" };
+      },
     ),
     loopTicket: record(
       "loopTicket",

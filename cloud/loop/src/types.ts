@@ -359,6 +359,8 @@ export interface Sessions {
     effort?: string;
     title: string;
     cwd: string;
+    /** Run key (`CYC-517`) or plan id (`plan-...`) for `_meta["cycle/origin"]` (CYC-534). */
+    run?: string;
     worktree?: { base: string; name: string };
   }): Promise<{ sessionId: string; cwd: string; branch: string | null }>;
   /**
