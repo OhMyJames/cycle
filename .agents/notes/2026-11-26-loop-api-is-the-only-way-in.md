@@ -25,3 +25,4 @@ The Loop server answers the board, runs, Notices, approve/return and status over
 
 - [2026-11-25-loop-server-is-its-own-process](2026-11-25-loop-server-is-its-own-process.md) — establishes the standalone Loop server process and mode-0600 unix socket that hosts the `loop/*` API.
 - [2026-11-27-loop-is-three-layers-and-a-person](2026-11-27-loop-is-three-layers-and-a-person.md) — places the `loop/*` API as the single boundary between Work loop, desktop, and operator clients.
+- [2026-11-28-loop-on-a-host-takes-webhooks-and-merges-any-pr](2026-11-28-loop-on-a-host-takes-webhooks-and-merges-any-pr.md) — partially replaces this note: remote access to a Loop on a dedicated host goes through an SSH tunnel; `loop/*` stays the only way in and authentication is still out of scope.

@@ -27,3 +27,4 @@ No alternatives were recorded.
 ## Related
 
 - [2026-11-26-loop-api-is-the-only-way-in](2026-11-26-loop-api-is-the-only-way-in.md) — extends this process boundary from `projects/list` to the full `loop/*` API so desktop and operator clients never connect to itsaplan directly.
+- [2026-11-28-loop-on-a-host-takes-webhooks-and-merges-any-pr](2026-11-28-loop-on-a-host-takes-webhooks-and-merges-any-pr.md) — partially replaces this note: the Loop server and its daemon move together to a dedicated host reached over SSH.

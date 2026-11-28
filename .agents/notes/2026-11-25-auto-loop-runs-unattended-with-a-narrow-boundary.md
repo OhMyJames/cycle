@@ -33,3 +33,4 @@ A work item can only name a few kinds of verification, which is a deliberate lim
 ## Related
 
 - [2026-11-27-loop-delivery-repo-and-clean-env](2026-11-27-loop-delivery-repo-and-clean-env.md) — tightens the git/gh isolation, per-run temporary verify HOME, exact command-shape allowlist, and outbound secret redaction introduced in CYC-470, while keeping the deterministic exit-code verification principle of this note.
+- [2026-11-28-loop-on-a-host-takes-webhooks-and-merges-any-pr](2026-11-28-loop-on-a-host-takes-webhooks-and-merges-any-pr.md) — partially replaces this note for PRs Loop did not open: the gate is the author's write access instead of the `auto` label; the rest of the boundary still holds.
