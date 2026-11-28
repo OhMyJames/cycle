@@ -281,3 +281,67 @@ test("a completed command's native durationMs goes into toolResult.run, and is l
   expect(run({ durationMs: "9" })).toEqual({});
   expect(run({ durationMs: 1.5 })).toEqual({});
 });
+
+test("add, delete and update (with a move) each give their operation, path and git patch", () => {
+  const out = edited([
+    change("/n.ts", "one\ntwo", "add"),
+    change("/o.ts", "gone", "delete"),
+    {
+      path: "/old.ts",
+      kind: { type: "update", move_path: "/new.ts" },
+      diff: "@@ -1 +1 @@\n-a\n+b",
+    },
+  ]);
+  expect(out.content.map((c) => c.changes)).toEqual([
+    [{ operation: "add", path: "/n.ts" }],
+    [{ operation: "delete", path: "/o.ts" }],
+    [{ operation: "modify", path: "/old.ts" }],
+  ]);
+  expect(out.content.map((c) => c.patch)).toEqual([
+    {
+      format: "git_patch",
+      text: "diff --git a/n.ts b/n.ts\n--- /dev/null\n+++ b/n.ts\n@@ -0,0 +1,2 @@\n+one\n+two\n",
+    },
+    {
+      format: "git_patch",
+      text: "diff --git a/o.ts b/o.ts\n--- a/o.ts\n+++ /dev/null\n@@ -1,1 +0,0 @@\n-gone\n",
+    },
+    {
+      format: "git_patch",
+      text: "diff --git a/old.ts b/new.ts\n--- a/old.ts\n+++ b/new.ts\n@@ -1 +1 @@\n-a\n+b\n",
+    },
+  ]);
+  expect(out._meta["cycle/toolResult"].edit).toEqual({ additions: 3, deletions: 2 });
+});
+
+test("only empty diffs translate without throwing, at 0/0", () => {
+  const out = edited([change("/e.ts", "", "add"), change("/d.ts", "\n", "delete")]);
+  expect(out.content.map((c) => c.patch)).toEqual([null, null]);
+  expect(out.content.map((c) => c.changes[0]?.path)).toEqual(["/e.ts", "/d.ts"]);
+  expect(out._meta["cycle/toolResult"].edit).toEqual({ additions: 0, deletions: 0 });
+});
+
+test("an oversize file keeps its path and counts while small files keep their patch", () => {
+  const big = `@@ -1,2 +1,2 @@\n-a\n+${"x".repeat(MAX_OUTPUT)}\n`;
+  const out = edited([change("/big.ts", big), change("/s.ts", "@@ -1 +1 @@\n-p\n+q\n+r")]);
+  expect(out.content[0]?.patch).toBeNull();
+  expect(out.content[0]?.changes).toEqual([{ operation: "modify", path: "/big.ts" }]);
+  expect(out.content[1]?.patch).not.toBeNull();
+  expect(out._meta["cycle/toolResult"].edit).toEqual({ additions: 3, deletions: 2 });
+});
+
+test("counts follow the +/- lines, not the ---/+++ headers, for full patches and bare bodies", () => {
+  const full =
+    "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1,2 +1,3 @@\n-a\n-b\n+c\n+d\n+e\n";
+  const bare = "@@ -1 +1,2 @@\n-x\n+y\n+z";
+  const out = edited([change("/a.ts", full), change("/b.ts", bare)]);
+  expect(out._meta["cycle/toolResult"].edit).toEqual({ additions: 5, deletions: 3 });
+  const added = edited([
+    change(
+      "/n.ts",
+      "diff --git a/n.ts b/n.ts\nnew file mode 100644\n--- /dev/null\n+++ b/n.ts\n@@ -0,0 +1,2 @@\n+1\n+2\n",
+      "add",
+    ),
+  ]);
+  expect(added._meta["cycle/toolResult"].edit).toEqual({ additions: 2, deletions: 0 });
+});
