@@ -164,7 +164,8 @@ export const ConfigFileSchema = z.object({
   repo: z
     .object({
       url: text,
-      forge: z.enum(["github", "gitlab"]).optional(),
+      /** Checked in `parseConfigFile`, so the error can name the Project. Only `github` is supported (CYC-397 is GitLab). */
+      forge: z.string().optional(),
     })
     .optional(),
   /** Minutes the loop stops taking new work items while the daemon has a downloaded version waiting to switch (CYC-561). 0 means not at all. */
@@ -216,6 +217,11 @@ export const parseConfigFile = (raw: string, source = "config"): ConfigFile => {
     if (issue?.path[0] === "tuning") throw new Error(`${source}: ${describeIssues(parsed.error)}`);
     throw new Error(`${source}: invalid ${issue?.path.join(".") ?? "value"}: ${issue?.message}`);
   }
+  const forge = parsed.data.repo?.forge;
+  if (forge !== undefined && forge !== "github")
+    throw new Error(
+      `${source}: Project ${parsed.data.projectKey}: unsupported repo.forge "${forge}"; only "github" is supported`,
+    );
   for (const name of ["repoRoot", "stateDir"] as const) {
     if (!isAbsolute(parsed.data[name]))
       throw new Error(`${source}: ${name} must be an absolute path`);
