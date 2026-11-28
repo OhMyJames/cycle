@@ -670,6 +670,8 @@ export const enUS = {
   "loop.timeline.error.body": "The Loop server did not answer with this project's progress.",
   "loop.timeline.loadMore": "Show more",
   "loop.timeline.openSession": "Open session",
+  "loop.timeline.graph": "Task graph",
+  "loop.timeline.waitsFor": "Waits for: {steps}.",
   "loop.timeline.openSessionFor": "Open {target}",
   "loop.timeline.backToTimeline": "Back to Timeline",
   "loop.timeline.viewingLoopSession": "Opened from Loop Timeline",
