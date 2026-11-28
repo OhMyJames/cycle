@@ -1674,6 +1674,35 @@ test("the drawer lists the graph in order, auto-expands active/stuck nodes, show
     expect(sent.includes(text)).toBe(false);
 });
 
+test("a QA node shows as a QA session with its verdict, and Dev nodes stay as they were", async () => {
+  const mine = ticket(610, "In Progress");
+  const nodes = [
+    node(0, { status: "passed" }),
+    node(1, {
+      id: "qa-1",
+      role: "qa",
+      status: "passed",
+      verdict: "fail",
+      report: "Missing test for X",
+      sessionId: "sess-qa",
+      commitSha: "1234567890abcdef",
+      dependsOn: ["n0"],
+    }),
+    node(2, { id: "qa-2", role: "qa", status: "passed", verdict: "pass", dependsOn: ["n0"] }),
+  ];
+  const { drawer } = await openGraphDrawer({
+    loopTickets: { "CYC-610": detailOf(mine, { graph: graphOf(nodes) }) },
+  });
+  const qa1 = drawer.querySelector('[data-slot="loop-graph-node"][data-id="qa-1"]') as HTMLElement;
+  expect(within(qa1).getByText("QA session")).toBeTruthy();
+  expect(within(qa1).getByText("Rejected")).toBeTruthy();
+  const qa2 = drawer.querySelector('[data-slot="loop-graph-node"][data-id="qa-2"]') as HTMLElement;
+  expect(within(qa2).getByText("Approved")).toBeTruthy();
+  const dev = drawer.querySelector('[data-slot="loop-graph-node"][data-id="n0"]') as HTMLElement;
+  expect(dev.querySelector('[data-slot="loop-graph-verdict"]')).toBeNull();
+  expect(within(dev).queryByText("QA session")).toBeNull();
+});
+
 test("only blocked and failed nodes have retry and skip (with confirm), and editable nodes can be edited in place", async () => {
   const { user, fake, drawer } = await openGraphDrawer();
   expect(within(drawer).getAllByRole("button", { name: /^Retry node/ })).toHaveLength(2);

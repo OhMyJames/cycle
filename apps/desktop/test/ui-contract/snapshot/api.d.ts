@@ -1034,6 +1034,7 @@ export type LoopGraphNode = {
     id: string;
     position: number;
     origin: "planned" | "fix";
+    role?: "dev" | "qa" | undefined;
     title: string;
     goal: string;
     dependsOn: string[];
@@ -1045,6 +1046,8 @@ export type LoopGraphNode = {
     rounds: number;
     lastError: string | null;
     summary: string | null;
+    verdict?: "pass" | "fail" | null | undefined;
+    report?: string | null | undefined;
     startedAt: string | null;
     finishedAt: string | null;
 };
