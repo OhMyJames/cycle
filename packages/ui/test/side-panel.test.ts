@@ -144,6 +144,15 @@ test("a closed view's tab leaves the strip, the tab named shown in its place; sh
   panels.show("local:a", "files");
   panels.show("local:a", "overview");
   expect(panels.get("local:a").tabs).toEqual(["files", "overview"]);
+  // With no view left, the panel can start again from its views; one that has any is left as it is.
+  panels.close("local:a", "files");
+  panels.close("local:a", "overview");
+  expect(panels.get("local:a").tabs).toEqual([]);
+  panels.restore("local:a");
+  expect(panels.get("local:a").tabs).toEqual(CLOSED.tabs);
+  panels.close("local:a", "diff");
+  panels.restore("local:a");
+  expect(panels.get("local:a").tabs).toEqual(["overview", "files"]);
   // A tab that is not in the strip: nothing changes, and nobody is told.
   let told = 0;
   panels.subscribe(() => told++);

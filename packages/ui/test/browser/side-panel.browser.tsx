@@ -3,7 +3,7 @@ import { afterEach, expect, test } from "vitest";
 import { cdp, userEvent } from "vitest/browser";
 import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge, summary } from "../fake-bridge.ts";
-import { openTab } from "./panel.ts";
+import { newTerminal, openTab } from "./panel.ts";
 import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
@@ -146,6 +146,38 @@ test("the panel's tabs are in its own strip: a view is closed there and put back
     ["side_panel_toggled", { open: false, via: "click", tab: "diff" }],
     ["side_panel_toggled", { open: true, via: "click", tab: "diff" }],
   ]);
+});
+
+test("with every view closed and its last terminal gone, the strip starts again from the views, and they are the panel's own", async () => {
+  const { user, store, tracked } = await mount(true);
+  await user.click(await screen.findByRole("option", { name: /first/ }));
+  await newTerminal(user);
+  await screen.findByRole("tab", { name: "zsh", selected: true });
+  const tabs = () => screen.getAllByRole("tab").map((tab) => tab.textContent);
+  const cross = (name: string) =>
+    screen.getByRole("tab", { name }).querySelector('[data-slot="panel-tab-close"]') as HTMLElement;
+  for (const name of ["Overview", "Files", "Diff"]) {
+    await user.hover(screen.getByRole("tab", { name }));
+    await user.click(cross(name));
+  }
+  await waitFor(() => expect(tabs()).toEqual(["zsh"]));
+  expect(store.sidePanels.get("local:s1").tabs).toEqual([]);
+  // The terminal closed too: the panel is not left empty.
+  screen.getByRole("tab", { name: "zsh" }).focus();
+  await user.keyboard("{Delete}");
+  await waitFor(() => expect(tabs()).toEqual(["Overview", "Files", "Diff"]));
+  // What is drawn can be closed and chosen like any tab: closing one leaves the other two.
+  await user.hover(screen.getByRole("tab", { name: "Overview" }));
+  await user.click(cross("Overview"));
+  await waitFor(() => expect(tabs()).toEqual(["Files", "Diff"]));
+  await user.click(screen.getByRole("tab", { name: "Files" }));
+  expect(tabs()).toEqual(["Files", "Diff"]);
+  expect(store.sidePanels.get("local:s1").tabs).toEqual(["files", "diff"]);
+  // Choosing the tab already shown from the menu is not counted as showing one.
+  const shown = tracked().filter(([event]) => event === "side_panel_tab_shown").length;
+  await user.click(screen.getByRole("button", { name: "Open a tab" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Files" }));
+  expect(tracked().filter(([event]) => event === "side_panel_tab_shown")).toHaveLength(shown);
 });
 
 test("the header's actions sit close together, one line of 28px buttons even in the narrowest window", async () => {

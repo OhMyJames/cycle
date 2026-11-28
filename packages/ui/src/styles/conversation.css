@@ -2082,6 +2082,11 @@ button[data-slot="review-file"]:focus-visible {
   transition: background-color var(--cycle-motion-state) var(--cycle-ease);
 }
 
+/* Brought into view (an edit asked for from the conversation), a file stops under the tab's bar, not behind it. */
+[data-kind="diff-file"] {
+  scroll-margin-top: 2.5rem;
+}
+
 [data-kind="diff-row"]:hover {
   background: var(--cycle-surface-hover);
 }
@@ -2146,10 +2151,15 @@ button[data-slot="review-file"]:focus-visible {
   border-radius: 0;
 }
 
+/* One column as wide as the longest line, and at least the panel: every line is that wide, so a line's tint and the
+   rule between two parts reach the end when the change is scrolled sideways. */
+[data-slot="diff"]:not([data-wrap]) [data-slot="tool-diff"] {
+  display: grid;
+  grid-template-columns: minmax(max-content, 1fr);
+}
+
 [data-slot="diff"]:not([data-wrap]) [data-slot="tool-diff"] > [data-line] {
   grid-template-columns: 3.5rem 1.25rem max-content;
-  width: max-content;
-  min-width: 100%;
 }
 
 [data-slot="diff"]:not([data-wrap]) [data-slot="diff-text"] {

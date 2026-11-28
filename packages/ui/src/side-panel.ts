@@ -155,6 +155,16 @@ export class SidePanelStore {
     this.#put(key, { open: old.open, tabs, active });
   }
 
+  /**
+   * A panel left with no view (each closed while a terminal was its tab) whose terminals have gone too starts again
+   * from its views: the strip draws them, and before one of them is shown or closed they are the panel's again.
+   */
+  restore(key: string): void {
+    const old = this.get(key);
+    if (old.tabs.length > 0) return;
+    this.#put(key, { ...old, tabs: CLOSED.tabs });
+  }
+
   /** A session that is gone (deleted): its panel is forgotten too. */
   forget(key: string): void {
     const states = this.#all();

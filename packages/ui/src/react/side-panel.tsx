@@ -69,7 +69,8 @@ export function SidePanel({
   const { t } = useI18n();
   const store = useAppStore();
   const key = viewKey(locationId, sessionId);
-  const terminals = useAppState((s) => s.terminals[key]) ?? NONE;
+  const listed = useAppState((s) => s.terminals[key]);
+  const terminals = listed ?? NONE;
   const canOpen = useAppState(
     (s) =>
       s.status[locationId]?.capabilities?.terminal === true &&
@@ -79,8 +80,15 @@ export function SidePanel({
   const canShowFiles = useAppState((s) => s.status[locationId]?.capabilities?.fs === true);
   const offered = (tab: PanelTabKind) => tab !== "files" || canShowFiles;
   const kept = state.tabs.filter(offered);
-  // Every view closed and no terminal left: the strip is never empty, it starts again from its views.
-  const views = kept.length === 0 && terminals.length === 0 ? CLOSED.tabs.filter(offered) : kept;
+  // Every view closed and no terminal left: the strip starts again from its views. Not while the session's terminals
+  // are still to come from a daemon that has them: they are its tabs, and the views would show only to go.
+  const known = listed !== undefined || !canOpen;
+  const again = kept.length === 0 && terminals.length === 0 && known;
+  const views = again ? CLOSED.tabs.filter(offered) : kept;
+  // What is drawn is then the panel's own, before anything is done with it: the strip and what is kept agree.
+  const settle = () => {
+    if (again) store.sidePanels.restore(key);
+  };
   const ids: PanelTabId[] = [...views, ...terminals.map((x) => terminalTab(x.terminalId))];
   const labels = tabLabels(terminals);
   // A tab shown last that is no longer there (a terminal closed in another window, Files on an older daemon): the last.
@@ -91,7 +99,9 @@ export function SidePanel({
       value={active}
       onValueChange={(id) => {
         const tab = ids.find((x) => x === id);
-        if (tab !== undefined && tab !== active) onShow(tab);
+        if (tab === undefined || tab === active) return;
+        settle();
+        onShow(tab);
       }}
       tabs={[
         ...views.map((tab) => ({
@@ -99,7 +109,10 @@ export function SidePanel({
           label: t(LABEL[tab]),
           icon: ICON[tab],
           content: contentOf(tab),
-          onClose: () => onClose(tab, neighbourOf(ids, tab)),
+          onClose: () => {
+            settle();
+            onClose(tab, neighbourOf(ids, tab));
+          },
         })),
         ...terminals.map((terminal, i) => ({
           id: terminalTab(terminal.terminalId),
@@ -123,7 +136,11 @@ export function SidePanel({
           onAction={(value) => {
             if (value === "terminal")
               void store.createTerminal(locationId, sessionId, FIRST_SIZE, "tab_strip");
-            else if (isTab(value)) onShow(value);
+            // The one shown already: nothing to do, and nothing to count.
+            else if (isTab(value) && value !== active) {
+              settle();
+              onShow(value);
+            }
           }}
         >
           <Tip label={t("panel.open")} side="bottom">

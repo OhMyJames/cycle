@@ -24,9 +24,9 @@ Basis: 2026-11-28 负责人看过现状分析后选定（"全部都做"，并明
 
 ## Consequences
 
-- 埋点：`side_panel_toggled` 的 `via: "tab_button"` 和 `terminal_opened` 的 `via: "header"` 不再发出，枚举值留着（页面热更新会发给旧应用，旧应用仍按自己的字典校验）；新增 `side_panel_tab_closed`、`diff_all_toggled`、`diff_wrap_toggled`、`files_found`。
+- 埋点：`side_panel_toggled` 的 `via: "tab_button"` 和 `terminal_opened` 的 `via: "header"` 不再发出，枚举值留着（页面热更新会发给旧应用，旧应用仍按自己的字典校验）；新增 `side_panel_tab_closed`、`diff_all_toggled`、`diff_wrap_toggled`、`files_found`、`files_folder_revealed`。
 - Files 的改动标记多一次 `workspaceStatus` 请求（每轮一次，只在 daemon 能比较时）。
-- 没验证：真实仓库里上百个改动文件时"全部展开"的耗时（上限定为 100 个文件，是估的）。
+- "全部展开"一次最多开 100 个文件，补丁一次最多向 daemon 要 4 个（每个是一个 git 进程，目标机器 2 核）。两个数都是估的，没在真实的大仓库里量过。
 
 ## Related
 

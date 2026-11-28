@@ -459,6 +459,8 @@ export const EVENTS = {
   diff_wrap_toggled: o({ wrap: z.boolean() }),
   /** The Files tab's box found files by name: once a box used, never what was typed or found. */
   files_found: o({}),
+  /** The Files tab went back to the tree at a folder: from a part of a file's path in its bar, or a folder found by name. */
+  files_folder_revealed: o({ from: z.enum(["crumb", "found"]) }),
   /** A call's change, from the head of its diff in the conversation, opened in the Diff tab (CYCL-133). */
   diff_shown_from_conversation: o({}),
   /** The Diff tab took the conversation to the call that made an edit. */
@@ -620,6 +622,7 @@ export const UI_EVENTS = [
   "diff_all_toggled",
   "diff_wrap_toggled",
   "files_found",
+  "files_folder_revealed",
   "diff_edit_revealed",
   "diff_shown_from_conversation",
   "terminal_opened",

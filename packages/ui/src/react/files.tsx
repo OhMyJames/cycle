@@ -269,6 +269,12 @@ function Tree({
   const canFind = useAppState((s) => s.status[where.locationId]?.capabilities?.files === true);
   const [query, setQuery] = useState("");
   const finding = query.trim() !== "";
+  // A folder asked for in the tree (a name found, a part of a file's path, a folder named in the conversation): the
+  // tree is shown, so what was typed is let go.
+  const revealed = view.revealed;
+  useEffect(() => {
+    if (revealed !== undefined) setQuery("");
+  }, [revealed]);
   // Counted once for a session's box, not for each letter or each name looked for, and never what was typed.
   const counted = useRef(false);
   const onFound = useCallback(() => {
@@ -318,7 +324,12 @@ type Changed = { folders: Paths; files: ReadonlyMap<string, WorkspaceFile> };
 const UNMARKED: Changed = { folders: new Set(), files: new Map() };
 
 const changedOf = (files: readonly WorkspaceFile[]): Changed => ({
-  folders: new Set(files.flatMap((file) => foldersOf(file.path))),
+  // A repository inside that git does not track is one entry, a folder: it is marked itself, with the folders it is in.
+  folders: new Set(
+    files.flatMap((file) =>
+      file.folder === true ? [...foldersOf(file.path), file.path] : foldersOf(file.path),
+    ),
+  ),
   files: new Map(files.map((file) => [file.path, file])),
 });
 
@@ -361,7 +372,8 @@ function Found({
       void store.searchFiles(query).then((value) => {
         if (!current) return;
         setFound({ value });
-        onFound();
+        // A search the daemon could not answer found nothing to count.
+        if (value !== undefined) onFound();
       });
     }, FIND_MS);
     return () => {
@@ -385,8 +397,11 @@ function Found({
             data-slot="files-row"
             data-kind={hit.kind}
             onClick={() => {
-              if (hit.kind === "folder") store.filesViews.reveal(where.key, hit.path);
-              else store.filesViews.show(where.key, hit.path);
+              if (hit.kind === "folder") {
+                // The tree takes the names' place, the folder open in it (the box is cleared by the tree).
+                store.filesViews.reveal(where.key, hit.path);
+                store.track("files_folder_revealed", { from: "found" });
+              } else store.filesViews.show(where.key, hit.path);
             }}
           >
             {hit.kind === "folder" ? <FolderIcon size={14} /> : <FileIcon size={14} />}
@@ -778,7 +793,13 @@ function Preview({
         <PanelAction label={t("files.back")} onClick={() => store.filesViews.back(where.key)}>
           <ChevronLeftIcon />
         </PanelAction>
-        <Crumbs path={path} onFolder={(folder) => store.filesViews.reveal(where.key, folder)} />
+        <Crumbs
+          path={path}
+          onFolder={(folder) => {
+            store.filesViews.reveal(where.key, folder);
+            store.track("files_folder_revealed", { from: "crumb" });
+          }}
+        />
       </PanelBar>
       {content.state === "loading" ? (
         <StateBlock tone="loading" size="inline" title={t("files.reading")} />

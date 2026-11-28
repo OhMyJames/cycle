@@ -296,6 +296,8 @@ test("what git says changed is marked in the tree, and the box finds a file by n
     files: [
       { path: "src/main.ts", status: "modified", additions: 3, deletions: 1 },
       { path: "README.md", status: "untracked", additions: 2, deletions: 0 },
+      // A repository inside that git does not track: one entry, the folder itself.
+      { path: "dist", status: "untracked", folder: true },
     ],
   });
   script.bridge.searchFiles = async (_e, _where, query) => {
@@ -318,6 +320,7 @@ test("what git says changed is marked in the tree, and the box finds a file by n
   await waitFor(() => expect(readme.textContent).toContain("untracked"));
   expect(readme.textContent).toContain("+2");
   expect(tab.getByRole("button", { name: /^src/ }).textContent).toContain("has changes inside");
+  expect(tab.getByRole("button", { name: /^dist/ }).textContent).toContain("has changes inside");
   expect(tab.getByRole("button", { name: /logo\.png/ }).textContent).toBe("logo.png");
 
   // What is typed is asked of the daemon once the typing stops, and what fits is a row each in place of the tree.
@@ -331,9 +334,24 @@ test("what git says changed is marked in the tree, and the box finds a file by n
   await waitFor(() =>
     expect(panel().querySelector('[data-slot="files"]')?.textContent).toContain("let x = 1;"),
   );
-  // Back, the box is as it was left; a name nothing has says so; cleared, the tree is there again.
+  // Back, the box is as it was left, and so is what it found. A folder found goes to the tree with it open, and a
+  // folder of the file's path does too: what was typed is let go, since the tree is what was asked for.
   await user.click(tab.getByRole("button", { name: "Back to files" }));
-  await user.clear(box);
+  expect((box as HTMLInputElement).value).toBe("main");
+  await user.click(await tab.findByRole("button", { name: "src" }));
+  expect((box as HTMLInputElement).value).toBe("");
+  expect((await tab.findByRole("button", { name: /^src/ })).getAttribute("aria-expanded")).toBe(
+    "true",
+  );
+  await user.type(box, "main");
+  await user.click(await tab.findByRole("button", { name: /src\/main\.ts/ }));
+  await user.click(
+    within(await tab.findByRole("navigation", { name: "Where this file is" })).getByRole("button", {
+      name: "src",
+    }),
+  );
+  await waitFor(() => expect((box as HTMLInputElement).value).toBe(""));
+  expect(await tab.findByRole("button", { name: /README\.md/ })).toBeDefined();
   await user.type(box, "zzz");
   expect(await tab.findByText("No file or folder has that in its name")).toBeDefined();
   await user.clear(box);
@@ -342,6 +360,9 @@ test("what git says changed is marked in the tree, and the box finds a file by n
   expect(tracked()).toEqual([
     ["files_found", {}],
     ["file_previewed", { kind: "text" }],
+    ["files_folder_revealed", { from: "found" }],
+    ["file_previewed", { kind: "text" }],
+    ["files_folder_revealed", { from: "crumb" }],
   ]);
 });
 

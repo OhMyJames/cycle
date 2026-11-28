@@ -57,6 +57,31 @@ const reasonOf = (error: unknown): string =>
  */
 const EXPAND_ALL = 100;
 
+/** How many files' changes are asked of the daemon at once: each is a git process there, on a machine with two cores. */
+const READ_AT_ONCE = 4;
+
+/** Runs what it is given a few at a time, in the order asked: the rest wait their turn. */
+type Queue = <T>(run: () => Promise<T>) => Promise<T>;
+
+const queueOf = (atOnce: number): Queue => {
+  let running = 0;
+  const waiting: (() => void)[] = [];
+  return (run) =>
+    new Promise((resolve, reject) => {
+      const start = () => {
+        running += 1;
+        run()
+          .then(resolve, reject)
+          .finally(() => {
+            running -= 1;
+            waiting.shift()?.();
+          });
+      };
+      if (running < atOnce) start();
+      else waiting.push(start);
+    });
+};
+
 /** Which files of a list are open, and the bar's action that opens or closes them all. */
 function useOpenFiles(ids: readonly string[], view: DiffMode) {
   const store = useAppStore();
@@ -453,6 +478,8 @@ function WorkspaceView({
     [value],
   );
   const files = useOpenFiles(ids, "workspace");
+  // Every open file reads its change; "Expand all" opens many at once, so they take turns.
+  const [queue] = useState(() => queueOf(READ_AT_ONCE));
   const again = () => setRound((n) => n + 1);
   const bar = (
     <PanelBar
@@ -538,6 +565,7 @@ function WorkspaceView({
                 locationId={locationId}
                 sessionId={sessionId}
                 round={round}
+                queue={queue}
                 open={files.open.has(file.path)}
                 onOpen={files.set}
               />
@@ -588,6 +616,7 @@ function WorkspaceRow({
   locationId,
   sessionId,
   round,
+  queue,
   open,
   onOpen,
 }: {
@@ -595,6 +624,7 @@ function WorkspaceRow({
   locationId: string;
   sessionId: string;
   round: number;
+  queue: Queue;
   open: boolean;
   onOpen: (id: string, open: boolean) => void;
 }) {
@@ -612,16 +642,19 @@ function WorkspaceRow({
   const load = useCallback(() => {
     reading.current += 1;
     const serial = reading.current;
-    setPatch({ state: "loading" });
-    store.workspaceFile(locationId, sessionId, file.path).then(
-      (value) => {
+    // A new round reads over the change shown, so the list does not jump; a failure shown is replaced by the reading.
+    setPatch((old) => (old?.state === "ok" ? old : { state: "loading" }));
+    // Its turn come, a read nobody waits for any more (the row gone, or asked again since) is not made.
+    void queue(async () => {
+      if (reading.current !== serial) return;
+      try {
+        const value = await store.workspaceFile(locationId, sessionId, file.path);
         if (reading.current === serial) setPatch({ state: "ok", value });
-      },
-      (error: unknown) => {
+      } catch (error) {
         if (reading.current === serial) setPatch({ state: "error", reason: reasonOf(error) });
-      },
-    );
-  }, [store, locationId, sessionId, file.path]);
+      }
+    });
+  }, [store, locationId, sessionId, file.path, queue]);
   // Read when first opened, and again in a new round while open; a closed one is read when it opens.
   const readIn = useRef<number | undefined>(undefined);
   useEffect(() => {
