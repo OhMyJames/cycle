@@ -51,6 +51,11 @@ export class SessionsSlice {
   /** Events about a session that is still being opened, held until its snapshot is in. */
   readonly #held = new Map<string, SessionEvent[]>();
   readonly #acks = new WeakSet<Returned>();
+  /** View keys, least recently used first: a view is used when it is set or its session is selected. */
+  #recent: string[] = [];
+  /** The latest read started for each session: an older one that comes back later is dropped. */
+  readonly #latestLoad = new Map<string, number>();
+  #loads = 0;
   /**
    * Sessions whose box holds a message put back to send again, with what the box then held: whether it went as it was
    * is counted when it is sent. Forgotten when the box is emptied without sending it.
@@ -100,6 +105,53 @@ export class SessionsSlice {
   #setView(key: string, view: SessionView): void {
     this.#takeBack(key, view);
     this.#kit.set((s) => ({ views: { ...s.views, [key]: view } }));
+    this.#touch(key);
+  }
+
+  /** Marks a view as just used, then drops the least recently used ones beyond the cap. */
+  #touch(key: string): void {
+    this.#recent = [...this.#recent.filter((k) => k !== key), key];
+    this.#evict();
+  }
+
+  /**
+   * Keeps at most `maxViews` views. Never dropped: the selected session's, and one still being read (its read would
+   * only put it back). Among the rest the least recently used goes first, but a view with a permission request waiting
+   * is kept for as long as any other can go instead: the request would be lost with it. If only such views are left
+   * over the cap, the oldest of them goes: the cap is a promise about memory. A dropped session is read again when
+   * selected; an event for it is ignored meanwhile (`onEvent` finds no view).
+   */
+  #evict(): void {
+    const { views, selectedLocation, selectedSession } = this.#kit.state();
+    this.#recent = this.#recent.filter((k) => views[k] !== undefined);
+    let over = Object.keys(views).length - this.#kit.maxViews;
+    if (over <= 0) return;
+    const selected =
+      selectedLocation !== undefined && selectedSession !== undefined
+        ? viewKey(selectedLocation, selectedSession)
+        : undefined;
+    const known = new Set(this.#recent);
+    // A view somehow without a place in the order is the oldest.
+    const order = [...Object.keys(views).filter((k) => !known.has(k)), ...this.#recent];
+    const candidates = order.filter((k) => k !== selected && views[k]?.loading !== true);
+    const dropped = new Set<string>();
+    for (const waiting of [false, true]) {
+      for (const key of candidates) {
+        if (over <= 0) break;
+        if ((views[key]?.permissions.length ?? 0) > 0 !== waiting) continue;
+        dropped.add(key);
+        over--;
+      }
+    }
+    if (dropped.size === 0) return;
+    for (const key of dropped) {
+      this.#held.delete(key);
+      this.#latestLoad.delete(key);
+    }
+    this.#recent = this.#recent.filter((k) => !dropped.has(k));
+    this.#kit.set((s) => ({
+      views: Object.fromEntries(Object.entries(s.views).filter(([k]) => !dropped.has(k))),
+    }));
   }
 
   /**
@@ -126,10 +178,32 @@ export class SessionsSlice {
     }
   }
 
-  /** Reads a session from main whole, then applies the events that came while it was being read. */
-  async #load(locationId: string, sessionId: string): Promise<void> {
+  /**
+   * Reads a session from main whole, then applies the events that came while it was being read. A read that was
+   * started by a newer one for the same session is dropped; so is, with `onlyIfSelected`, one whose session is no longer
+   * the selected one when it comes back (quick switching: only the last one chosen is taken). A dropped read leaves
+   * nothing: its placeholder goes, or the view that was there before comes back, and its held events are cleared.
+   */
+  async #load(locationId: string, sessionId: string, onlyIfSelected = false): Promise<void> {
     const key = viewKey(locationId, sessionId);
     const existing = this.#kit.state().views[key];
+    const id = ++this.#loads;
+    this.#latestLoad.set(key, id);
+    const dropped = (): boolean => {
+      if (this.#latestLoad.get(key) !== id) return true; // Another read of it took over, and cleans up.
+      const { selectedLocation, selectedSession } = this.#kit.state();
+      if (!onlyIfSelected || (selectedLocation === locationId && selectedSession === sessionId))
+        return false;
+      this.#latestLoad.delete(key);
+      this.#held.delete(key);
+      if (existing !== undefined && !existing.loading) this.#setView(key, existing);
+      else
+        this.#kit.set((s) => {
+          const { [key]: _gone, ...views } = s.views;
+          return { views };
+        });
+      return true;
+    };
     this.#held.set(key, []);
     this.#setView(key, {
       locationId,
@@ -143,6 +217,8 @@ export class SessionsSlice {
     try {
       snapshot = await this.#kit.bridge.openSession(locationId, sessionId);
     } catch (error) {
+      if (dropped()) return;
+      this.#latestLoad.delete(key);
       this.#held.delete(key);
       // What was read before is still what there is: a re-read that failed does not take the conversation away.
       // (Not the placeholder of a read still going: that has nothing in it.) Version -1: the next event asks again.
@@ -155,6 +231,8 @@ export class SessionsSlice {
         });
       throw error;
     }
+    if (dropped()) return;
+    this.#latestLoad.delete(key);
     let view: SessionView = {
       locationId,
       sessionId,
@@ -189,7 +267,8 @@ export class SessionsSlice {
       return;
     }
     set({ selectedLocation: locationId, selectedSession: sessionId, blank: undefined });
-    if (state === "connected") await attempt(() => this.#load(locationId, sessionId));
+    this.#touch(viewKey(locationId, sessionId));
+    if (state === "connected") await attempt(() => this.#load(locationId, sessionId, true));
   };
 
   /**
@@ -431,6 +510,7 @@ export class SessionsSlice {
     this.#kit.sidePanels.forget(key);
     this.#kit.filesViews.forget(key);
     this.#held.delete(key);
+    this.#latestLoad.delete(key);
     this.#kit.set((s) => {
       const { [key]: _gone, ...views } = s.views;
       const { [key]: _closed, ...terminals } = s.terminals;

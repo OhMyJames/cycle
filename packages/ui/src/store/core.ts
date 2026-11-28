@@ -23,7 +23,14 @@ export type StoreKit = {
   readonly sidePanels: SidePanelStore;
   /** Where each session's Files tab is: open folders, and the file shown (CYCL-92). */
   readonly filesViews: FilesViews;
+  /** How many sessions' views are kept at most; the least recently used go first. */
+  readonly maxViews: number;
 };
+
+/** What a page keeps of opened sessions when nothing says otherwise. */
+export const DEFAULT_MAX_VIEWS = 20;
+
+export type StoreOptions = { maxViews?: number };
 
 export const messageOf = (error: unknown): string => {
   const text = error instanceof Error ? error.message : String(error);
@@ -60,6 +67,7 @@ export class StoreBase {
     bridge: CycleBridge,
     drafts: DraftStore = new DraftStore(),
     sidePanels: SidePanelStore = new SidePanelStore(),
+    options: StoreOptions = {},
   ) {
     this.bridge = bridge;
     this.drafts = drafts;
@@ -73,6 +81,7 @@ export class StoreBase {
       drafts,
       sidePanels,
       filesViews: this.filesViews,
+      maxViews: Math.max(1, options.maxViews ?? DEFAULT_MAX_VIEWS),
     };
   }
 
