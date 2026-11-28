@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { LoopRunsListResultSchema } from "@cycle/protocol";
+import { LoopRunsListResultSchema } from "@cycle/protocol/loop";
 import type { Config } from "../src/config.ts";
 import { runsList, type StateDirOf } from "../src/runs.ts";
 import { listen } from "../src/server.ts";

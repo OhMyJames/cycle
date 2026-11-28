@@ -12,7 +12,7 @@ import {
   LoopGraphNodeSchema,
   LoopRunDetailSchema,
   LoopTicketDetailSchema,
-} from "@cycle/protocol";
+} from "@cycle/protocol/loop";
 import { type ApiError, type ApiTracker, LoopApiHandler } from "../src/api.ts";
 import { SqliteStore } from "../src/db/store.ts";
 import type { TaskGraph, TaskNode } from "../src/graph.ts";

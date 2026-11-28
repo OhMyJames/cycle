@@ -9,7 +9,7 @@ import {
   LOOP_PROJECTS_LIST,
   LOOP_RUNS_LIST,
   LoopEventsListParamsSchema,
-} from "@cycle/protocol";
+} from "@cycle/protocol/loop";
 import { ApiError, type LoopApi, LoopApiHandler } from "./api.ts";
 import type { Config } from "./config.ts";
 import { eventsList } from "./events.ts";

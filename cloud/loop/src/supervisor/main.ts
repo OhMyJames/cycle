@@ -5,7 +5,7 @@
 import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { LOOP_RUN_CANCEL } from "@cycle/protocol";
+import { LOOP_RUN_CANCEL } from "@cycle/protocol/loop";
 import { loadConfigFiles } from "../config-file.ts";
 import { importLegacyState, needsImport } from "../db/import.ts";
 import { SqliteStore } from "../db/store.ts";

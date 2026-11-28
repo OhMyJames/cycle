@@ -8,6 +8,7 @@ import { join } from "node:path";
 import {
   assemble,
   blobsToDelete,
+  daemonInputs,
   filesIn,
   KEEP_UNUSED_MS,
   type Plan,
@@ -247,4 +248,10 @@ test("the files of the manifest just replaced stay until the next publish, howev
   });
   expect(result.published).toEqual(["linux-x64 0.3.10"]);
   expect(result.deleted).toEqual([]);
+});
+
+test("the daemon's bundle inputs do not include the Loop protocol, so a change to it publishes nothing (CYC-560)", async () => {
+  const inputs = await daemonInputs();
+  expect(inputs.some((p) => p.endsWith("packages/protocol/src/index.ts"))).toBe(true);
+  expect(inputs.filter((p) => p.endsWith("packages/protocol/src/loop.ts"))).toEqual([]);
 });

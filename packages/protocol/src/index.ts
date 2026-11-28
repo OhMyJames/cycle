@@ -5,7 +5,6 @@ export * from "./diff.ts";
 export * from "./environment.ts";
 export * from "./errors.ts";
 export * from "./fs.ts";
-export * from "./loop.ts";
 export * from "./mentions.ts";
 export * from "./meta.ts";
 export * from "./method.ts";

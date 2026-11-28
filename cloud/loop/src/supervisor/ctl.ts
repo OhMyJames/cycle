@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { connect } from "node:net";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { LOOP_STATUS, LoopStatusResultSchema } from "@cycle/protocol";
+import { LOOP_STATUS, LoopStatusResultSchema } from "@cycle/protocol/loop";
 
 export const pidFileOf = (dataDir: string): string => join(dataDir, "loop-supervisor.pid");
 
