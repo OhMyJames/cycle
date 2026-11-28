@@ -375,6 +375,23 @@ describe("loop/notices/list", () => {
     expect(after.some((n) => n.key === "CYC-21")).toBe(false);
   });
 
+  test("a supervisor Notice is about the Project: it names no work item", async () => {
+    // `assemble.ts` and the updater write it with the project key as the run key.
+    store.notice(
+      "CYC",
+      "supervisor",
+      "守护者有新版本，需要你重启它。",
+      "supervisor:new-version:CYC:abc",
+    );
+    const { notices } = LoopNoticesListResultSchema.parse(
+      (await call("loop/notices/list", { project: "CYC" })).result,
+    );
+    expect(notices.find((n) => n.kind === "supervisor")).toMatchObject({
+      key: null,
+      session: null,
+    });
+  });
+
   test("a stuck intent is a Notice", async () => {
     store.intent("CYC-30", "move", {}, "stuck-1");
     const intent = store.pendingIntents().find((i) => i.dedupe === "stuck-1");

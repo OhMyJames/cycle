@@ -1951,6 +1951,42 @@ test("an In Progress ticket drawer shows run progress, translated stage, heartbe
   expect(sent.includes("Ticket 900")).toBe(false);
 });
 
+test("a Project-level Notice shows no ticket number and opens no ticket", async () => {
+  const user = userEvent.setup();
+  const fake = fakeBridge({
+    connected: true,
+    loopProjects: { kind: "ok", projects: [cycle] },
+    workspaceRepos: { "/work": cycle.repo.displayName },
+    loopBoards: { CYC: board },
+    loopNotices: {
+      CYC: {
+        kind: "ok",
+        notices: [
+          {
+            id: "CYC:notice:1",
+            kind: "supervisor",
+            identifier: null,
+            text: "A new supervisor version is out",
+            session: null,
+          },
+        ],
+      },
+    },
+  });
+  await renderApp(fake.bridge);
+  await user.click(await screen.findByRole("button", { name: "Kanban" }));
+
+  await screen.findByText("1 item needs you");
+  // The kind says what it is; there is no bare project key standing in for a ticket, and nothing to click.
+  const alerts = document.querySelector('[data-slot="loop-board-alerts"]');
+  expect(alerts?.querySelector('[data-slot="loop-ticket-id"]')).toBeNull();
+  expect(
+    within(alerts as HTMLElement).queryByRole("button", { name: /Supervisor note/ }),
+  ).toBeNull();
+  expect(within(alerts as HTMLElement).getByText("Supervisor note")).toBeTruthy();
+  expect(fake.named("loopTicket")).toEqual([]);
+});
+
 test("board alert strip, sidebar notice badge, intent retry, and loop-activity live refresh work together", async () => {
   const user = userEvent.setup();
   const fake = fakeBridge({

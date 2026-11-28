@@ -36,6 +36,11 @@ describe("system notifications", () => {
     ).toEqual([blocked("CYC-2"), review("CYC-3"), stuck, intentStuck]);
   });
 
+  test("a Notice with no ticket is not told, whatever its kind", () => {
+    const none = { ...notice("supervisor", "x"), identifier: null } as LoopNotice;
+    expect(newAlerts(new Set(), [none, { ...none, kind: "stuck" }])).toEqual([]);
+  });
+
   test("a session waiting on a permission is never told here", () => {
     expect(newAlerts(new Set(), [permission("CYC-4")])).toEqual([]);
   });

@@ -629,7 +629,8 @@ export class LoopApiHandler {
         id: `${id}:notice:${n.id}`,
         project: id,
         kind,
-        key: n.runKey,
+        // A supervisor Notice is about the Project: its `run_key` is the project key, not a work item.
+        key: kind === "supervisor" ? null : n.runKey,
         session:
           session !== null && n.sessionId !== null ? { kind: session, id: n.sessionId } : null,
         text: n.text,
