@@ -14,36 +14,15 @@ import type {
   AgentSetupSnapshot,
   AgentSignInMode,
 } from "@cycle/ui";
+import { AGENT_AUTH_PROBLEM_REASONS } from "@cycle/ui/api";
 import { selectAgentSignInMode, validateAgentAuthUrl } from "./agent-auth-guard.ts";
 import type { Runtime } from "./runtime.ts";
 
 type AgentAuthCompleted = Parameters<NonNullable<ClientEvents["agentAuthCompleted"]>>[0];
 
-const AUTH_PROBLEM_REASONS = new Set<AgentAuthProblemReason>([
-  "binary_unavailable",
-  "auth_in_progress",
-  "parse_failed",
-  "invalid_code",
-  "expired",
-  "cancelled",
-  "process_failed",
-  "timeout",
-  "unsupported_mode",
-  "untrusted_url",
-  "flow_not_found",
-  "flow_forbidden",
-  "flow_consumed",
-  "flow_not_active",
-  "disconnected",
-  "failed",
-]);
-
 const authProblemReasonOf = (error: unknown): AgentAuthProblemReason => {
   const reason = (error as { data?: { reason?: unknown } } | null)?.data?.reason;
-  if (typeof reason === "string" && AUTH_PROBLEM_REASONS.has(reason as AgentAuthProblemReason)) {
-    return reason as AgentAuthProblemReason;
-  }
-  return "failed";
+  return AGENT_AUTH_PROBLEM_REASONS.find((known) => known === reason) ?? "failed";
 };
 
 export class AgentAuthFlows {

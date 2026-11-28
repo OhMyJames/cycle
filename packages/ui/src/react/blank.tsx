@@ -1,7 +1,7 @@
 // A new session before its first message (docs/protocol.md §6): where it runs and with which agent are chosen here, the
 // first message is written in the box below, and sending it is what makes the session. Until then nothing of it is in
 // the daemon, and so nothing of it is in the sidebar.
-import type { AgentWord } from "@cycle/analytics/events";
+
 import { Button } from "@ui-sdk/react/button";
 import {
   Dialog,
@@ -25,6 +25,7 @@ import {
   MenuTrigger,
 } from "@ui-sdk/react/menu";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { agentWord } from "../agent-word.ts";
 import type { LocationConfig } from "../api.ts";
 import { applyUpdate, emptyConversation } from "../model/index.ts";
 import { BLANK_KEY, type BlankConversation } from "../store/index.ts";
@@ -42,9 +43,6 @@ import { StateBlock } from "./state-block.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
 import { Tip } from "./tip.tsx";
 import { WorktreePicker } from "./worktrees.tsx";
-
-const agentWord = (id: string): AgentWord =>
-  id === "claude" || id === "codex" || id === "agy" || id === "pi" ? id : "other";
 
 /** A folder offered on the blank page: one the location already has sessions in, newest first. */
 export type RecentFolder = { cwd: string; name: string };

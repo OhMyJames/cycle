@@ -2,9 +2,10 @@
 // Shows one agent's account status & plan usage at the top, followed by Session defaults
 // (`_cycle/agent_defaults/*`) and read-only host diagnostics from `config.json`.
 // Degrades smoothly to Session defaults only when connected to an older daemon without `agentSetup`.
-import type { AgentWord } from "@cycle/analytics/events";
+
 import { Button } from "@ui-sdk/react/button";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { agentWord } from "../agent-word.ts";
 import type {
   AgentInfo,
   AgentRuntimePatchValue,
@@ -51,9 +52,6 @@ export const harnessListOf = (agentsByEnv: Record<string, AgentInfo[]>): Harness
   }
   return [...BUILTIN_HARNESSES, ...extras];
 };
-
-const agentWord = (id: string): AgentWord =>
-  id === "claude" || id === "codex" || id === "agy" || id === "pi" ? id : "other";
 
 export type HarnessSectionProps = {
   agentId: string;

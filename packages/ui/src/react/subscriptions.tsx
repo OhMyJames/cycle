@@ -1,9 +1,10 @@
 // Settings → Model providers → Subscriptions: the accounts the agents themselves are signed in with (Claude, Codex,
 // Antigravity), one location at a time. What an agent's session may use depends on it, so signing in and out, and what
 // the plan has left, are here and not on the agent's Harness page.
-import type { AgentWord } from "@cycle/analytics/events";
+
 import { Button } from "@ui-sdk/react/button";
 import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
+import { agentWord } from "../agent-word.ts";
 import type { AgentAuthProblemReason, AgentInfo, LocationConfig, LocationStatus } from "../api.ts";
 import {
   AgentSignInDialog,
@@ -22,9 +23,6 @@ import { PlanUsageBars, planRowsOf } from "./plan-usage-bars.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { AGENT_AUTH_DOT, StatusDot } from "./status.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
-
-const agentWord = (id: string): AgentWord =>
-  id === "claude" || id === "codex" || id === "agy" || id === "pi" ? id : "other";
 
 export type SubscriptionsSectionProps = {
   /** The agents, in the order the Harness pages list them: every one of them can be signed in. */

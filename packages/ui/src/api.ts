@@ -1,4 +1,4 @@
-// The contract between the Electron main process and the renderer. Types only: nothing here runs.
+// The contract between the Electron main process and the renderer. Shared types and fixed bridge vocabulary.
 //
 // The main process holds the connections and, for every session being watched, its conversation. The
 // renderer asks, and is told of changes. A renderer that reloads asks again and is given the state
@@ -313,23 +313,25 @@ export type AgentAuthStatus = {
   loginCommand: string;
 };
 
-export type AgentAuthProblemReason =
-  | "binary_unavailable"
-  | "auth_in_progress"
-  | "parse_failed"
-  | "invalid_code"
-  | "expired"
-  | "cancelled"
-  | "process_failed"
-  | "timeout"
-  | "unsupported_mode"
-  | "untrusted_url"
-  | "flow_not_found"
-  | "flow_forbidden"
-  | "flow_consumed"
-  | "flow_not_active"
-  | "disconnected"
-  | "failed";
+export const AGENT_AUTH_PROBLEM_REASONS = [
+  "binary_unavailable",
+  "auth_in_progress",
+  "parse_failed",
+  "invalid_code",
+  "expired",
+  "cancelled",
+  "process_failed",
+  "timeout",
+  "unsupported_mode",
+  "untrusted_url",
+  "flow_not_found",
+  "flow_forbidden",
+  "flow_consumed",
+  "flow_not_active",
+  "disconnected",
+  "failed",
+] as const;
+export type AgentAuthProblemReason = (typeof AGENT_AUTH_PROBLEM_REASONS)[number];
 
 export type AgentAuthStartAnswer =
   | {
