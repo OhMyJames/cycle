@@ -353,6 +353,25 @@ export class PrFlow {
         this.#settled.add(`${key}@${sha}`);
         return done("head-moved");
       }
+      // The pull request may have changed while it was reviewed. Not merged, said once, and not settled: when it is
+      // back (ready, or into the base branch again) it is looked at as a new review.
+      const base = baseBranchOf(config.baseRef);
+      const changed = head.isDraft
+        ? { kind: "draft", text: "PR 已是草稿" }
+        : head.baseBranch !== base
+          ? { kind: "base", text: `目标分支已不是 ${base}` }
+          : undefined;
+      if (changed !== undefined) {
+        await store.event(key, "pr_merge_refused", { reason: changed.kind });
+        await commentOnce(
+          h,
+          input,
+          config.repoRoot,
+          `merge-${changed.kind}`,
+          `评审结论为合并，但${changed.text}，Loop 不合并。PR 恢复后会作为新的一次审阅再看。`,
+        );
+        return done(`merge-${changed.kind}`);
+      }
       if (ci.status.state === "pending") {
         db(store).wait(
           key,
