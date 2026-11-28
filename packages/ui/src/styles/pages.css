@@ -3191,6 +3191,13 @@ html[data-platform="darwin"] [data-slot="loop-crumb"] {
   color: var(--cycle-ink);
 }
 
+[data-slot="loop-timeline-session-btn"][data-active] {
+  border-color: var(--cycle-border-default);
+  background: var(--cycle-surface-selected);
+  color: var(--cycle-ink);
+  font-weight: 500;
+}
+
 [data-slot="loop-timeline-session-btn"]:focus-visible {
   outline: 1.5px solid var(--cycle-focus-ring);
   outline-offset: 1px;
@@ -3315,4 +3322,58 @@ html[data-platform="darwin"] [data-slot="loop-crumb"] {
   background: var(--cycle-surface-message);
   font-size: var(--cycle-text-meta);
   color: var(--cycle-ink-secondary);
+}
+
+/* Right-side session panel opened from Loop Timeline: sits in SplitLayout's #panel column beside the timeline. */
+[data-slot="loop-session-panel"] {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  background: var(--cycle-surface-workspace);
+}
+
+[data-slot="loop-session-panel"]
+  :is([data-slot="conversation"], [data-slot="permissions"], [data-slot="composer"]) {
+  --cycle-column-pad: max(1rem, calc((100% - var(--cycle-measure)) / 2));
+}
+
+[data-slot="loop-session-panel-head"] {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  height: 2.625rem;
+  padding: 0 0.5rem 0 1rem;
+  border-bottom: 1px solid var(--cycle-border-subtle);
+}
+
+[data-slot="loop-session-panel-heading"] {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+[data-slot="loop-session-panel-title"] {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-family: var(--cycle-font-display);
+  font-size: var(--cycle-text-ui);
+  font-weight: 600;
+  letter-spacing: var(--cycle-tracking-display);
+  line-height: var(--cycle-leading-ui);
+  color: var(--cycle-ink);
+}
+
+[data-slot="loop-session-panel-state"] {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
 }

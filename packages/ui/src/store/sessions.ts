@@ -46,6 +46,8 @@ const applyToView = (view: SessionView, event: SessionEvent): SessionView => {
   };
 };
 
+export type SessionTarget = { locationId: string; sessionId: string };
+
 export class SessionsSlice {
   readonly #kit: StoreKit;
   /** Events about a session that is still being opened, held until its snapshot is in. */
@@ -69,10 +71,14 @@ export class SessionsSlice {
   }
 
   /** The session in view, if one is. */
-  #open(): { locationId: string; sessionId: string } | undefined {
+  #open(): SessionTarget | undefined {
     const { selectedLocation: locationId, selectedSession: sessionId } = this.#kit.state();
     if (locationId === undefined || sessionId === undefined) return undefined;
     return { locationId, sessionId };
+  }
+
+  #target(explicit?: SessionTarget): SessionTarget | undefined {
+    return explicit ?? this.#open();
   }
 
   /** An event of a session's view, as main told it. True when it was applied to a view that is up to date. */
@@ -193,12 +199,36 @@ export class SessionsSlice {
   };
 
   /**
+   * Loads a session into `state.views` without changing `selectedLocation` / `selectedSession` or leaving the current
+   * view (used when inspecting a Loop session inside Timeline's right panel).
+   */
+  openView = async (locationId: string, sessionId: string): Promise<boolean> => {
+    const { state: now, set, attempt } = this.#kit;
+    const state = now().status[locationId]?.state;
+    if (state !== "connected" && now().views[viewKey(locationId, sessionId)] === undefined) {
+      const name = now().locations.find((h) => h.id === locationId)?.name ?? locationId;
+      set({ error: { key: "session.awayCannotOpen", params: { location: name } } });
+      return false;
+    }
+    if (state === "connected") {
+      const ok = await attempt(async () => {
+        await this.#load(locationId, sessionId);
+        return true;
+      });
+      return ok === true;
+    }
+    return true;
+  };
+
+  /**
    * Sends what the open session's box holds: its text, and the images attached to it. The box is empty from the moment
    * it goes; if it cannot go, what was in it comes back, in front of anything written since. `steer`: while the agent
    * works, into the turn that is running instead of the queue.
    */
-  async send(options: { steer?: boolean; via?: SendVia } = {}): Promise<void> {
-    const open = this.#open();
+  async send(
+    options: { steer?: boolean; via?: SendVia; target?: SessionTarget } = {},
+  ): Promise<void> {
+    const open = this.#target(options.target);
     if (open === undefined) return;
     const { locationId, sessionId } = open;
     const { drafts, bridge, attempt, track } = this.#kit;
@@ -230,8 +260,8 @@ export class SessionsSlice {
    * the focus. Nothing is sent: the person reads it, may change it, and sends it as any message, asked for permissions
    * afresh. Only for the session in view.
    */
-  resend = (resend: Resend): void => {
-    const open = this.#open();
+  resend = (resend: Resend, target?: SessionTarget): void => {
+    const open = this.#target(target);
     if (open === undefined) return;
     const { drafts, set, track } = this.#kit;
     const key = viewKey(open.locationId, open.sessionId);
@@ -256,8 +286,8 @@ export class SessionsSlice {
    * while its location is connected and the agent is not at work. If it cannot go, it comes back in the box, so
    * nothing is lost. Resolves when the daemon has answered.
    */
-  retry = async (resend: Resend): Promise<boolean> => {
-    const open = this.#open();
+  retry = async (resend: Resend, target?: SessionTarget): Promise<boolean> => {
+    const open = this.#target(target);
     if (open === undefined || resend.busy) return false;
     const { locationId, sessionId } = open;
     const { state, bridge, attempt, drafts, track } = this.#kit;
@@ -278,8 +308,19 @@ export class SessionsSlice {
   };
 
   /** What fits an @ in the selected session's box. Quiet when it cannot say: a menu that is not there is enough. */
-  searchFiles = async (query: string): Promise<FileSearch | undefined> => {
+  searchFiles = async (query: string, target?: SessionTarget): Promise<FileSearch | undefined> => {
     const state = this.#kit.state();
+    if (target !== undefined) {
+      try {
+        return await this.#kit.bridge.searchFiles(
+          target.locationId,
+          { sessionId: target.sessionId },
+          query,
+        );
+      } catch {
+        return undefined;
+      }
+    }
     const { selectedLocation: locationId, selectedSession: sessionId, blank } = state;
     // A blank conversation has no session yet: it looks in the folder it has chosen, if the daemon can.
     const where =
@@ -321,8 +362,8 @@ export class SessionsSlice {
     this.#kit.bridge.workspaceFile(locationId, sessionId, path);
 
   /** Takes a queued prompt back to edit it. Undefined if it had gone to the agent, or came back, meanwhile. */
-  dequeue = async (queueId: string): Promise<PromptBlock[] | undefined> => {
-    const open = this.#open();
+  dequeue = async (queueId: string, target?: SessionTarget): Promise<PromptBlock[] | undefined> => {
+    const open = this.#target(target);
     if (open === undefined) return undefined;
     const { locationId, sessionId } = open;
     const blocks = await this.#kit.attempt(() =>
@@ -332,14 +373,14 @@ export class SessionsSlice {
     return blocks;
   };
 
-  cancel = async (): Promise<void> => {
-    const open = this.#open();
+  cancel = async (target?: SessionTarget): Promise<void> => {
+    const open = this.#target(target);
     if (open === undefined) return;
     await this.#kit.attempt(() => this.#kit.bridge.cancel(open.locationId, open.sessionId));
   };
 
-  setConfig = async (configId: string, value: string): Promise<void> => {
-    const open = this.#open();
+  setConfig = async (configId: string, value: string, target?: SessionTarget): Promise<void> => {
+    const open = this.#target(target);
     if (open === undefined) return;
     await this.#kit.attempt(() =>
       this.#kit.bridge.setSessionConfig(open.locationId, open.sessionId, configId, value),
@@ -375,8 +416,12 @@ export class SessionsSlice {
    * being stopped; false: there was nothing to stop (it ended, or the agent that ran it is gone); undefined: the ask
    * failed, and the error is shown.
    */
-  stopSubagent = async (childId: string, background: boolean): Promise<boolean | undefined> => {
-    const open = this.#open();
+  stopSubagent = async (
+    childId: string,
+    background: boolean,
+    target?: SessionTarget,
+  ): Promise<boolean | undefined> => {
+    const open = this.#target(target);
     if (open === undefined) return undefined;
     return await this.#kit.attempt(() =>
       this.#kit.bridge.stopSubagent(open.locationId, open.sessionId, childId, background),

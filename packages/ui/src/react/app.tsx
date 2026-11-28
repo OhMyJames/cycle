@@ -25,6 +25,7 @@ import { I18nProvider, useI18n } from "./i18n.tsx";
 import { ErrorCircleIcon, SidebarIcon } from "./icons.tsx";
 import { LoopMain } from "./loop.tsx";
 import { type LoopProjectTab, matchLoopProject } from "./loop-nav.ts";
+import { LoopSessionPanel } from "./loop-session-panel.tsx";
 import { errorText, SessionNotices } from "./notice-line.tsx";
 import { currentPlan } from "./plan.tsx";
 import { SearchDialog } from "./search.tsx";
@@ -33,7 +34,7 @@ import { SessionSettings } from "./session-settings.tsx";
 import { SettingsPage } from "./settings.tsx";
 import { AppShell, Place, ShellNotices } from "./shell.tsx";
 import { SidePanel } from "./side-panel.tsx";
-import { SessionsNav, SidebarActions } from "./sidebar.tsx";
+import { SessionsNav, SidebarActions, sessionTitle } from "./sidebar.tsx";
 import { SplitLayout } from "./split-layout.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
@@ -178,6 +179,9 @@ function AppWindow() {
   }, [knownLoopSessions]);
   const [timelineReturn, setTimelineReturn] = useState<
     { projectKey: string; sessionId: string } | undefined
+  >(undefined);
+  const [timelinePanel, setTimelinePanel] = useState<
+    { projectKey: string; locationId: string; sessionId: string } | undefined
   >(undefined);
   const loopNoticeCount = useAppState((s) =>
     s.loop.projects.reduce((sum, p) => {
@@ -483,6 +487,20 @@ function AppWindow() {
     </>
   );
   const { loopView } = places;
+  const onTimeline =
+    place.id === "loop" && loopView?.at === "project" && loopView.tab === "timeline";
+  const activeTimelinePanel =
+    onTimeline && timelinePanel !== undefined && timelinePanel.projectKey === loopView.projectKey
+      ? timelinePanel
+      : undefined;
+  const timelinePanelSession =
+    activeTimelinePanel !== undefined
+      ? sessionsByLocation[activeTimelinePanel.locationId]?.find(
+          (s) => s.sessionId === activeTimelinePanel.sessionId,
+        )
+      : undefined;
+  const splitPanelOf =
+    place.id === "sessions" ? panelKey : onTimeline ? `timeline:${loopView.projectKey}` : undefined;
 
   return (
     <div data-slot="app" ref={appRef}>
@@ -490,7 +508,7 @@ function AppWindow() {
         layout={({ sidebar, main }) => (
           <SplitLayout
             controller={layout}
-            panelOf={panelKey}
+            panelOf={splitPanelOf}
             onSidebarWidth={(width) =>
               appRef.current?.style.setProperty("--cycle-sidebar-width", `${width}px`)
             }
@@ -507,6 +525,31 @@ function AppWindow() {
                       />
                     ),
                     onClose: () => sessionPanel.toggleSidePanel("handle"),
+                  }
+                : undefined
+            }
+            auxPanel={
+              activeTimelinePanel !== undefined
+                ? {
+                    label:
+                      timelinePanelSession !== undefined
+                        ? sessionTitle(timelinePanelSession)
+                        : t("loop.timeline.sessionPanel"),
+                    content: (
+                      <LoopSessionPanel
+                        locationId={activeTimelinePanel.locationId}
+                        sessionId={activeTimelinePanel.sessionId}
+                        onClose={() => setTimelinePanel(undefined)}
+                        onOpenFull={() => {
+                          const { projectKey, sessionId } = activeTimelinePanel;
+                          if (store.joinLoopSession(sessionId)) {
+                            setTimelineReturn({ projectKey, sessionId });
+                            setTimelinePanel(undefined);
+                          }
+                        }}
+                      />
+                    ),
+                    onClose: () => setTimelinePanel(undefined),
                   }
                 : undefined
             }
@@ -640,9 +683,11 @@ function AppWindow() {
               }}
               onBack={places.loopBack}
               onClose={places.leaveLoop}
-              onTimelineSessionOpened={(projectKey, sessionId) =>
-                setTimelineReturn({ projectKey, sessionId })
+              activeTimelineSessionId={activeTimelinePanel?.sessionId}
+              onOpenTimelineSession={(projectKey, locationId, sessionId) =>
+                setTimelinePanel({ projectKey, locationId, sessionId })
               }
+              onCloseTimelineSession={() => setTimelinePanel(undefined)}
               active={place.id === "loop"}
             />
           </Place>

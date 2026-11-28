@@ -38,6 +38,7 @@
   [data-slot="blank-agent-name"],
   [data-slot="blank-recent-name"],
   [data-slot="notice-text"],
+  [data-slot="loop-session-panel-title"],
   [data-kind="session-title"]
 ) {
   overflow: hidden;

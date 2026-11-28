@@ -2278,8 +2278,9 @@ test("CYC-534: Loop sessions stay out of the sidebar session list and appear on 
   expect(screen.queryByText("Older research ticket")).toBeNull();
   expect(screen.getByText("Implement timeline page")).toBeTruthy();
 
-  // Clicking a step's session button opens that session, emits behavior-only analytics, and offers Back to Timeline.
-  await user.click(screen.getByRole("button", { name: "Open Protocol schema" }));
+  // Clicking a step's session button opens that session in the right panel beside Timeline, without leaving Timeline.
+  const openDevBtn = screen.getByRole("button", { name: "Open Protocol schema" });
+  await user.click(openDevBtn);
   await waitFor(() =>
     expect(fake.named("openSession").some(([, , sid]) => sid === "sess-dev-517")).toBe(true),
   );
@@ -2287,13 +2288,247 @@ test("CYC-534: Loop sessions stay out of the sidebar session list and appear on 
     "loop_timeline_session_opened",
     { entry_kind: "run", role: "dev" },
   ]);
-  // One-click Back to Timeline returns straight to Timeline.
+  const sessionPanel = await waitFor(() => {
+    const el = document.querySelector<HTMLElement>('[data-slot="loop-session-panel"]');
+    expect(el).not.toBeNull();
+    return el as HTMLElement;
+  });
+  expect(within(sessionPanel).getByRole("heading", { name: "[CYC-517] Dev" })).toBeTruthy();
+  expect(screen.getByText("Implement timeline page")).toBeTruthy();
+  expect(openDevBtn.hasAttribute("data-active")).toBe(true);
+
+  // Sending a message from the right panel's composer targets the opened Loop session, not the background human session.
+  const panelInput = sessionPanel.querySelector<HTMLElement>('[data-slot="composer-input"]');
+  expect(panelInput).not.toBeNull();
+  await user.click(panelInput as HTMLElement);
+  await user.keyboard("Check edge cases{Enter}");
+  await waitFor(() =>
+    expect(fake.named("prompt").some(([, , sid]) => sid === "sess-dev-517")).toBe(true),
+  );
+  expect(fake.named("prompt").some(([, , sid]) => sid === "human-1")).toBe(false);
+
+  // Escape closes the right-side session panel while staying on Timeline.
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(document.querySelector('[data-slot="loop-session-panel"]')).toBeNull(),
+  );
+  expect(screen.getByText("Implement timeline page")).toBeTruthy();
+
+  // Re-opening and clicking Open full session jumps to the full session view with one-click Back to Timeline.
+  await user.click(screen.getByRole("button", { name: "Open Protocol schema" }));
+  const reopenedPanel = await waitFor(() => {
+    const el = document.querySelector<HTMLElement>('[data-slot="loop-session-panel"]');
+    expect(el).not.toBeNull();
+    return el as HTMLElement;
+  });
+  await user.click(within(reopenedPanel).getByRole("button", { name: "Open full session" }));
   await user.click(await screen.findByRole("button", { name: "Back to Timeline" }));
   await screen.findByText("Implement timeline page");
 
   // Clicking a ticket key opens the ticket drawer.
   await user.click(screen.getAllByRole("button", { name: "CYC-517" })[0] as HTMLElement);
   await screen.findByRole("complementary", { name: "CYC-517" });
+});
+
+test("Timeline right panel switches between sessions and preserves the background session's SidePanel", async () => {
+  const nowIso = new Date().toISOString();
+  const user = userEvent.setup();
+  const fake = fakeBridge({
+    connected: true,
+    loopProjects: { kind: "ok", projects: [cycle] },
+    workspaceRepos: { "/work": cycle.repo.displayName },
+    loopTimelines: {
+      CYC: {
+        kind: "ok",
+        project: "CYC",
+        entries: [
+          {
+            entryKind: "run",
+            id: "run:CYC-540",
+            key: "CYC-540",
+            title: "Side-by-side timeline sessions",
+            kind: "dev",
+            phase: "qa",
+            state: "active",
+            round: 1,
+            startedAt: nowIso,
+            updatedAt: nowIso,
+            prUrl: null,
+            blockedReason: null,
+            graph: null,
+            steps: [
+              {
+                id: "session:dev:sess-dev-540",
+                label: "dev",
+                role: "dev",
+                status: "passed",
+                sessionId: "sess-dev-540",
+                startedAt: nowIso,
+                finishedAt: nowIso,
+                summary: "Implemented panel",
+                error: null,
+              },
+              {
+                id: "session:qa:sess-qa-540",
+                label: "qa",
+                role: "qa",
+                status: "running",
+                sessionId: "sess-qa-540",
+                startedAt: nowIso,
+                finishedAt: null,
+                summary: null,
+                error: null,
+              },
+            ],
+          },
+        ],
+        hasMore: false,
+        nextBefore: null,
+        knownSessionIds: ["sess-dev-540", "sess-qa-540"],
+      },
+    },
+  });
+  fake.bridge.sessions = async () => [
+    { ...summary("human-1"), title: "My own chat", updatedAt: nowIso },
+    {
+      ...summary("sess-dev-540"),
+      title: "[CYC-540] Dev",
+      updatedAt: nowIso,
+      origin: { kind: "loop", project: "CYC", run: "CYC-540", role: "dev" },
+    },
+    {
+      ...summary("sess-qa-540"),
+      title: "[CYC-540] QA",
+      state: "running",
+      updatedAt: nowIso,
+      origin: { kind: "loop", project: "CYC", run: "CYC-540", role: "qa" },
+    },
+  ];
+
+  await renderApp(fake.bridge);
+  // Open the human session and its right-side SidePanel first.
+  await user.click(await screen.findByRole("option", { name: /My own chat/ }));
+  await user.click(await screen.findByRole("button", { name: "Show panel" }));
+  const humanSidePanel = await waitFor(() => {
+    const el = document.querySelector<HTMLElement>('[data-slot="side-panel"]');
+    expect(el).not.toBeNull();
+    return el as HTMLElement;
+  });
+
+  // Switch to Timeline and open Dev session in the right panel.
+  await user.click(await screen.findByRole("button", { name: "Timeline" }));
+  await screen.findByText("Side-by-side timeline sessions");
+  await user.click(screen.getByRole("button", { name: "Open Dev session" }));
+  const panel = await waitFor(() => {
+    const el = document.querySelector<HTMLElement>('[data-slot="loop-session-panel"]');
+    expect(el).not.toBeNull();
+    return el as HTMLElement;
+  });
+  expect(within(panel).getByRole("heading", { name: "[CYC-540] Dev" })).toBeTruthy();
+  expect(humanSidePanel.hidden).toBe(true);
+  expect(humanSidePanel.inert).toBe(true);
+
+  // Switch directly to QA session without closing the panel.
+  await user.click(screen.getByRole("button", { name: "Open QA session" }));
+  await waitFor(() =>
+    expect(within(panel).getByRole("heading", { name: "[CYC-540] QA" })).toBeTruthy(),
+  );
+  expect(screen.getByRole("button", { name: "Open QA session" }).hasAttribute("data-active")).toBe(
+    true,
+  );
+  expect(screen.getByRole("button", { name: "Open Dev session" }).hasAttribute("data-active")).toBe(
+    false,
+  );
+
+  // Returning to My own chat brings back the exact same SidePanel DOM node intact.
+  await user.click(screen.getByRole("option", { name: /My own chat/ }));
+  await waitFor(() => expect(humanSidePanel.hidden).toBe(false));
+  expect(document.querySelector('[data-slot="side-panel"]')).toBe(humanSidePanel);
+  expect(humanSidePanel.inert).toBe(false);
+  expect(document.querySelector('[data-slot="loop-session-panel"]')).toBeNull();
+});
+
+test("Timeline right panel shows an error state with Reload instead of looping when openSession fails", async () => {
+  const nowIso = new Date().toISOString();
+  const user = userEvent.setup();
+  const fake = fakeBridge({
+    connected: true,
+    loopProjects: { kind: "ok", projects: [cycle] },
+    workspaceRepos: { "/work": cycle.repo.displayName },
+    loopTimelines: {
+      CYC: {
+        kind: "ok",
+        project: "CYC",
+        entries: [
+          {
+            entryKind: "run",
+            id: "run:CYC-541",
+            key: "CYC-541",
+            title: "Retry panel load",
+            kind: "dev",
+            phase: "dev",
+            state: "active",
+            round: 1,
+            startedAt: nowIso,
+            updatedAt: nowIso,
+            prUrl: null,
+            blockedReason: null,
+            graph: null,
+            steps: [
+              {
+                id: "session:dev:sess-fail-541",
+                label: "dev",
+                role: "dev",
+                status: "running",
+                sessionId: "sess-fail-541",
+                startedAt: nowIso,
+                finishedAt: null,
+                summary: null,
+                error: null,
+              },
+            ],
+          },
+        ],
+        hasMore: false,
+        nextBefore: null,
+        knownSessionIds: ["sess-fail-541"],
+      },
+    },
+  });
+  fake.bridge.sessions = async () => [
+    { ...summary("human-1"), title: "My own chat", updatedAt: nowIso },
+    {
+      ...summary("sess-fail-541"),
+      title: "[CYC-541] Dev",
+      updatedAt: nowIso,
+      origin: { kind: "loop", project: "CYC", run: "CYC-541", role: "dev" },
+    },
+  ];
+  const baseOpen = fake.bridge.openSession;
+  let attempts = 0;
+  fake.bridge.openSession = async (locationId, sessionId) => {
+    if (sessionId === "sess-fail-541" && attempts++ === 0) {
+      throw new Error("daemon busy");
+    }
+    return baseOpen(locationId, sessionId);
+  };
+
+  await renderApp(fake.bridge);
+  await user.click(await screen.findByRole("button", { name: "Timeline" }));
+  await screen.findByText("Retry panel load");
+  await user.click(screen.getByRole("button", { name: "Open Dev session" }));
+
+  const panel = await waitFor(() => {
+    const el = document.querySelector<HTMLElement>('[data-slot="loop-session-panel"]');
+    expect(el).not.toBeNull();
+    return el as HTMLElement;
+  });
+  await within(panel).findByText("Could not load the session");
+  expect(attempts).toBe(1);
+
+  await user.click(within(panel).getByRole("button", { name: "Read again" }));
+  await waitFor(() => expect(within(panel).queryByText("Could not load the session")).toBeNull());
+  expect(attempts).toBe(2);
 });
 
 test("CYC-534: Timeline shows inline alert when a session is unavailable and renders error state", async () => {

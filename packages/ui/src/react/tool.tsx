@@ -22,13 +22,13 @@ import {
 } from "../model/index.ts";
 import { reveal } from "../reveal.ts";
 import { startedAt } from "../started.ts";
-import { filesRootOf } from "../store/index.ts";
 import { AgentLink } from "./agent-link.tsx";
 import { CommandText } from "./command-text.tsx";
 import { useI18n } from "./i18n.tsx";
 import { ImageBlockView } from "./image.tsx";
 import { Elapsed } from "./inline-ai-status.tsx";
 import { isSafeLink, Markdown } from "./markdown.tsx";
+import { useScopedFilesRoot, useSessionScope } from "./session-scope.tsx";
 import { useStartScope } from "./start-scope.ts";
 import { useAppState, useAppStore } from "./store-context.tsx";
 
@@ -370,7 +370,8 @@ function CallCard({ tool, openState }: { tool: ToolItem; openState?: OpenState |
   // away, and not from a call that failed: there may be nothing there to show.
   const activity = activityOf(tool);
   const where = tool.locations?.[0]?.path;
-  const filesRoot = useAppState(filesRootOf);
+  const sessionScope = useSessionScope();
+  const filesRoot = useScopedFilesRoot();
   const inFiles =
     tool.status === "completed" &&
     (activity === "read" || activity === "edit") &&
@@ -410,8 +411,8 @@ function CallCard({ tool, openState }: { tool: ToolItem; openState?: OpenState |
   // The file an edit changed, named as the Diff tab names it (from the session's folder).
   const editPath = facts.edit !== undefined ? editPathOf(tool) : undefined;
   const cwd = useAppState((state) =>
-    state.selectedLocation !== undefined
-      ? state.sessions[state.selectedLocation]?.find((x) => x.sessionId === state.selectedSession)
+    sessionScope.locationId !== undefined
+      ? state.sessions[sessionScope.locationId]?.find((x) => x.sessionId === sessionScope.sessionId)
           ?.cwd
       : undefined,
   );
@@ -510,9 +511,13 @@ function CallCard({ tool, openState }: { tool: ToolItem; openState?: OpenState |
             }
             // Joined to what is under it: the change, or the note that it is too large to draw.
             joined={diff !== undefined || facts.edit.additions + facts.edit.deletions > 0}
-            onOpen={() => {
-              if (store.showInDiff(tool.id)) store.track("diff_shown_from_conversation", {});
-            }}
+            onOpen={
+              sessionScope.hasSidePanel
+                ? () => {
+                    if (store.showInDiff(tool.id)) store.track("diff_shown_from_conversation", {});
+                  }
+                : undefined
+            }
           />
         ) : null}
         {diff !== undefined ? <DiffView lines={diff} /> : null}
@@ -689,9 +694,28 @@ function DiffHead({
   deletions: number;
   status: string | undefined;
   joined: boolean;
-  onOpen: () => void;
+  onOpen?: (() => void) | undefined;
 }) {
   const { t } = useI18n();
+  const body = (
+    <>
+      {onOpen !== undefined ? (
+        <span data-slot="visually-hidden">{t("diff.showInDiff")}: </span>
+      ) : null}
+      <span data-slot="tool-diff-path">
+        <bdi>{path}</bdi>
+      </span>
+      {status !== undefined ? <span data-slot="diff-status">{status}</span> : null}
+      <Counts additions={additions} deletions={deletions} />
+    </>
+  );
+  if (onOpen === undefined) {
+    return (
+      <div data-slot="tool-diff-head" data-joined={joined || undefined} title={path}>
+        {body}
+      </div>
+    );
+  }
   return (
     <button
       type="button"
@@ -700,12 +724,7 @@ function DiffHead({
       title={`${t("diff.showInDiff")}: ${path}`}
       onClick={onOpen}
     >
-      <span data-slot="visually-hidden">{t("diff.showInDiff")}: </span>
-      <span data-slot="tool-diff-path">
-        <bdi>{path}</bdi>
-      </span>
-      {status !== undefined ? <span data-slot="diff-status">{status}</span> : null}
-      <Counts additions={additions} deletions={deletions} />
+      {body}
     </button>
   );
 }

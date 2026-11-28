@@ -91,11 +91,13 @@ export const hasDependencies = (steps: LoopTimelineStep[]): boolean => {
 
 export function TimelineDag({
   steps,
+  activeSessionId,
   tone,
   duration,
   onOpenSession,
 }: {
   steps: LoopTimelineStep[];
+  activeSessionId?: string | undefined;
   tone: (status: LoopTimelineStep["status"]) => string;
   duration: (step: LoopTimelineStep) => string | null;
   onOpenSession: (step: LoopTimelineStep) => void;
@@ -195,6 +197,7 @@ export function TimelineDag({
                   <button
                     type="button"
                     data-slot="loop-timeline-session-btn"
+                    data-active={step.sessionId === activeSessionId ? "" : undefined}
                     aria-label={t("loop.timeline.openSessionFor", { target: step.label })}
                     onClick={() => onOpenSession(step)}
                   >
