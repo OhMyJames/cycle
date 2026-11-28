@@ -860,13 +860,20 @@ export function ConversationView({
       }
     });
     children.observe(el, { childList: true });
-    // Only a control: a click that selects words, while a reply streams, is no reason to stop following it.
+    // Only a control: a click that selects words, while a reply streams, is no reason to stop following it. What it opens or
+    // closes grows or shrinks where it was pressed, and for that while the browser keeps nothing in place (`data-acted`):
+    // keeping something it picked took the view 42px down when a code block at the end was shown whole (CYC-535).
+    let release: ReturnType<typeof setTimeout> | undefined;
     const act = (event: Event) => {
       if (
-        event.target instanceof Element &&
-        event.target.closest("button, summary, [role='button']")
+        !(event.target instanceof Element) ||
+        event.target.closest("button, summary, [role='button']") === null
       )
-        acted.current = performance.now();
+        return;
+      acted.current = performance.now();
+      el.dataset.acted = "";
+      clearTimeout(release);
+      release = setTimeout(() => delete el.dataset.acted, ACTED_MS);
     };
     // A block with something open in it is kept drawn, so that what was opened is there when the reader comes back; one
     // closed again is let go.
@@ -887,6 +894,7 @@ export function ConversationView({
     el.addEventListener("pointerdown", act, true);
     el.addEventListener("keydown", act, true);
     return () => {
+      clearTimeout(release);
       keep.disconnect();
       children.disconnect();
       el.removeEventListener("pointerdown", act, true);

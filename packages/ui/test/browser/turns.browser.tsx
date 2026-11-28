@@ -10,6 +10,7 @@ import { reveal } from "../../src/reveal.ts";
 import { startedAt } from "../../src/started.ts";
 import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge } from "../fake-bridge.ts";
+import { LONG_CODE_LINES, READING } from "../markdown-samples.ts";
 import { openSettings } from "./account-menu.ts";
 import { findAlert } from "./alert.ts";
 import { renderApp } from "./render-app.tsx";
@@ -642,6 +643,37 @@ test("a card the reader opened is still open when they come back to it", async (
   }
   const back = await screen.findByRole("button", { name: /^Worked/ });
   expect(back.getAttribute("aria-expanded")).toBe("true");
+});
+
+test("a long code block shown whole at the end of a conversation leaves the view where it was", async () => {
+  const { user, log } = await open(
+    you("What did you change?"),
+    u({
+      sessionUpdate: "agent_message",
+      messageId: "a1",
+      content: [{ type: "text", text: READING }],
+    }),
+    state({ state: "idle", stopReason: "end_turn" }),
+  );
+  constrain(log);
+  const more = await within(log).findByRole("button", {
+    name: `Show all ${LONG_CODE_LINES} lines`,
+  });
+  // Coloured, measured and at the end, as a reader finds it.
+  await waitFor(() =>
+    expect(log.querySelector('[data-streamdown="code-block-body"] span[style]')).not.toBeNull(),
+  );
+  await settle();
+  await waitFor(() => expect(log.scrollHeight - log.scrollTop - log.clientHeight).toBeLessThan(2));
+  const top = log.scrollTop;
+  // The browser kept something it picked in place as the block grew, and the view went 42px down with it (CYC-535). Only
+  // the gallery's `markdown-expand` shows the jump, so this asks too that, as the block opens, nothing is kept in place.
+  more.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+  expect(getComputedStyle(log).overflowAnchor).toBe("none");
+  await user.click(more);
+  for (let i = 0; i < 6; i++) await settle();
+  expect(more.getAttribute("aria-expanded")).toBe("true");
+  expect(Math.abs(log.scrollTop - top)).toBeLessThanOrEqual(2);
 });
 
 test("an item far above the view is brought into view and marked, in a long conversation", async () => {

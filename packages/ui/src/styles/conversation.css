@@ -36,6 +36,11 @@
   line-height: var(--cycle-leading-body);
 }
 
+/* Just after the reader pressed a control in it: what that opened or closed moves only what is below it (conversation.tsx). */
+[data-slot="conversation"][data-acted] {
+  overflow-anchor: none;
+}
+
 /* With nothing in it yet, the empty or loading state stays in the middle of the view. */
 [data-slot="conversation"]:has(> :is([data-slot="loading"], [data-slot="conversation-empty"])):not(
   :has(> [data-slot="block"])
