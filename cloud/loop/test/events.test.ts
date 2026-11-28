@@ -3,7 +3,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSy
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { LoopEventsListResultSchema } from "@cycle/protocol";
+import { LoopEventsListResultSchema } from "@cycle/protocol/loop";
 import type { Config } from "../src/config.ts";
 import { eventsList } from "../src/events.ts";
 import { listen } from "../src/server.ts";

@@ -18,7 +18,11 @@ const memoryStorage = (initial: Record<string, string> = {}): DraftStorage => {
 test("a session whose panel was never opened has it closed, on the Overview", () => {
   const panels = new SidePanelStore(memoryStorage());
   expect(panels.get("local:a")).toBe(CLOSED);
-  expect(CLOSED).toEqual({ open: false, tabs: ["overview"], active: "overview" });
+  expect(CLOSED).toEqual({
+    open: false,
+    tabs: ["overview", "files", "diff"],
+    active: "overview",
+  });
 });
 
 test("each session keeps its own panel, and a restart finds it again", () => {
@@ -28,7 +32,7 @@ test("each session keeps its own panel, and a restart finds it again", () => {
   expect(panels.get("local:a").open).toBe(true);
   expect(panels.get("local:b").open).toBe(false);
   const again = new SidePanelStore(storage);
-  expect(again.get("local:a")).toEqual({ open: true, tabs: ["overview"], active: "overview" });
+  expect(again.get("local:a")).toEqual({ ...CLOSED, open: true });
   again.setOpen("local:a", false);
   expect(new SidePanelStore(storage).get("local:a").open).toBe(false);
 });
@@ -48,7 +52,7 @@ test("the state is the same object until it changes, and a change is told", () =
 test("showing a tab opens the panel on it", () => {
   const panels = new SidePanelStore(memoryStorage());
   panels.show("local:a", "overview");
-  expect(panels.get("local:a")).toEqual({ open: true, tabs: ["overview"], active: "overview" });
+  expect(panels.get("local:a")).toEqual({ ...CLOSED, open: true });
 });
 
 test("only the sessions used last are remembered", () => {
@@ -96,7 +100,9 @@ test("what storage holds and is not understood is left out, not thrown on", () =
     }),
   );
   expect(panels.get("local:a")).toEqual({ open: true, tabs: ["overview"], active: "overview" });
-  expect(panels.get("local:b")).toBe(CLOSED);
+  // Every view closed is a state (the session's terminals are its tabs); tabs that are no list at all is not one.
+  expect(panels.get("local:b")).toEqual({ open: true, tabs: [], active: "overview" });
+  expect(panels.get("local:c")).toBe(CLOSED);
   expect(new SidePanelStore(memoryStorage({ "cycle:side-panel": "{" })).get("local:a")).toBe(
     CLOSED,
   );
@@ -106,7 +112,7 @@ test("a terminal's tab is remembered as the one shown, but not kept among the ta
   const storage = memoryStorage();
   const panels = new SidePanelStore(storage);
   panels.show("local:a", "terminal:t1");
-  expect(panels.get("local:a")).toEqual({ open: true, tabs: ["overview"], active: "terminal:t1" });
+  expect(panels.get("local:a")).toEqual({ ...CLOSED, open: true, active: "terminal:t1" });
   expect(new SidePanelStore(storage).get("local:a").active).toBe("terminal:t1");
 });
 
@@ -117,4 +123,39 @@ test("a stored tab shown that is neither a kind nor a terminal falls back to the
     ]),
   });
   expect(new SidePanelStore(storage).get("local:a").active).toBe("diff");
+});
+
+test("a closed view's tab leaves the strip, the tab named shown in its place; shown again, it is put back at the end", () => {
+  const storage = memoryStorage();
+  const panels = new SidePanelStore(storage);
+  panels.show("local:a", "files");
+  panels.close("local:a", "files", "diff");
+  expect(panels.get("local:a")).toEqual({ open: true, tabs: ["overview", "diff"], active: "diff" });
+  // One that was not the one shown: what is shown stays.
+  panels.close("local:a", "overview", "diff");
+  expect(panels.get("local:a")).toEqual({ open: true, tabs: ["diff"], active: "diff" });
+  // The last view, with a terminal to show in its place: no view is left, and a restart finds it so.
+  panels.close("local:a", "diff", "terminal:t1");
+  expect(new SidePanelStore(storage).get("local:a")).toEqual({
+    open: true,
+    tabs: [],
+    active: "terminal:t1",
+  });
+  panels.show("local:a", "files");
+  panels.show("local:a", "overview");
+  expect(panels.get("local:a").tabs).toEqual(["files", "overview"]);
+  // With no view left, the panel can start again from its views; one that has any is left as it is.
+  panels.close("local:a", "files");
+  panels.close("local:a", "overview");
+  expect(panels.get("local:a").tabs).toEqual([]);
+  panels.restore("local:a");
+  expect(panels.get("local:a").tabs).toEqual(CLOSED.tabs);
+  panels.close("local:a", "diff");
+  panels.restore("local:a");
+  expect(panels.get("local:a").tabs).toEqual(["overview", "files"]);
+  // A tab that is not in the strip: nothing changes, and nobody is told.
+  let told = 0;
+  panels.subscribe(() => told++);
+  panels.close("local:a", "diff");
+  expect(told).toBe(0);
 });

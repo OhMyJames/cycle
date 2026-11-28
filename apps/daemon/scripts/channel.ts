@@ -73,7 +73,7 @@ export type Plan = {
  * own recipe, with the Bun that compiles it. Not the executable's bytes: the version is put in it, so they change with
  * every commit even when nothing else does.
  */
-export const daemonSourcesHash = async (): Promise<string> => {
+export const daemonInputs = async (): Promise<string[]> => {
   const result = await Bun.build({
     entrypoints: [join(DAEMON, "src/main.ts")],
     target: "bun",
@@ -84,15 +84,22 @@ export const daemonSourcesHash = async (): Promise<string> => {
     .metafile;
   if (!result.success || metafile === undefined)
     throw new Error("The daemon's sources could not be bundled to list them.");
+  // The bundler names its inputs from the working directory: each is named by its place in the repository instead.
+  return Object.keys(metafile.inputs)
+    .map((p) => resolve(process.cwd(), p))
+    .sort();
+};
+
+/** The hash of `daemonInputs` and the build's recipe, with the Bun that compiles it. */
+export const daemonSourcesHash = async (): Promise<string> => {
+  const inputs = await daemonInputs();
   const hash = createHash("sha256");
   hash.update(`bun ${Bun.version}\n`);
   const recipe = ["apps/daemon/scripts/build.ts", "apps/daemon/scripts/binaries.ts"].map((p) =>
     join(ROOT, p),
   );
-  // The bundler names its inputs from the working directory: each is hashed by its place in the repository instead.
-  const inputs = Object.keys(metafile.inputs).map((p) => resolve(process.cwd(), p));
   let missing = 0;
-  for (const absolute of [...recipe, ...inputs.sort()]) {
+  for (const absolute of [...recipe, ...inputs]) {
     const known = existsSync(absolute);
     // Inputs the bundler made up (a `bun:` module) have no file to read: their name is enough.
     if (!known) missing++;

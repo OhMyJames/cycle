@@ -23,8 +23,15 @@ export type SidePanelState = {
   readonly active: PanelTabId;
 };
 
-/** A session whose panel was never opened: closed, with the Overview ready for when it is. */
-export const CLOSED: SidePanelState = { open: false, tabs: ["overview"], active: "overview" };
+/**
+ * A session whose panel was never opened: closed, with its views in the strip for when it is, the Overview first. A tab
+ * is one press away, since the session's header has only the panel's own button.
+ */
+export const CLOSED: SidePanelState = {
+  open: false,
+  tabs: ["overview", "files", "diff"],
+  active: "overview",
+};
 
 /** How many sessions' panels are remembered: the ones used last. */
 export const REMEMBERED = 200;
@@ -42,8 +49,9 @@ const isTerminalTab = (value: unknown): value is `terminal:${string}` =>
 const parse = (value: unknown): SidePanelState | undefined => {
   if (typeof value !== "object" || value === null) return undefined;
   const v = value as { open?: unknown; tabs?: unknown; active?: unknown };
-  const tabs = Array.isArray(v.tabs) ? [...new Set(v.tabs.filter(isTab))] : [];
-  if (tabs.length === 0) return undefined;
+  if (!Array.isArray(v.tabs)) return undefined;
+  // None is a state too: every view closed, the session's terminals the only tabs.
+  const tabs = [...new Set(v.tabs.filter(isTab))];
   const active =
     (isTab(v.active) && tabs.includes(v.active)) || isTerminalTab(v.active)
       ? v.active
@@ -133,6 +141,28 @@ export class SidePanelStore {
     if (old.open && old.active === tab) return;
     const tabs = !isTab(tab) || old.tabs.includes(tab) ? old.tabs : [...old.tabs, tab];
     this.#put(key, { open: true, tabs, active: tab });
+  }
+
+  /**
+   * Closes a view's tab. `next` is the tab shown in its place when it was the one shown: the strip's, which has the
+   * session's terminals too, so the caller says it. A tab that is put back (`show`) goes to the strip's end.
+   */
+  close(key: string, tab: PanelTabKind, next?: PanelTabId): void {
+    const old = this.get(key);
+    if (!old.tabs.includes(tab)) return;
+    const tabs = old.tabs.filter((x) => x !== tab);
+    const active = old.active === tab ? (next ?? tabs[0] ?? old.active) : old.active;
+    this.#put(key, { open: old.open, tabs, active });
+  }
+
+  /**
+   * A panel left with no view (each closed while a terminal was its tab) whose terminals have gone too starts again
+   * from its views: the strip draws them, and before one of them is shown or closed they are the panel's again.
+   */
+  restore(key: string): void {
+    const old = this.get(key);
+    if (old.tabs.length > 0) return;
+    this.#put(key, { ...old, tabs: CLOSED.tabs });
   }
 
   /** A session that is gone (deleted): its panel is forgotten too. */

@@ -23,6 +23,7 @@ import {
 } from "./session.ts";
 import { type StopReason, stopReasonOf } from "./translate.ts";
 import { PlanUsage, withContext } from "./usage.ts";
+import { worktreeHooks } from "./worktree-hooks.ts";
 
 /**
  * Whether a message is the main agent beginning a message of its own: the start of one, which is what a turn that
@@ -228,7 +229,10 @@ export class Lifecycle {
     if (session.schedules.sleeping(false)) this.#tellSchedules(session);
     const live = spawn(this.#config, this.#runQuery, session, {
       ...askingOptions({ client, session, canElicit: () => this.canElicit }),
-      hooks: scheduleHooks(session.schedules, () => this.#tellSchedules(session)),
+      hooks: {
+        ...scheduleHooks(session.schedules, () => this.#tellSchedules(session)),
+        ...worktreeHooks(client, session),
+      },
     });
     // A window is this process's word: one from before is not reused for a usage between turns.
     session.contextSize = undefined;

@@ -12,6 +12,11 @@ export type FilesState = {
    * own `serial`, so naming the same lines again goes to them again.
    */
   readonly lines?: LineTarget;
+  /**
+   * Set when a folder was asked for in the tree (`reveal`), a new number each time: the tree is what is wanted, so what
+   * stands in its place (the names found for what was typed) gives way. Not kept by what comes after.
+   */
+  readonly revealed?: number;
 };
 
 /** Lines of a file, from `start` to `end` (the same for one line), counted from 1. */
@@ -114,9 +119,11 @@ export class FilesViews {
   /** Shows a folder in the tree: it and the folders it is in are opened. */
   reveal(key: string, folder: string): void {
     const old = this.get(key);
+    this.#serial += 1;
     this.#put(key, {
       expanded: new Set([...old.expanded, ...foldersOf(folder), folder]),
       file: undefined,
+      revealed: this.#serial,
     });
   }
 

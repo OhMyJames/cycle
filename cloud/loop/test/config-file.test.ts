@@ -497,3 +497,13 @@ test("daemonUpdateHoldMinutes: defaults to 10, accepts 0–60, rejects the rest 
       parseConfigFiles(JSON.stringify({ ...base, daemonUpdateHoldMinutes: bad })),
     ).toThrow("daemonUpdateHoldMinutes");
 });
+
+test("repo.forge: only github is supported; the error names the Project, the field and the value", () => {
+  const repo = (forge?: string) => JSON.stringify({ ...full, repo: { url: "u", forge } });
+  expect(() => parseConfigFile(repo("gitlab"))).toThrow(
+    `Project ${full.projectKey}: unsupported repo.forge "gitlab"; only "github" is supported`,
+  );
+  expect(() => parseConfigFiles(`{"projects":[${repo("gitlab")}]}`)).toThrow("repo.forge");
+  expect(parseConfigFile(repo("github")).repo?.forge).toBe("github");
+  expect(parseConfigFile(repo()).repo?.forge).toBeUndefined();
+});

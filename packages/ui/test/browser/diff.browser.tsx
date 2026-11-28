@@ -1,8 +1,9 @@
 import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
-import { cleanup, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import type { WorkspaceStatus } from "../../src/api.ts";
 import { openSession } from "./mount.tsx";
+import { openTab } from "./panel.ts";
 
 afterEach(() => {
   cleanup();
@@ -72,7 +73,7 @@ test("this session's edits, by turn, the latest first: each file opens to its ch
       ...edit("t2", "/work/README.md"),
     ],
   });
-  await user.click(screen.getByRole("button", { name: "Show changes" }));
+  await openTab(user, "Diff");
   await waitFor(() => expect(panel()).not.toBeNull());
   const tab = within(panel());
   expect(tab.getByRole("tab", { name: "Diff", selected: true })).toBeDefined();
@@ -85,6 +86,10 @@ test("this session's edits, by turn, the latest first: each file opens to its ch
   ]);
   const row = tab.getByRole("button", { name: /src\/login\.ts/ });
   expect(row.textContent).toContain("+2");
+  // The bar says how much changed in all: two edits of +2 −1.
+  const bar = panel().querySelector('[data-slot="panel-bar"]') as HTMLElement;
+  expect(bar.textContent).toContain("+4");
+  expect(bar.textContent).toContain("−2");
   await user.click(row);
   expect(await tab.findByText("new line")).toBeDefined();
   await user.click(tab.getByRole("button", { name: "Show in conversation" }));
@@ -94,9 +99,43 @@ test("this session's edits, by turn, the latest first: each file opens to its ch
   ]);
 });
 
+test("the bar opens every file or closes them all, and sets whether long lines wrap", async () => {
+  const { user, tracked } = await mount({
+    updates: [
+      ask("m1", "Fix the login bug"),
+      ...edit("t1", "/work/src/login.ts"),
+      ...edit("t2", "/work/README.md"),
+    ],
+  });
+  await openTab(user, "Diff");
+  const tab = within(panel());
+  const rows = () => tab.getAllByRole("button", { name: /login\.ts|README\.md/ });
+  await waitFor(() => expect(rows()).toHaveLength(2));
+  await user.click(tab.getByRole("button", { name: "Expand all files" }));
+  expect(rows().map((r) => r.getAttribute("aria-expanded"))).toEqual(["true", "true"]);
+  // A change is the panel's width, its lines kept to a line each until Wrap is on.
+  const text = () => panel().querySelector('[data-slot="diff-text"]') as HTMLElement;
+  expect(getComputedStyle(text()).whiteSpace).toBe("pre");
+  const wrap = tab.getByRole("button", { name: "Wrap long lines" });
+  expect(wrap.getAttribute("aria-pressed")).toBe("false");
+  await user.click(wrap);
+  expect(wrap.getAttribute("aria-pressed")).toBe("true");
+  expect(getComputedStyle(text()).whiteSpace).toBe("pre-wrap");
+  // One open is enough for the button to close them all.
+  await user.click(rows()[0] as HTMLElement);
+  await user.click(tab.getByRole("button", { name: "Collapse all files" }));
+  expect(rows().map((r) => r.getAttribute("aria-expanded"))).toEqual(["false", "false"]);
+  expect(tab.getByRole("button", { name: "Expand all files" })).toBeDefined();
+  expect(tracked()).toEqual([
+    ["diff_all_toggled", { open: true, view: "session" }],
+    ["diff_wrap_toggled", { wrap: true }],
+    ["diff_all_toggled", { open: false, view: "session" }],
+  ]);
+});
+
 test("a session with no edits says where they will show", async () => {
   const { user } = await mount({ updates: [ask("m1", "Just a question")] });
-  await user.click(screen.getByRole("button", { name: "Show changes" }));
+  await openTab(user, "Diff");
   expect(await within(panel()).findByText("No edits in this session yet")).toBeDefined();
 });
 
@@ -114,18 +153,69 @@ test("the workspace view lists what differs from the last commit, and a file ope
       ],
     }),
   });
-  await user.click(screen.getByRole("button", { name: "Show changes" }));
+  await openTab(user, "Diff");
   const tab = within(panel());
   await user.click(await tab.findByRole("radio", { name: "Workspace" }));
   expect(await tab.findByText("Against commit 0123456")).toBeDefined();
   expect(tab.getByRole("button", { name: /logo\.png/ }).textContent).toContain("binary");
-  expect(tab.getByRole("button", { name: /notes\.md/ }).textContent).toContain("untracked");
+  // What became of a file is git's letter, with the word for a reader; a modified one, as most are, shows no letter.
+  const notes = tab.getByRole("button", { name: /notes\.md/ });
+  expect(notes.textContent).toContain("untracked");
+  expect(notes.querySelector('[data-slot="diff-status"] > [aria-hidden]')?.textContent).toBe("U");
+  expect(tab.getByRole("button", { name: /src\/app\.ts/ }).querySelector("[data-tone]")).toBeNull();
+  // The folder a file is in is quiet beside its name, and is what gives way in a narrow panel.
+  const path = tab.getByRole("button", { name: /src\/app\.ts/ });
+  expect(path.querySelector('[data-slot="path-folder"]')?.textContent).toBe("src/");
+  expect(path.querySelector('[data-slot="path-name"]')?.textContent).toBe("app.ts");
   await user.click(tab.getByRole("button", { name: /src\/app\.ts/ }));
   expect(await tab.findByText("another")).toBeDefined();
   expect(tracked()).toEqual([
     ["diff_view_changed", { view: "workspace" }],
     ["diff_file_opened", { view: "workspace" }],
   ]);
+});
+
+test("every file opened at once reads its change a few at a time, and each line of a change is as wide as its longest", async () => {
+  const paths = Array.from({ length: 12 }, (_, i) => `src/file${i}.ts`);
+  let reading = 0;
+  let most = 0;
+  const { user, script } = await mount({
+    diff: true,
+    status: async () => ({
+      state: "ok",
+      head: "0123456789abcdef0123456789abcdef01234567",
+      truncated: false,
+      files: paths.map((path) => ({ path, status: "modified", additions: 2, deletions: 1 })),
+    }),
+  });
+  const long = `+${"a long line of code that does not fit the panel ".repeat(8)}`;
+  script.bridge.workspaceFile = async (_e, _s, path) => {
+    reading += 1;
+    most = Math.max(most, reading);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    reading -= 1;
+    return {
+      path,
+      patch: `diff --git a/${path} b/${path}\n@@ -1,1 +1,2 @@\n-old line\n+short\n${long}\n`,
+      truncated: false,
+      binary: false,
+    };
+  };
+  await openTab(user, "Diff");
+  const tab = within(panel());
+  await user.click(await tab.findByRole("radio", { name: "Workspace" }));
+  await user.click(await tab.findByRole("button", { name: "Expand all files" }));
+  await waitFor(() => expect(tab.getAllByText("short")).toHaveLength(paths.length));
+  expect(most).toBeGreaterThan(1);
+  expect(most).toBeLessThanOrEqual(4);
+  // Not wrapped, the change scrolls sideways, and the short line's tint goes as far as the long one's.
+  const change = panel().querySelector('[data-slot="tool-diff"]') as HTMLElement;
+  expect(change.scrollWidth).toBeGreaterThan(change.clientWidth);
+  const widths = [...change.querySelectorAll<HTMLElement>("[data-line]")].map(
+    (line) => line.getBoundingClientRect().width,
+  );
+  expect(new Set(widths).size).toBe(1);
+  expect(Math.ceil(widths[0] ?? 0)).toBe(change.scrollWidth);
 });
 
 test("the workspace view says why there is nothing to compare: no repository, or one not trusted", async () => {
@@ -137,7 +227,7 @@ test("the workspace view says why there is nothing to compare: no repository, or
     diff: true,
     status: async () => states.shift() ?? { state: "not_git" },
   });
-  await user.click(screen.getByRole("button", { name: "Show changes" }));
+  await openTab(user, "Diff");
   const tab = within(panel());
   await user.click(await tab.findByRole("radio", { name: "Workspace" }));
   expect(await tab.findByText("This repository is not trusted")).toBeDefined();
@@ -157,7 +247,7 @@ test("a failure to compare says why in git's words, and Retry asks again", async
       return { state: "ok", head: null, truncated: false, files: [] };
     },
   });
-  await user.click(screen.getByRole("button", { name: "Show changes" }));
+  await openTab(user, "Diff");
   const tab = within(panel());
   await user.click(await tab.findByRole("radio", { name: "Workspace" }));
   expect(await tab.findByText("git exited with 128")).toBeDefined();
@@ -200,7 +290,7 @@ test("an edit held for review says so; a repository inside opens in Files; trust
       }),
     ],
   });
-  await user.click(screen.getByRole("button", { name: "Show changes" }));
+  await openTab(user, "Diff");
   const tab = within(panel());
   expect(tab.getByRole("button", { name: /a\.ts/ }).textContent).toContain("held for review");
   await user.click(tab.getByRole("radio", { name: "Workspace" }));

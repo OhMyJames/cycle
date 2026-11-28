@@ -3,7 +3,7 @@
 
 import { statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { LoopForgeSchema } from "@cycle/protocol";
+import { LoopForgeSchema } from "@cycle/protocol/loop";
 import { z } from "zod";
 
 export const ConfigSchema = z.object({

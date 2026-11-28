@@ -1,6 +1,6 @@
 import { type FileHandle, open } from "node:fs/promises";
 import { join } from "node:path";
-import { type LoopEvent, LoopEventSchema, type LoopEventsListResult } from "@cycle/protocol";
+import { type LoopEvent, LoopEventSchema, type LoopEventsListResult } from "@cycle/protocol/loop";
 
 /** Per events file: who the file is, and the byte offset where each complete line starts. */
 type Index = { ino: number; birthtimeMs: number; size: number; starts: number[] };

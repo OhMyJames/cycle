@@ -1,10 +1,11 @@
-import { act, cleanup, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import { FitAddon } from "@xterm/addon-fit";
 import { afterEach, expect, test, vi } from "vitest";
 import { cdp, userEvent } from "vitest/browser";
 import type { TerminalInfo, TerminalProblem } from "../../src/api.ts";
 import { fakeBridge, summary } from "../fake-bridge.ts";
 import { mountApp } from "./mount.tsx";
+import { newTerminal, openPanel, openTab } from "./panel.ts";
 import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
@@ -63,14 +64,17 @@ const mount = async (
 const screenText = () =>
   document.querySelector('[data-slot="terminal-screen"] .xterm-rows')?.textContent ?? "";
 
-test("a daemon without terminals has no Terminal button", async () => {
-  await mount({ terminal: false });
-  expect(screen.queryByRole("button", { name: "Show terminal" })).toBeNull();
+test("a daemon without terminals offers none in the panel's menu of tabs", async () => {
+  const { user } = await mount({ terminal: false });
+  const panel = await openPanel(user);
+  await user.click(within(panel).getByRole("button", { name: "Open a tab" }));
+  expect(await screen.findByRole("menuitem", { name: "Overview" })).toBeDefined();
+  expect(screen.queryByRole("menuitem", { name: "New terminal" })).toBeNull();
 });
 
-test("the Terminal button opens a shell in a tab of its own, with the keyboard in it", async () => {
+test("New terminal opens a shell in a tab of its own, with the keyboard in it", async () => {
   const { user, script, tracked } = await mount();
-  await user.click(await screen.findByRole("button", { name: "Show terminal" }));
+  await newTerminal(user);
   const tab = await screen.findByRole("tab", { name: "zsh", selected: true });
   expect(tab).toBeDefined();
   expect(script.named("createTerminal")[0]?.slice(1, 3)).toEqual(["local", "s1"]);
@@ -101,9 +105,9 @@ test("the Terminal button opens a shell in a tab of its own, with the keyboard i
   });
   await waitFor(() => expect(screenText()).toContain("fresh"));
   expect(screenText()).not.toContain("OLD");
-  expect(tracked()).toEqual([["terminal_opened", { via: "header", count: "one" }]]);
-  // On a terminal already, the button closes the panel.
-  await user.click(screen.getByRole("button", { name: "Hide terminal" }));
+  expect(tracked()).toEqual([["terminal_opened", { via: "tab_strip", count: "one" }]]);
+  // The panel closed, the shell goes on: only its tab lets go of it.
+  await user.click(screen.getByRole("button", { name: "Hide panel" }));
   await waitFor(() => expect(document.querySelector('[data-slot="side-panel"]')).toBeNull());
   expect(script.named("detachTerminal").length).toBeGreaterThan(0);
 });
@@ -112,7 +116,7 @@ test("a terminal in a panel that is opening is measured at the panel's width, no
   const fits = vi.spyOn(FitAddon.prototype, "fit");
   try {
     const { user } = await mount({ terminals: new Map([["s1", [running("t1")]]]) });
-    await user.click(await screen.findByRole("button", { name: "Show terminal" }));
+    await newTerminal(user);
     const host = await waitFor(() => {
       const element = document.querySelector<HTMLElement>('[data-slot="terminal-screen"]');
       expect(element).not.toBeNull();
@@ -147,11 +151,11 @@ test("New terminal opens another; closing a tab ends its shell and shows the one
   const { user, script, tracked } = await mount({
     terminals: new Map([["s1", [running("a", { title: "build" })]]]),
   });
-  // A terminal already there: the button shows it rather than opening another.
-  await user.click(await screen.findByRole("button", { name: "Show terminal" }));
+  // A terminal already there is a tab of the panel: shown, not another opened.
+  await openTab(user, "build");
   await screen.findByRole("tab", { name: "build", selected: true });
   expect(script.named("createTerminal")).toEqual([]);
-  await user.click(screen.getByRole("button", { name: "New terminal" }));
+  await newTerminal(user);
   await screen.findByRole("tab", { name: "zsh", selected: true });
   // The keyboard closes the focused tab with Delete.
   await user.click(screen.getByRole("tab", { name: "zsh" }));
@@ -168,7 +172,7 @@ test("New terminal opens another; closing a tab ends its shell and shows the one
 test("a shell that exited says so, takes no keys, and its tab can be closed from there", async () => {
   const terminals = new Map([["s1", [running("a")]]]);
   const { user, script, store } = await mount({ terminals });
-  await user.click(await screen.findByRole("button", { name: "Show terminal" }));
+  await openTab(user, "zsh");
   await waitFor(() => expect(screenText()).toContain("screen of a"));
   act(() =>
     script.emit({
@@ -181,14 +185,15 @@ test("a shell that exited says so, takes no keys, and its tab can be closed from
   expect(await screen.findByText("The shell exited with code 3.")).toBeDefined();
   await user.click(screen.getByRole("button", { name: "Close terminal" }));
   await waitFor(() => expect(screen.queryByRole("tab", { name: "zsh" })).toBeNull());
-  expect(screen.getByRole("tab", { name: "Overview", selected: true })).toBeDefined();
+  // The tab before it in the strip takes its place.
+  expect(screen.getByRole("tab", { name: "Diff", selected: true })).toBeDefined();
   // The panel remembers the tab it went to, not the terminal that is gone.
-  expect(store.sidePanels.get("local:s1").active).toBe("overview");
+  expect(store.sidePanels.get("local:s1").active).toBe("diff");
 });
 
 test("a terminal that could not be opened says why, in the page's words", async () => {
   const { user, tracked } = await mount({ terminalProblem: "limit" });
-  await user.click(await screen.findByRole("button", { name: "Show terminal" }));
+  await newTerminal(user);
   expect(
     await screen.findByText("Too many terminals are open. Close one to open another."),
   ).toBeDefined();
@@ -198,7 +203,7 @@ test("a terminal that could not be opened says why, in the page's words", async 
 test("terminals that went while the connection was away stay as tabs that say they ended", async () => {
   const terminals = new Map([["s1", [running("a")]]]);
   const { user, script } = await mount({ terminals });
-  await user.click(await screen.findByRole("button", { name: "Show terminal" }));
+  await openTab(user, "zsh");
   await screen.findByRole("tab", { name: "zsh", selected: true });
   act(() => script.emit({ type: "location-status", locationId: "local", state: "reconnecting" }));
   expect(await screen.findByText(/Typing works again once the location reconnects/)).toBeDefined();
@@ -227,7 +232,7 @@ test("when the theme turns dark, a program's red becomes GitHub Dark's", async (
     });
   try {
     const { user, script } = await mount({ terminals: new Map([["s1", [running("a")]]]) });
-    await user.click(await screen.findByRole("button", { name: "Show terminal" }));
+    await openTab(user, "zsh");
     await waitFor(() => expect(screenText()).toContain("screen of a"));
     act(() =>
       script.emit({
@@ -255,12 +260,12 @@ const tabNames = () => screen.getAllByRole("tab").map((tab) => tab.textContent);
 
 test("three terminals: each its own tab and screen, one closed leaves the others, and after the last another opens", async () => {
   const { user, script } = await mount();
-  await user.click(await screen.findByRole("button", { name: "Show terminal" }));
-  await user.click(await screen.findByRole("button", { name: "New terminal" }));
-  await user.click(await screen.findByRole("button", { name: "New terminal" }));
+  await newTerminal(user);
+  await newTerminal(user);
+  await newTerminal(user);
   // All three start as the shell's name: each tab still reads as its own.
   await screen.findByRole("tab", { name: "zsh 3", selected: true });
-  expect(tabNames()).toEqual(["Overview", "zsh", "zsh 2", "zsh 3"]);
+  expect(tabNames()).toEqual(["Overview", "Files", "Diff", "zsh", "zsh 2", "zsh 3"]);
   await waitFor(() => expect(screenText()).toContain("screen of t3"));
   // Switching shows that terminal's own screen.
   await user.click(screen.getByRole("tab", { name: "zsh" }));
@@ -275,22 +280,22 @@ test("three terminals: each its own tab and screen, one closed leaves the others
   const middle = screen.getByRole("tab", { name: "zsh 2" });
   await user.hover(middle);
   await user.click(middle.querySelector('[data-slot="panel-tab-close"]') as HTMLElement);
-  await waitFor(() => expect(tabNames()).toEqual(["Overview", "zsh", "zsh 2"]));
+  await waitFor(() => expect(tabNames()).toEqual(["Overview", "Files", "Diff", "zsh", "zsh 2"]));
   expect(script.named("closeTerminal").map((c) => c[2])).toEqual(["t2"]);
   // The other two closed from the keyboard: a new one still opens from the strip.
   await user.click(screen.getByRole("tab", { name: "zsh 2" }));
   await user.keyboard("{Delete}");
   await user.click(await screen.findByRole("tab", { name: "zsh", selected: true }));
   await user.keyboard("{Delete}");
-  await waitFor(() => expect(tabNames()).toEqual(["Overview"]));
-  await user.click(screen.getByRole("button", { name: "New terminal" }));
+  await waitFor(() => expect(tabNames()).toEqual(["Overview", "Files", "Diff"]));
+  await newTerminal(user);
   await screen.findByRole("tab", { name: "zsh", selected: true });
   await waitFor(() => expect(screenText()).toContain("screen of t4"));
 });
 
 test("in the light theme a program's red is GitHub Light's, on the panel's own ground", async () => {
   const { user, script } = await mount({ terminals: new Map([["s1", [running("a")]]]) });
-  await user.click(await screen.findByRole("button", { name: "Show terminal" }));
+  await openTab(user, "zsh");
   await waitFor(() => expect(screenText()).toContain("screen of a"));
   act(() =>
     script.emit({
@@ -311,7 +316,7 @@ test("in the light theme a program's red is GitHub Light's, on the panel's own g
 
 test("opening a terminal lets go of the attachment it came with before its tab attaches", async () => {
   const { user, script } = await mount();
-  await user.click(await screen.findByRole("button", { name: "Show terminal" }));
+  await newTerminal(user);
   await waitFor(() => expect(script.named("attachTerminal").length).toBe(1));
   const order = script.calls
     .map(([name]) => name)
@@ -319,7 +324,7 @@ test("opening a terminal lets go of the attachment it came with before its tab a
   expect(order).toEqual(["createTerminal", "detachTerminal", "attachTerminal"]);
 });
 
-test("pressed before the list has come, the Terminal button shows the terminal there instead of opening one", async () => {
+test("a panel opened before the list of terminals has come gets the terminal there as a tab once it does", async () => {
   const terminals = new Map([["s1", [running("a", { title: "build" })]]]);
   const script = fakeBridge({
     connected: true,
@@ -339,8 +344,10 @@ test("pressed before the list has come, the Terminal button shows the terminal t
   await renderApp(script.bridge);
   const user = userEvent.setup();
   await user.click(await screen.findByRole("option", { name: /first/ }));
-  await user.click(await screen.findByRole("button", { name: "Show terminal" }));
+  await openPanel(user);
+  expect(screen.queryByRole("tab", { name: "build" })).toBeNull();
   release();
+  await user.click(await screen.findByRole("tab", { name: "build" }));
   await screen.findByRole("tab", { name: "build", selected: true });
   expect(script.named("createTerminal")).toEqual([]);
 });
@@ -351,7 +358,7 @@ test("a close the daemon did not take gives the tab back, and says why", async (
   script.bridge.closeTerminal = async () => {
     throw new Error("Not connected to the daemon");
   };
-  await user.click(await screen.findByRole("button", { name: "Show terminal" }));
+  await openTab(user, "build");
   await user.click(await screen.findByRole("tab", { name: "build", selected: true }));
   await user.keyboard("{Delete}");
   expect(await screen.findByText("Not connected to the daemon")).toBeDefined();
@@ -361,7 +368,7 @@ test("a close the daemon did not take gives the tab back, and says why", async (
 test("after a reconnect, news of another terminal that comes before the list does not lose the ones that ended", async () => {
   const terminals = new Map([["s1", [running("a")]]]);
   const { user, script } = await mount({ terminals });
-  await user.click(await screen.findByRole("button", { name: "Show terminal" }));
+  await openTab(user, "zsh");
   await screen.findByRole("tab", { name: "zsh", selected: true });
   act(() => script.emit({ type: "location-status", locationId: "local", state: "reconnecting" }));
   const list = script.bridge.listTerminals;
