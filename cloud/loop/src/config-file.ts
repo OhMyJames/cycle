@@ -134,6 +134,14 @@ export const PrReviewSchema = z
   })
   .strict();
 
+/** The operator agent (CYC-486): `blockedThreshold` Blocked tickets wake it; it also looks at the Project every `inspectIntervalMinutes`. */
+export const OperatorSchema = z
+  .object({
+    blockedThreshold: whole(1, 50).default(3),
+    inspectIntervalMinutes: whole(15, 1440).default(60),
+  })
+  .strict();
+
 export const ConfigFileSchema = z.object({
   /** Absolute path of the repository the Project's work happens in. */
   repoRoot: text,
@@ -176,6 +184,7 @@ export const ConfigFileSchema = z.object({
   design: DesignSchema.optional(),
   planning: PlanningSchema.optional(),
   prReview: PrReviewSchema.optional(),
+  operator: OperatorSchema.optional(),
 });
 /** As parsed: a research section always has its `readRoots`, absolute and with `~` expanded. */
 export type ConfigFile = Omit<z.infer<typeof ConfigFileSchema>, "research" | "design"> & {

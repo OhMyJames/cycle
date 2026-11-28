@@ -85,6 +85,31 @@ PR 与 main 冲突时，Loop 自己处理，每个工单最多处理 1 次：
 
 启动时按 projectKey 调 `get_project` 解析列、标签和类型 id：列按 stateType 选，同一 stateType 有多列时按看板顺序（`unstarted` 第一列为 Todo；`started` 的第一、二、三列依次为 In Progress、In Review、Blocked）。一个 stateDir 对应一个 Project，锁在 `<stateDir>/loop.lock`。
 
+## 运营 agent（CYC-486）
+
+被叫醒才跑的只读 LLM 会话：读 Loop API 导出的状态和仓库，写诊断和建议，写成 `operator` 种类的 Notice（桌面端怎么显示不在这里）。只给建议，不执行任何动作。它在 Work loop 进程里，占一个 worker 的一次轮次，同一时刻只有一个会话。
+
+```json
+"operator": { "blockedThreshold": 3, "inspectIntervalMinutes": 60 }
+```
+
+| 字段                     | 默认 | 范围    |
+| ------------------------ | ---- | ------- |
+| `blockedThreshold`       | 3    | 1 以上  |
+| `inspectIntervalMinutes` | 60   | 15–1440 |
+
+超出范围或多写字段，启动时报错。改了要重启。
+
+**叫醒条件**（同一原因不重复叫醒；`operator_woken` 事件记每一次，`stats.operatorWakes` 数它）：
+
+- 守护者写了 `stuck` Notice，且那张 run 还在进行（没 Blocked、没完成）。
+- Blocked 的工单数到 `blockedThreshold`；同一堆不重复，新增一张 Blocked 才再叫醒。
+- 定时巡检：距上次叫醒（不论原因，含上一次巡检）满 `inspectIntervalMinutes`，且没有运营会话在跑。提示里带最近一个间隔的 `stats` 摘要。有发现时和诊断一样写 Notice；没有发现（空的 `<diagnosis></diagnosis>`）不写 Notice，只记 `operator_inspected` 事件。
+
+**只读边界**：会话角色 `operator`，规则同 `research`。`readRoots` 多一个 `<stateDir>/operator-export/`，每次叫醒前重新生成 Loop API 的 JSON（`board.json`、`runs.json`、`notices.json`、相关 run 的 `events/<key>.json`）；stateDir 里的其他文件（`loop.db`、`.env`、锁）读不到。会话拿不到 tracker key 和 GitHub token。
+
+**回复格式**：`<diagnosis>` 一段。出现 `<action>` 一律忽略，记 `operator_action_ignored`。会话失败、超时或没有 `<diagnosis>` 记 `operator_failed`，不写 Notice，也不会因同一原因再叫醒。
+
 ## 约定
 
 - 工单必须有「验收标准」列表，每条带 `验证：\`命令\``，命令只能是白名单形式；否则留言写明原因，并把工单移到 Blocked。

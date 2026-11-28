@@ -35,6 +35,7 @@ const ROLE_KEY: Record<SessionOriginRole, string> = {
   shape: "loop.run.session.shape",
   shape_qa: "loop.run.session.shape_qa",
   graph_planner: "loop.run.session.graph_planner",
+  operator: "loop.run.session.operator",
 };
 
 const STEP_TONE: Record<LoopTimelineStepStatus, "running" | "done" | "attention" | "idle"> = {

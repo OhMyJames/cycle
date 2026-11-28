@@ -325,7 +325,7 @@ daemon 在索引里记 `prompted`;在这个规则之前写的索引条目没有�
 
 用于区分人自己发起的会话与系统自动创建的会话(目前只有 Loop),便于客户端把自动会话从侧栏普通会话列表和未读计数中抽离,交由专门的视图(如项目的 Timeline)承接。
 
-- **`session/new` 的 `_meta["cycle/origin"]`**:可选,目前取值 `{ "kind": "loop", "project"?: string, "run"?: string, "role"?: "dev" | "qa" | "review" | "research" | "research_qa" | "triage" | "shape" | "shape_qa" | "graph_planner" }`。由 `SessionOriginSchema` 校验;不合法时返回 `-32602`。只放固定结构词与编号,绝不放本地路径、仓库地址或自由正文。人发起的会话不带此字段。
+- **`session/new` 的 `_meta["cycle/origin"]`**:可选,目前取值 `{ "kind": "loop", "project"?: string, "run"?: string, "role"?: "dev" | "qa" | "review" | "research" | "research_qa" | "triage" | "shape" | "shape_qa" | "graph_planner" | "operator" }`。由 `SessionOriginSchema` 校验;不合法时返回 `-32602`。只放固定结构词与编号,绝不放本地路径、仓库地址或自由正文。人发起的会话不带此字段。
 - **持久化与 `session/list` 行**:daemon 将其保存在会话索引中,在 `session/list` 行的 `_meta["cycle/origin"]` 原样透出。旧索引条目没有该字段时缺省(按人工会话处理),向后兼容;不支持的旧客户端按未识别 `_meta` 忽略。
 
 ## 7. 附着、历史补发与重连

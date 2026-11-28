@@ -32,6 +32,8 @@ export type Stats = {
   restarts: number;
   stuck: number;
   selfUpdates: number;
+  /** Times the operator agent was woken (`operator_woken`, CYC-486), whatever the reason. */
+  operatorWakes: number;
   /** The planning node (CYC-322), counted apart: its rounds are not runs and are in none of the numbers above. */
   planning: PlanningStats;
 };
@@ -253,6 +255,7 @@ export const computeStats = (events: LoopEvent[]): Stats => {
     restarts: events.filter((e) => e.kind === "supervisor_restart").length,
     stuck: events.filter((e) => e.kind === "stuck_escalated").length,
     selfUpdates: events.filter((e) => e.kind === "self_updated").length,
+    operatorWakes: events.filter((e) => e.kind === "operator_woken").length,
   };
 };
 

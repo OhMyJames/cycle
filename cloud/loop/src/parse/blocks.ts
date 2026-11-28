@@ -144,3 +144,17 @@ export const listsWhatWasChecked = (text: string): boolean => {
   const after = text.slice(at).split(/<(?:verdict|review)>/)[0] ?? "";
   return /^\s*(?:[-*]|\d+[.)])\s+\S/m.test(after);
 };
+
+/**
+ * The operator's reply (CYC-486): the `<diagnosis>` paragraph, or null when there is none or it is empty. Any `<action>`
+ * is ignored, never read; `actionIgnored` says there was one, so the loop can record `operator_action_ignored`.
+ */
+export const parseOperatorReply = (
+  text: string,
+): { diagnosis: string | null; actionIgnored: boolean } => {
+  const diagnosis = last(text, "diagnosis");
+  return {
+    diagnosis: diagnosis === null || diagnosis === "" ? null : diagnosis,
+    actionIgnored: /<action[\s>]/.test(text),
+  };
+};

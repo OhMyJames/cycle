@@ -779,6 +779,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "loop.run.session.shape": "整理会话",
   "loop.run.session.shape_qa": "整理 QA 会话",
   "loop.run.session.graph_planner": "执行图规划会话",
+  "loop.run.session.operator": "运营会话",
   "loop.run.session.other": "{kind} 会话",
   "loop.run.sessionMissing": "已连接的工作位置里找不到这个会话。",
   "loop.run.cancel": "取消本轮",

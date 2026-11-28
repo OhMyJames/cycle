@@ -108,6 +108,7 @@ const READ_ONLY_ROLES: readonly SessionRole[] = [
   "shape",
   "shape_qa",
   "graph_planner",
+  "operator",
 ];
 
 export const readOnlyMode = (role: SessionRole, agent: string): string | undefined =>

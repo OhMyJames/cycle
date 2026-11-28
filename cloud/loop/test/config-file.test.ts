@@ -507,3 +507,27 @@ test("repo.forge: only github is supported; the error names the Project, the fie
   expect(parseConfigFile(repo("github")).repo?.forge).toBe("github");
   expect(parseConfigFile(repo()).repo?.forge).toBeUndefined();
 });
+
+test("operator: defaults, configured values, and a value out of range is refused (CYC-486)", () => {
+  expect(parseConfigFile(JSON.stringify(full)).operator).toBeUndefined();
+  expect(parseConfigFile(JSON.stringify({ ...full, operator: {} })).operator).toEqual({
+    blockedThreshold: 3,
+    inspectIntervalMinutes: 60,
+  });
+  expect(
+    parseConfigFile(
+      JSON.stringify({ ...full, operator: { blockedThreshold: 5, inspectIntervalMinutes: 15 } }),
+    ).operator,
+  ).toEqual({ blockedThreshold: 5, inspectIntervalMinutes: 15 });
+  for (const minutes of [14, 1441, 30.5, "60"])
+    expect(() =>
+      parseConfigFile(JSON.stringify({ ...full, operator: { inspectIntervalMinutes: minutes } })),
+    ).toThrow("operator.inspectIntervalMinutes");
+  expect(
+    parseConfigFile(JSON.stringify({ ...full, operator: { inspectIntervalMinutes: 1440 } }))
+      .operator?.inspectIntervalMinutes,
+  ).toBe(1440);
+  expect(() =>
+    parseConfigFile(JSON.stringify({ ...full, operator: { blockedThreshold: 0 } })),
+  ).toThrow("operator.blockedThreshold");
+});

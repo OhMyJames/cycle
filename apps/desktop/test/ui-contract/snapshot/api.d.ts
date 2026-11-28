@@ -76,7 +76,7 @@ export type SessionSummary = {
     worktree?: WorktreeSummary;
     origin?: SessionOrigin;
 };
-export type SessionOriginRole = "dev" | "qa" | "review" | "research" | "research_qa" | "triage" | "shape" | "shape_qa" | "graph_planner";
+export type SessionOriginRole = "dev" | "qa" | "review" | "research" | "research_qa" | "triage" | "shape" | "shape_qa" | "graph_planner" | "operator";
 export type SessionOrigin = {
     kind: "loop";
     project?: string;

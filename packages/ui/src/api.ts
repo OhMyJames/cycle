@@ -143,7 +143,8 @@ export type SessionOriginRole =
   | "triage"
   | "shape"
   | "shape_qa"
-  | "graph_planner";
+  | "graph_planner"
+  | "operator";
 
 /** Structured origin metadata on automated sessions; never contains paths or free text. */
 export type SessionOrigin = {
