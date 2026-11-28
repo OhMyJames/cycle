@@ -851,6 +851,7 @@ export const enUS = {
   "loop.run.events": "Recent events ({count})",
   "loop.run.stepState.done": "Completed",
   "loop.run.stepState.active": "In progress",
+  "loop.run.stepState.attention": "Awaiting review",
   "loop.run.stepState.blocked": "Blocked",
   "loop.run.stepState.pending": "Pending",
   "loop.graph.title": "Execution Graph",

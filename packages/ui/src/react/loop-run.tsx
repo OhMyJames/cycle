@@ -13,6 +13,7 @@ import {
   CloseIcon,
   MessageIcon,
   StopIcon,
+  WarningIcon,
 } from "./icons.tsx";
 import { useNow } from "./now.ts";
 import { useAppStore } from "./store-context.tsx";
@@ -65,7 +66,7 @@ const RESEARCH_STEPS: readonly StepDef[] = [
   { id: "done", phases: ["done"], labelKey: "loop.stage.done" },
 ];
 
-type StepState = "done" | "active" | "blocked" | "pending";
+type StepState = "done" | "active" | "attention" | "blocked" | "pending";
 
 /** Infers the step index a run reached from its recorded sessions and PR, falling back to the first step. */
 const inferredStepIndex = (run: LoopRunDetail, steps: readonly StepDef[]): number => {
@@ -86,11 +87,25 @@ const inferredStepIndex = (run: LoopRunDetail, steps: readonly StepDef[]): numbe
   return Math.max(idx, 0);
 };
 
-/** Maps each step to done / active / blocked / pending based on the run's current phase and state. */
-const stepStatesOf = (run: LoopRunDetail): { id: string; labelKey: string; state: StepState }[] => {
+/** Maps each step to done / active / attention / blocked / pending based on the run's current phase and state. */
+const stepStatesOf = (
+  run: LoopRunDetail,
+  awaitingReview = false,
+): { id: string; labelKey: string; state: StepState }[] => {
   const steps = run.kind === "research" ? RESEARCH_STEPS : DEV_STEPS;
-  if (run.state === "done" || run.phase === "done")
+  if (run.state === "done" || run.phase === "done") {
+    if (awaitingReview && run.kind === "dev") {
+      const reviewIdx = steps.findIndex((s) => s.id === "review");
+      if (reviewIdx !== -1) {
+        return steps.map((s, i) => ({
+          id: s.id,
+          labelKey: s.labelKey,
+          state: i < reviewIdx ? "done" : i === reviewIdx ? "attention" : "pending",
+        }));
+      }
+    }
     return steps.map((s) => ({ id: s.id, labelKey: s.labelKey, state: "done" }));
+  }
   if (run.state === "blocked" || run.phase === "blocked") {
     const blockedAt = inferredStepIndex(run, steps);
     return steps.map((s, i) => ({
@@ -142,11 +157,14 @@ export function RunWorkflow({
   projectKey,
   identifier,
   run,
+  awaitingReview = false,
   onChanged,
 }: {
   projectKey: string;
   identifier: string;
   run: LoopRunDetail;
+  /** True when the run finished by escalating to a person in In Review instead of auto-merging. */
+  awaitingReview?: boolean;
   onChanged: () => void;
 }) {
   const { t } = useI18n();
@@ -183,7 +201,7 @@ export function RunWorkflow({
     });
   }, [store, identifier, run.kind, run.state, run.sessions.length]);
 
-  const steps = stepStatesOf(run);
+  const steps = stepStatesOf(run, awaitingReview);
   const startedMs = Date.parse(run.startedAt);
   const endMs = run.state === "done" ? Date.parse(run.updatedAt) : now;
   const elapsedLabel =
@@ -261,12 +279,16 @@ export function RunWorkflow({
             key={step.id}
             data-slot="loop-run-step"
             data-state={step.state}
-            aria-current={step.state === "active" ? "step" : undefined}
+            aria-current={
+              step.state === "active" || step.state === "attention" ? "step" : undefined
+            }
             title={t(`loop.run.stepState.${step.state}`)}
           >
             <span data-slot="loop-run-step-mark" aria-hidden="true">
               {step.state === "done" ? (
                 <CheckIcon size={10} />
+              ) : step.state === "attention" ? (
+                <WarningIcon size={10} />
               ) : step.state === "blocked" ? (
                 <CloseIcon size={8} />
               ) : null}

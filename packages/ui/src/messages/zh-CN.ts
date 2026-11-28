@@ -765,6 +765,7 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
   "loop.run.events": "运行记录（{count}）",
   "loop.run.stepState.done": "已完成",
   "loop.run.stepState.active": "进行中",
+  "loop.run.stepState.attention": "等待人工评审",
   "loop.run.stepState.blocked": "已阻塞",
   "loop.run.stepState.pending": "未开始",
   "loop.graph.title": "执行图",

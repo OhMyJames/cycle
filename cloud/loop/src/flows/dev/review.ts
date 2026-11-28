@@ -162,12 +162,22 @@ export async function review(
     body: string,
     done: { decision: string; autoMerge: boolean },
     move: boolean,
+    noticeText?: string,
   ) => {
     await save({ phase: "done", dev: { prUrl } }, (tx) => {
       tellTicket(tx, run, issue, `review:${run.key}:${headSha}:${conclusion}`, {
         body,
         ...(move ? { to: "inReview" as const } : {}),
       });
+      if (move) {
+        const reviewSeq = tx.countEvents(run.key, "review_done") + 1;
+        tx.notice(
+          run.key,
+          "review",
+          noticeText ?? body,
+          `review:${run.key}:${headSha}:${conclusion}:${reviewSeq}`,
+        );
+      }
       tx.event(run.key, "review_done", done);
       tx.event(run.key, "delivered", { prUrl, rounds: run.round, autoMerge: done.autoMerge });
     });
@@ -196,6 +206,7 @@ export async function review(
       `已开 PR：${prUrl}\n独立评审经 ${attempts} 次尝试仍未得到有效结论，已升级给人处理。注意：这是评审系统故障，不是代码问题。\n原因：${reason}${commentErrorLine}`,
       { decision: "system_error", autoMerge: false },
       true,
+      `独立评审经 ${attempts} 次尝试仍未得到有效结论（评审系统故障，不是代码问题）：${reason}`,
     );
   }
 
@@ -226,6 +237,7 @@ export async function review(
         `已开 PR：${prUrl}\n独立评审拒绝（reject），且已达修复轮数上限（${run.round} 轮），未开启自动合并，升级给人处理：\n${tail(formatted, 1500)}${commentErrorLine}`,
         { decision: "reject_limit", autoMerge: false },
         true,
+        `独立评审拒绝，且已达修复轮数上限（${run.round} 轮）：\n${tail(formatted, 800)}`,
       );
     }
 
@@ -286,6 +298,7 @@ export async function review(
         `已开 PR：${prUrl}\n${floorReason}，未开启自动合并，已升级给人合并。${commentErrorLine}`,
         { decision: "escalate", autoMerge: false },
         true,
+        `${floorReason}，未开启自动合并，等待人工合并。`,
       );
     }
 
@@ -334,6 +347,7 @@ export async function review(
         `已开 PR：${prUrl}\nCI（${config.ciChecks.join(" / ")}）全部通过且独立评审通过，但开启 GitHub 自动合并失败（这是系统/GitHub 操作故障，不是代码问题），需要人工处理：\n${tail(merged.error)}`,
         { decision: "merge", autoMerge: false },
         true,
+        `独立评审通过，但开启自动合并失败：\n${tail(merged.error, 600)}`,
       );
     }
 
@@ -345,6 +359,7 @@ export async function review(
       `已开 PR：${prUrl}\n独立评审结论为合并，但未满足自动合并前置条件，未开启自动合并，需要人工处理：\n${reasonLines.join("\n")}`,
       { decision: "system_error", autoMerge: false },
       true,
+      `独立评审通过，但未满足自动合并前置条件：\n${reasonLines.join("\n")}`,
     );
   }
 
@@ -373,5 +388,6 @@ export async function review(
     `已开 PR：${prUrl}\nCI（${config.ciChecks.join(" / ")}）已跑完，独立评审结论为升级给人（escalate），未开启自动合并：\n${reasonLines.join("\n")}`,
     { decision: "escalate", autoMerge: false },
     true,
+    reasonLines.join("\n"),
   );
 }

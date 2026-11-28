@@ -672,6 +672,136 @@ describe("loop/ticket/get and the move verbs", () => {
     expect((await detail("CYC-80")).attention).toBeUndefined();
   });
 
+  test("escalated review Notice stays visible while In Review and uncleaned, and drops after cleanup or reopen", async () => {
+    tracker.seed(85, 5, [11]);
+    tracker.seed(86, 5, [11]);
+    tracker.seed(87, 5, [11]);
+    await store.save(
+      run("CYC-85", {
+        phase: "done",
+        dev: {
+          ciRound: 0,
+          ciFailedSha: null,
+          nodeModulesReleased: false,
+          conflictRound: 0,
+          conflict: null,
+          resolvedFiles: [],
+          reviewSessionId: "s-rev-85",
+          reviewCommented: "abc:escalate",
+          prUrl: "https://github.com/o/r/pull/85",
+          fullFlowDocs: [],
+        },
+      }),
+    );
+    store.notice("CYC-85", "review", "older escalated summary", "review:CYC-85:abc:escalate:1");
+    clock += 500;
+    store.notice(
+      "CYC-85",
+      "review",
+      "needs human sign-off\n- scope question",
+      "review:CYC-85:abc:escalate:2",
+    );
+    // Older escalated run without a stored Notice falls back to reviewCommented.
+    await store.save(
+      run("CYC-86", {
+        phase: "done",
+        dev: {
+          ciRound: 0,
+          ciFailedSha: null,
+          nodeModulesReleased: false,
+          conflictRound: 0,
+          conflict: null,
+          resolvedFiles: [],
+          reviewSessionId: "s-rev-86",
+          reviewCommented: "def:escalate",
+          prUrl: "https://github.com/o/r/pull/86",
+          fullFlowDocs: [],
+        },
+      }),
+    );
+    // Auto-merged run in In Review without a review Notice does not fabricate attention.
+    await store.save(
+      run("CYC-87", {
+        phase: "done",
+        dev: {
+          ciRound: 0,
+          ciFailedSha: null,
+          nodeModulesReleased: false,
+          conflictRound: 0,
+          conflict: null,
+          resolvedFiles: [],
+          reviewSessionId: "s-rev-87",
+          reviewCommented: "ghi:merge",
+          prUrl: "https://github.com/o/r/pull/87",
+          fullFlowDocs: [],
+        },
+      }),
+    );
+
+    const listed = LoopNoticesListResultSchema.parse(
+      (await call("loop/notices/list", { project: "CYC" })).result,
+    );
+    expect(listed.notices.filter((n) => n.key === "CYC-85" && n.kind === "review")).toEqual([
+      expect.objectContaining({
+        key: "CYC-85",
+        kind: "review",
+        session: null,
+        text: "needs human sign-off\n- scope question",
+      }),
+    ]);
+    expect((await detail("CYC-85")).attention).toEqual({
+      kind: "review",
+      text: "needs human sign-off\n- scope question",
+      prUrl: "https://github.com/o/r/pull/85",
+    });
+    expect((await detail("CYC-86")).attention).toEqual({
+      kind: "review",
+      text: "",
+      prUrl: "https://github.com/o/r/pull/86",
+    });
+    expect((await detail("CYC-87")).attention).toBeUndefined();
+
+    // Reopening the run (back to dev) drops the review Notice.
+    clock += 1000;
+    const reopened85 = await store.load("CYC-85");
+    if (reopened85 !== undefined) {
+      await store.save({ ...reopened85, phase: "dev" });
+    }
+    const afterReopen = LoopNoticesListResultSchema.parse(
+      (await call("loop/notices/list", { project: "CYC" })).result,
+    );
+    expect(afterReopen.notices.filter((n) => n.key === "CYC-85" && n.kind === "review")).toEqual(
+      [],
+    );
+    expect((await detail("CYC-85")).attention).toBeUndefined();
+
+    // Escalating again brings back a fresh Notice, and cleanup after merge/Done drops it again.
+    clock += 1000;
+    const redone85 = await store.load("CYC-85");
+    if (redone85 !== undefined) {
+      await store.save({ ...redone85, phase: "done" });
+    }
+    store.notice("CYC-85", "review", "second review escalate", "review:CYC-85:abc:escalate:3");
+    expect((await detail("CYC-85")).attention).toEqual({
+      kind: "review",
+      text: "second review escalate",
+      prUrl: "https://github.com/o/r/pull/85",
+    });
+
+    clock += 1000;
+    const current85 = await store.load("CYC-85");
+    if (current85 !== undefined) {
+      await store.save({ ...current85, cleanedAt: now().toISOString() });
+    }
+    const afterCleanup = LoopNoticesListResultSchema.parse(
+      (await call("loop/notices/list", { project: "CYC" })).result,
+    );
+    expect(afterCleanup.notices.filter((n) => n.key === "CYC-85" && n.kind === "review")).toEqual(
+      [],
+    );
+    expect((await detail("CYC-85")).attention).toBeUndefined();
+  });
+
   test("to_backlog drops auto, to_todo goes to the first unstarted column, a moved one is skipped", async () => {
     tracker.writes.length = 0;
     tracker.comments.length = 0;

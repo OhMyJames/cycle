@@ -164,7 +164,9 @@ export const ghEnv = (
 
 /**
  * git's own switches that stop a repository's `.git/config` from running hooks, credential helpers, ssh commands,
- * external diffs, or ext:: transports (CYC-318, CYC-478). Every git the loop runs carries these.
+ * or ext:: transports (CYC-318, CYC-478). Every git the loop runs carries these.
+ * External diffs and textconv filters are disabled via `--no-ext-diff --no-textconv` on `git diff` calls and rejected
+ * by `inspectGitConfig` (passing `-c diff.external=` tells git to execute an empty program name and breaks `git diff`).
  */
 export const GIT_SAFE = [
   "-c",
@@ -179,8 +181,6 @@ export const GIT_SAFE = [
   "core.askPass=",
   "-c",
   "core.pager=cat",
-  "-c",
-  "diff.external=",
   "-c",
   "protocol.ext.allow=never",
 ] as const;

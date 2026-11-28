@@ -590,6 +590,7 @@ export function TicketDrawer({
                   projectKey={projectKey}
                   identifier={ticket.identifier}
                   run={run}
+                  awaitingReview={ticket.attention?.kind === "review"}
                   onChanged={() => setRetryCount((n) => n + 1)}
                 />
               ) : null}
