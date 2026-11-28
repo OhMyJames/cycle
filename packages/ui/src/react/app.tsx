@@ -400,7 +400,7 @@ function AppWindow() {
       ? place.view.at === "project" && place.view.projectKey === currentLoopProject.projectKey
         ? place.view.tab
         : place.view.at === "ticket" && place.view.projectKey === currentLoopProject.projectKey
-          ? "kanban"
+          ? (place.view.over ?? "kanban")
           : undefined
       : undefined;
 
@@ -429,8 +429,9 @@ function AppWindow() {
             const ws = nav.workspaces.find((w) => w.key === key);
             const matched = matchedProjectOf(ws);
             if (matched !== undefined) {
+              // On a project page it stays on that page; anywhere else it lands on Console.
               const nextTab: LoopProjectTab =
-                place.view.at === "project" ? place.view.tab : "kanban";
+                place.view.at === "project" ? place.view.tab : (place.view.over ?? "console");
               places.openLoopProject(matched.projectKey, nextTab, "sidebar");
             } else {
               places.leaveLoop();

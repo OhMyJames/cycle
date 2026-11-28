@@ -11,6 +11,15 @@ const projects: LoopProjectInfo[] = [
   { name: "Docs", projectKey: "DOC", repo: { displayName: "team/docs", forge: "gitlab" } },
 ];
 
+const consolePage: LoopView = { at: "project", projectKey: "CYC", tab: "console" };
+
+test("up returns a ticket to the page it was opened over", () => {
+  expect(up({ ...ticket, over: "console" })).toEqual(consolePage);
+  expect(up({ ...ticket, over: "kanban" })).toEqual(board);
+  expect(up(ticket)).toEqual(board);
+  expect(up(consolePage)).toBeUndefined();
+});
+
 test("up closes a ticket to its board and goes no higher", () => {
   expect(up(ticket)).toEqual(board);
   expect(up(board)).toBeUndefined();
@@ -22,6 +31,8 @@ test("viewProject names the Project a view is in", () => {
   expect(viewProject(ticket)).toBe("CYC");
   expect(viewProject(board)).toBe("CYC");
   expect(viewProject(timeline)).toBe("CYC");
+  expect(viewProject(consolePage)).toBe("CYC");
+  expect(viewProject({ ...ticket, over: "console" })).toBe("CYC");
   expect(viewProject({ at: "overview" })).toBeUndefined();
 });
 

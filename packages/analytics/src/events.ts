@@ -135,7 +135,7 @@ export const EVENTS = {
   }),
   /** A system notification was shown for a Notice (Blocked, escalated review, stuck run or stuck write; never a permission). */
   loop_notice_notified: o({ kind: z.enum(["blocked", "review", "stuck", "intent_stuck"]) }),
-  /** The person opened a Notice's ticket from the Notice area or board alert strip. */
+  /** The person opened a Notice's ticket from the Console, Notice area or board alert strip. */
   loop_notice_opened: o({
     kind: z.enum([
       "permission",
@@ -146,6 +146,7 @@ export const EVENTS = {
       "supervisor",
       "operator",
     ]),
+    from: z.enum(["console", "board"]),
   }),
   /** The person joined a ticket's session from its page or run workflow. */
   loop_session_joined: o({}),
@@ -207,8 +208,15 @@ export const EVENTS = {
   }),
   /** The person opened a Loop Project's Kanban or Timeline view (CYC-533): which view and from where; never which project. */
   loop_project_view_opened: o({
-    view: z.enum(["kanban", "timeline"]),
+    view: z.enum(["console", "kanban", "timeline"]),
     from: z.enum(["sidebar", "overview", "timeline", "notification"]),
+  }),
+  /** The Console page read a Loop Project's board and Notices (CYC-556): only counts, never which project, ticket or text. */
+  loop_console_shown: o({
+    needs_you: z.number(),
+    pending: z.number(),
+    operator: z.number(),
+    running: z.number(),
   }),
   /** The Timeline page read a Loop Project's chronological progress (CYC-534): only whether it worked. */
   loop_timeline_read: o({ result: z.enum(["ok", "no_server", "unreachable"]) }),
@@ -617,6 +625,7 @@ export const UI_EVENTS = [
   "loop_graph_viewed",
   "loop_graph_node_opened",
   "loop_project_view_opened",
+  "loop_console_shown",
   "loop_timeline_filtered",
   "loop_timeline_session_opened",
   "diff_view_changed",

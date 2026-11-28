@@ -280,8 +280,33 @@ describe("the dictionary", () => {
     ).toBe(false);
     expect(EVENTS.loop_notice_notified.safeParse({ kind: "stuck" }).success).toBe(true);
     expect(EVENTS.loop_notice_notified.safeParse({ kind: "intent_stuck" }).success).toBe(true);
-    expect(EVENTS.loop_notice_opened.safeParse({ kind: "intent_stuck" }).success).toBe(true);
-    expect(EVENTS.loop_notice_opened.safeParse({ kind: "operator" }).success).toBe(true);
+    expect(
+      EVENTS.loop_notice_opened.safeParse({ kind: "intent_stuck", from: "console" }).success,
+    ).toBe(true);
+    expect(EVENTS.loop_notice_opened.safeParse({ kind: "operator", from: "board" }).success).toBe(
+      true,
+    );
+    expect(
+      EVENTS.loop_notice_opened.safeParse({ kind: "operator", from: "overview" }).success,
+    ).toBe(false);
+    expect(isUiEvent("loop_console_shown")).toBe(true);
+    expect(
+      EVENTS.loop_console_shown.safeParse({ needs_you: 2, pending: 1, operator: 0, running: 3 })
+        .success,
+    ).toBe(true);
+    expect(
+      EVENTS.loop_console_shown.safeParse({
+        needs_you: 2,
+        pending: 1,
+        operator: 0,
+        running: 3,
+        key: "CYC-1",
+      }).success,
+    ).toBe(false);
+    expect(
+      EVENTS.loop_console_shown.safeParse({ needs_you: "2", pending: 1, operator: 0, running: 3 })
+        .success,
+    ).toBe(false);
     expect(isUiEvent("loop_project_view_opened")).toBe(true);
     expect(
       EVENTS.loop_project_view_opened.safeParse({ view: "kanban", from: "sidebar" }).success,

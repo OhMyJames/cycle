@@ -13,7 +13,6 @@ import {
   ShieldAlertIcon,
   WarningIcon,
 } from "./icons.tsx";
-import { PageGroup, PageRows } from "./page-layout.tsx";
 import { Tip } from "./tip.tsx";
 
 /** Most urgent first across all Loop Notice kinds. */
@@ -22,8 +21,8 @@ const URGENCY: Record<string, number> = {
   blocked: 1,
   stuck: 2,
   intent_stuck: 3,
-  review: 4,
-  supervisor: 5,
+  supervisor: 4,
+  review: 5,
   operator: 6,
 };
 /** A Notice about the Project itself has no ticket; it can be opened only through a session it names. */
@@ -48,7 +47,7 @@ export type RetryIntents = (
   identifier: string,
 ) => Promise<{ ok: boolean; message: string }>;
 
-function RetryFeedback({
+export function RetryFeedback({
   feedback,
   onDismiss,
 }: {
@@ -73,107 +72,100 @@ function RetryFeedback({
   );
 }
 
-/** What needs a person, most urgent first. One that names a session opens it; the others open the ticket's drawer. */
+/** The words of a row's one main action: join the session it names (permission, blocked), or look at the ticket. */
+export const joinsSession = (n: LoopNotice): boolean =>
+  n.session !== null && (n.kind === "permission" || n.kind === "blocked" || n.identifier === null);
+
+/**
+ * The rows of Notices, in the order given (the caller sorts), each one button with one main action named on its right.
+ * `intent_stuck` also has an inline Retry write. The group's title is the caller's.
+ */
 export function Notices({
+  projectKey,
   notices,
   onOpen,
   onRetryIntents,
 }: {
-  notices: { projectKey: string; notice: LoopNotice }[];
-  onOpen: (projectKey: string, notice: LoopNotice) => void;
+  projectKey: string;
+  notices: LoopNotice[];
+  onOpen: (notice: LoopNotice) => void;
   onRetryIntents?: RetryIntents | undefined;
 }) {
   const { t } = useI18n();
   const [retrying, setRetrying] = useState<string | undefined>();
-  const [feedback, setFeedback] = useState<{ ok: boolean; message: string } | undefined>();
-  if (notices.length === 0 && feedback === undefined) return null;
+  if (notices.length === 0) return null;
 
-  const retry = async (projectKey: string, identifier: string) => {
+  const retry = async (identifier: string) => {
     if (!onRetryIntents) return;
-    const key = `${projectKey}:${identifier}`;
-    setRetrying(key);
-    setFeedback(undefined);
+    setRetrying(identifier);
     try {
-      setFeedback(await onRetryIntents(projectKey, identifier));
+      await onRetryIntents(projectKey, identifier);
     } finally {
       setRetrying(undefined);
     }
   };
 
   return (
-    <section data-slot="loop-notices" data-kind="loop-notices" aria-label={t("loop.notices")}>
-      <PageGroup title={t("loop.notices")}>
-        {notices.length > 0 ? (
-          <PageRows>
-            <ul data-slot="loop-notice-list">
-              {notices.map(({ projectKey, notice }) => {
-                const identifier = notice.identifier;
-                const retryKey = `${projectKey}:${identifier}`;
-                const openable = isOpenable(notice);
-                const Body = openable ? "button" : "div";
-                return (
-                  <li
-                    key={`${projectKey}:${notice.id}`}
-                    data-slot="loop-notice"
-                    data-notice={notice.kind}
-                  >
-                    <Body
-                      {...(openable
-                        ? {
-                            type: "button" as const,
-                            onClick: () => onOpen(projectKey, notice),
-                          }
-                        : {})}
-                      data-slot="loop-notice-open"
-                    >
-                      <span data-slot="loop-notice-icon" aria-hidden="true">
-                        <NoticeIcon kind={notice.kind} />
-                      </span>
-                      <span data-slot="loop-notice-body">
-                        <span data-slot="loop-notice-head">
-                          {identifier !== null ? (
-                            <span data-slot="loop-ticket-id">{identifier}</span>
-                          ) : null}
-                          <span data-slot="loop-notice-kind" data-notice={notice.kind}>
-                            {t(`loop.notice.${notice.kind}`)}
-                          </span>
-                        </span>
-                        {notice.text !== "" ? (
-                          <span data-slot="loop-notice-detail">{notice.text}</span>
-                        ) : null}
-                      </span>
-                      {openable ? <ChevronRightIcon size={14} /> : null}
-                    </Body>
-                    {notice.kind === "intent_stuck" &&
-                    identifier !== null &&
-                    onRetryIntents !== undefined ? (
-                      <div data-slot="loop-notice-action">
-                        <Button
-                          data-variant="outline"
-                          data-kind="loop-intent-retry"
-                          data-busy={retrying === retryKey ? "" : undefined}
-                          disabled={retrying !== undefined}
-                          aria-label={t("loop.notices.retryWriteLabel", {
-                            id: identifier,
-                          })}
-                          onClick={() => void retry(projectKey, identifier)}
-                        >
-                          <RefreshIcon size={12} />
-                          <span>{t("loop.notices.retryWrite")}</span>
-                        </Button>
-                      </div>
-                    ) : null}
-                  </li>
-                );
-              })}
-            </ul>
-          </PageRows>
-        ) : null}
-        {feedback !== undefined ? (
-          <RetryFeedback feedback={feedback} onDismiss={() => setFeedback(undefined)} />
-        ) : null}
-      </PageGroup>
-    </section>
+    <ul data-slot="loop-notice-list" data-kind="loop-notices">
+      {notices.map((notice) => {
+        const identifier = notice.identifier;
+        const openable = isOpenable(notice);
+        const Body = openable ? "button" : "div";
+        return (
+          <li
+            key={notice.id}
+            data-slot="loop-notice"
+            data-notice={notice.kind}
+            data-id={identifier ?? undefined}
+          >
+            <Body
+              {...(openable ? { type: "button" as const, onClick: () => onOpen(notice) } : {})}
+              data-slot="loop-notice-open"
+            >
+              <span data-slot="loop-notice-icon" aria-hidden="true">
+                <NoticeIcon kind={notice.kind} />
+              </span>
+              <span data-slot="loop-notice-body">
+                <span data-slot="loop-notice-head">
+                  {identifier !== null ? (
+                    <span data-slot="loop-ticket-id">{identifier}</span>
+                  ) : null}
+                  <span data-slot="loop-notice-kind" data-notice={notice.kind}>
+                    {t(`loop.notice.${notice.kind}`)}
+                  </span>
+                </span>
+                {notice.text !== "" ? (
+                  <span data-slot="loop-notice-detail">{notice.text}</span>
+                ) : null}
+              </span>
+              {openable ? (
+                <span data-slot="loop-notice-go">
+                  {t(joinsSession(notice) ? "loop.console.join" : "loop.console.view")}
+                </span>
+              ) : null}
+              {openable ? <ChevronRightIcon size={14} /> : null}
+            </Body>
+            {notice.kind === "intent_stuck" &&
+            identifier !== null &&
+            onRetryIntents !== undefined ? (
+              <div data-slot="loop-notice-action">
+                <Button
+                  data-variant="outline"
+                  data-kind="loop-intent-retry"
+                  data-busy={retrying === identifier ? "" : undefined}
+                  disabled={retrying !== undefined}
+                  aria-label={t("loop.notices.retryWriteLabel", { id: identifier })}
+                  onClick={() => void retry(identifier)}
+                >
+                  <RefreshIcon size={12} />
+                  <span>{t("loop.notices.retryWrite")}</span>
+                </Button>
+              </div>
+            ) : null}
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
@@ -188,13 +180,13 @@ export function BoardAlerts({
   notices,
   onOpen,
   onRetryIntents,
-  onOpenOverview,
+  onOpenConsole,
 }: {
   projectKey: string;
   notices: LoopNotice[];
   onOpen: (notice: LoopNotice) => void;
   onRetryIntents?: RetryIntents | undefined;
-  onOpenOverview?: (() => void) | undefined;
+  onOpenConsole?: (() => void) | undefined;
 }) {
   const { t } = useI18n();
   const [retrying, setRetrying] = useState<string | undefined>();
@@ -282,8 +274,8 @@ export function BoardAlerts({
                 </span>
               );
             })}
-            {rest > 0 && onOpenOverview !== undefined ? (
-              <Button data-variant="ghost" data-kind="loop-alerts-more" onClick={onOpenOverview}>
+            {rest > 0 && onOpenConsole !== undefined ? (
+              <Button data-variant="ghost" data-kind="loop-alerts-more" onClick={onOpenConsole}>
                 {t("loop.notices.more", { count: rest })}
               </Button>
             ) : null}

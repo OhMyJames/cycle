@@ -4,6 +4,7 @@ import type { LocationConfig, LocationStatus, LoopProjectInfo, SessionSummary } 
 import type { Elsewhere, SessionList, Workspace } from "../sessions.ts";
 import { useI18n } from "./i18n.tsx";
 import {
+  ConsoleIcon,
   KanbanIcon,
   MoreIcon,
   PlugIcon,
@@ -184,6 +185,18 @@ export function SessionsNav(props: SessionsNavProps) {
       </div>
       {props.loopProject !== undefined && props.onOpenProjectTab !== undefined ? (
         <section data-slot="project-nav" aria-label={t("loop.projectNav")}>
+          <button
+            type="button"
+            data-slot="project-nav-item"
+            data-kind="project-nav-console"
+            aria-current={props.activeProjectTab === "console" ? "page" : undefined}
+            disabled={loopAway}
+            onClick={() => props.onOpenProjectTab?.("console")}
+          >
+            <ConsoleIcon />
+            <span>{t("loop.tab.console")}</span>
+            {loopAway ? <span data-slot="loop-nav-note">{t("loop.offline.note")}</span> : null}
+          </button>
           <button
             type="button"
             data-slot="project-nav-item"
