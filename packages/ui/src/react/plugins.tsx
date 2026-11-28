@@ -3,13 +3,6 @@
 // how any agent keeps them. Installing one is agreeing to run someone else's code there, so it is always asked.
 import { isComposing } from "@ui-sdk/core";
 import { Button } from "@ui-sdk/react/button";
-import {
-  Dialog,
-  DialogBackdrop,
-  DialogClose,
-  DialogContent,
-  DialogTitle,
-} from "@ui-sdk/react/dialog";
 import { Field, FieldDescription, FieldLabel } from "@ui-sdk/react/field";
 import { Input } from "@ui-sdk/react/input";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@ui-sdk/react/menu";
@@ -32,7 +25,7 @@ import type {
 } from "../api.ts";
 import { pluginsKey } from "../store/store.ts";
 import { ConnectorValuesDialog } from "./connector-values.tsx";
-import { ConfirmDialog } from "./dialogs.tsx";
+import { ConfirmDialog, FormDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import { MoreIcon } from "./icons.tsx";
 import { useKeyedAsyncAction } from "./keyed-action.ts";
@@ -844,56 +837,38 @@ function SourceFormDialog({
   const { t } = useI18n();
   const store = useAppStore();
   const [source, setSource] = useState("");
-  const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<PluginFailure | undefined>(undefined);
-  const ready = source.trim() !== "";
 
   const save = async () => {
-    if (!ready || busy) return;
-    setBusy(true);
     setFailure(undefined);
-    try {
-      const answer = await store.addPluginSource(location.id, agentId, source.trim());
-      if ("problem" in answer) setFailure(answer);
-      else onDone(true);
-    } finally {
-      setBusy(false);
-    }
+    const answer = await store.addPluginSource(location.id, agentId, source.trim());
+    if (!("problem" in answer)) return true;
+    setFailure(answer);
+    return false;
   };
 
   return (
-    <Dialog open onOpenChange={(open) => !open && !busy && onDone(false)}>
-      <DialogBackdrop />
-      <DialogContent data-kind="plugin-source-form">
-        <DialogTitle>{t("plugins.sourceForm.title")}</DialogTitle>
-        <form
-          data-slot="stack"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void save();
-          }}
-        >
-          <Field name="location">
-            <FieldLabel>{t("plugins.sourceForm.location")}</FieldLabel>
-            <Input
-              autoFocus
-              autoComplete="off"
-              spellCheck={false}
-              value={source}
-              onChange={(e) => setSource(e.currentTarget.value)}
-            />
-            <FieldDescription>{t("plugins.sourceForm.hint", words)}</FieldDescription>
-          </Field>
-          <p data-slot="hint">{t("plugins.sourceForm.warning", words)}</p>
-          {failure !== undefined ? <Failure failure={failure} words={words} /> : null}
-          <div data-slot="row" data-dialog-footer="">
-            <DialogClose disabled={busy}>{t("dialog.cancel")}</DialogClose>
-            <Button data-variant="solid" type="submit" disabled={!ready || busy}>
-              {t("plugins.sourceForm.submit")}
-            </Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <FormDialog
+      kind="plugin-source-form"
+      title={t("plugins.sourceForm.title")}
+      ready={source.trim() !== ""}
+      submitLabel={t("plugins.sourceForm.submit")}
+      onSubmit={save}
+      onClose={onDone}
+      problem={failure !== undefined ? <Failure failure={failure} words={words} /> : undefined}
+    >
+      <Field name="location">
+        <FieldLabel>{t("plugins.sourceForm.location")}</FieldLabel>
+        <Input
+          autoFocus
+          autoComplete="off"
+          spellCheck={false}
+          value={source}
+          onChange={(e) => setSource(e.currentTarget.value)}
+        />
+        <FieldDescription>{t("plugins.sourceForm.hint", words)}</FieldDescription>
+      </Field>
+      <p data-slot="hint">{t("plugins.sourceForm.warning", words)}</p>
+    </FormDialog>
   );
 }

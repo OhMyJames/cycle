@@ -2,19 +2,13 @@
 // environment's secrets name. One location at a time. A value is only ever written here: the daemon says which keys
 // have one, and no field of this page is filled from one, so it is never shown.
 import { Button } from "@ui-sdk/react/button";
-import {
-  Dialog,
-  DialogBackdrop,
-  DialogClose,
-  DialogContent,
-  DialogTitle,
-} from "@ui-sdk/react/dialog";
+import { Dialog, DialogBackdrop, DialogContent, DialogTitle } from "@ui-sdk/react/dialog";
 import { Field, FieldDescription, FieldLabel } from "@ui-sdk/react/field";
 import { Input } from "@ui-sdk/react/input";
 import { type RefObject, useEffect, useMemo, useState } from "react";
 import type { LocationConfig, LocationStatus, VaultProblem } from "../api.ts";
 import { VARIABLE_NAME } from "../environments.ts";
-import { ConfirmDialog } from "./dialogs.tsx";
+import { ConfirmDialog, FormDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import { ChevronRightIcon } from "./icons.tsx";
 import { LocationScope } from "./location-scope.tsx";
@@ -262,97 +256,75 @@ function VaultFormDialog(props: {
   const [name, setName] = useState(props.editing ?? "");
   const [value, setValue] = useState("");
   const [problem, setProblem] = useState<Problem | undefined>(undefined);
-  const [busy, setBusy] = useState(false);
 
   const key = name.trim();
   const replacing = props.editing !== undefined || props.existing.includes(key);
-  const ready = VARIABLE_NAME.test(key) && value !== "";
 
   const save = async () => {
-    if (!ready || busy) return;
-    setBusy(true);
     setProblem(undefined);
-    try {
-      const answer = await store.setVaultItem(props.location.id, key, value);
-      if ("done" in answer) props.onDone();
-      else setProblem(answer);
-    } finally {
-      setBusy(false);
-    }
+    const answer = await store.setVaultItem(props.location.id, key, value);
+    if ("done" in answer) return true;
+    setProblem(answer);
+    return false;
   };
 
   return (
-    <Dialog open onOpenChange={(open) => !open && !busy && props.onDone()}>
-      <DialogBackdrop />
-      <DialogContent data-kind="vault-form">
-        <DialogTitle>
-          {props.editing === undefined
-            ? t("vault.form.addTitle")
-            : t("vault.form.editTitle", { name: props.editing })}
-        </DialogTitle>
-        <form
-          data-slot="stack"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void save();
-          }}
-        >
-          {props.editing !== undefined ? (
-            // The name of a key that is there is not changed here, and a field that cannot be edited is not one the
-            // focus should land on: it is said as text, and the focus goes to the value.
-            <div data-slot="vault-name">
-              <span data-slot="vault-name-label">{t("vault.form.name")}</span>
-              <span data-slot="vault-mono">{props.editing}</span>
-            </div>
-          ) : (
-            <Field name="name" invalid={key !== "" && !VARIABLE_NAME.test(key)}>
-              <FieldLabel>{t("vault.form.name")}</FieldLabel>
-              <Input
-                autoFocus
-                spellCheck={false}
-                autoComplete="off"
-                autoCapitalize="off"
-                value={name}
-                placeholder={t("vault.form.namePlaceholder")}
-                onChange={(e) => setName(e.currentTarget.value)}
-              />
-              <FieldDescription>{t("vault.form.nameHint")}</FieldDescription>
-              {replacing ? (
-                <FieldDescription role="status">
-                  {t("vault.form.exists", { name: key })}
-                </FieldDescription>
-              ) : null}
-            </Field>
-          )}
-          <Field name="value">
-            <FieldLabel>{t("vault.form.value")}</FieldLabel>
-            <Input
-              type="password"
-              autoFocus={props.editing !== undefined}
-              autoComplete="off"
-              spellCheck={false}
-              value={value}
-              onChange={(e) => setValue(e.currentTarget.value)}
-            />
-            <FieldDescription>
-              {t(props.editing !== undefined ? "vault.form.valueReplace" : "vault.form.valueHint", {
-                location: props.location.name,
-              })}
+    <FormDialog
+      kind="vault-form"
+      title={
+        props.editing === undefined
+          ? t("vault.form.addTitle")
+          : t("vault.form.editTitle", { name: props.editing })
+      }
+      ready={VARIABLE_NAME.test(key) && value !== ""}
+      submitLabel={t(props.editing === undefined ? "vault.form.create" : "vault.form.save")}
+      onSubmit={save}
+      onClose={props.onDone}
+      problem={problem !== undefined ? problemText(problem) : undefined}
+    >
+      {props.editing !== undefined ? (
+        // The name of a key that is there is not changed here, and a field that cannot be edited is not one the
+        // focus should land on: it is said as text, and the focus goes to the value.
+        <div data-slot="vault-name">
+          <span data-slot="vault-name-label">{t("vault.form.name")}</span>
+          <span data-slot="vault-mono">{props.editing}</span>
+        </div>
+      ) : (
+        <Field name="name" invalid={key !== "" && !VARIABLE_NAME.test(key)}>
+          <FieldLabel>{t("vault.form.name")}</FieldLabel>
+          <Input
+            autoFocus
+            spellCheck={false}
+            autoComplete="off"
+            autoCapitalize="off"
+            value={name}
+            placeholder={t("vault.form.namePlaceholder")}
+            onChange={(e) => setName(e.currentTarget.value)}
+          />
+          <FieldDescription>{t("vault.form.nameHint")}</FieldDescription>
+          {replacing ? (
+            <FieldDescription role="status">
+              {t("vault.form.exists", { name: key })}
             </FieldDescription>
-          </Field>
-          {problem !== undefined ? (
-            <p data-slot="hint" role="alert">
-              {problemText(problem)}
-            </p>
           ) : null}
-          <div data-slot="row" data-dialog-footer="">
-            <DialogClose disabled={busy}>{t("dialog.cancel")}</DialogClose>
-            <Button data-variant="solid" type="submit" disabled={!ready || busy}>
-              {t(props.editing === undefined ? "vault.form.create" : "vault.form.save")}
-            </Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
+        </Field>
+      )}
+      <Field name="value">
+        <FieldLabel>{t("vault.form.value")}</FieldLabel>
+        <Input
+          type="password"
+          autoFocus={props.editing !== undefined}
+          autoComplete="off"
+          spellCheck={false}
+          value={value}
+          onChange={(e) => setValue(e.currentTarget.value)}
+        />
+        <FieldDescription>
+          {t(props.editing !== undefined ? "vault.form.valueReplace" : "vault.form.valueHint", {
+            location: props.location.name,
+          })}
+        </FieldDescription>
+      </Field>
+    </FormDialog>
   );
 }

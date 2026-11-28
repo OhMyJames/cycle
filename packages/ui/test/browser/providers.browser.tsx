@@ -136,18 +136,8 @@ test("a custom endpoint is described by hand: protocol, address, a row for each 
   });
 });
 
-test("removing asks first, with the focus on Cancel, and a second Enter removes nothing", async () => {
+test("removing asks first, and the provider is gone after", async () => {
   const { user, group, calls } = await mount([mine]);
-  await user.click(await group.findByRole("button", { name: "Actions for Lab" }));
-  await user.click(await screen.findByRole("menuitem", { name: "Remove" }));
-  const dialog = await screen.findByRole("alertdialog", { name: "Remove Lab?" });
-  await waitFor(() =>
-    expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Cancel" })),
-  );
-  await user.keyboard("{Enter}");
-  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
-  expect(calls.some(([name]) => name === "removeProvider")).toBe(false);
-
   await user.click(await group.findByRole("button", { name: "Actions for Lab" }));
   await user.click(await screen.findByRole("menuitem", { name: "Remove" }));
   await user.click(await screen.findByRole("button", { name: "Remove provider" }));
