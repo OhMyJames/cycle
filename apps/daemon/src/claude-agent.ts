@@ -15,12 +15,11 @@ import { runAdapter } from "@cycle/harness-claude/run";
 import { META } from "@cycle/protocol";
 import { claudeEffectiveRuntime, createClaudeSetupProvider } from "./agent-setup.ts";
 import type { Config } from "./config.ts";
-import type { Harness } from "./harness.ts";
+import { type Harness, harnessEnv } from "./harness.ts";
 import { ensureHomeKeychain } from "./home-keychain.ts";
 import { processAgent } from "./process-agent.ts";
 import { hasSecrets, protectedFiles } from "./secrets.ts";
 import { shippedExecutable } from "./self.ts";
-import { systemProxyFill } from "./system-proxy.ts";
 
 /** The name the Claude Code binary is shipped under, beside the daemon. */
 const BINARY = "claude";
@@ -142,18 +141,8 @@ export const claudeEnv = (
   dataDir: string,
   inherited: Record<string, string | undefined>,
 ): Record<string, string> => {
-  const env: Record<string, string> = {};
-  for (const name of config.allowEnv) {
-    const value = inherited[name];
-    if (value !== undefined) env[name] = value;
-  }
   const configDir = config.configDir ?? join(dataDir, "claude");
-  env.CLAUDE_CONFIG_DIR = configDir;
-  const merged = {
-    ...env,
-    ...systemProxyFill(config.allowEnv, inherited, config.env),
-    ...config.env,
-  };
+  const merged = harnessEnv(config, inherited, { CLAUDE_CONFIG_DIR: configDir });
   // Host HOME is passed through via allowEnv so macOS login.keychain-db and host dev tools (git/gh/ssh) work,
   // while CLAUDE_CONFIG_DIR isolates settings, transcripts, and Claude's hashed keychain item (CYC-401).
   // Fall back to CLAUDE_CONFIG_DIR when no non-empty HOME was inherited or configured.

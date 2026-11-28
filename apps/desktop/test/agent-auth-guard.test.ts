@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { AgentAuthFailureReasonSchema } from "@cycle/protocol";
+import { authProblemReasonOf } from "../src/main/agent-auth-flows.ts";
 import { selectAgentSignInMode, validateAgentAuthUrl } from "../src/main/agent-auth-guard.ts";
 
 test("hardcoded per-agent auth domain allowlist permits exact official HTTPS hosts and blocks phishing / scheme / port / credential tricks", () => {
@@ -106,4 +108,13 @@ test("selectAgentSignInMode filters out requiresLocalLoopback modes on remote lo
   const codeOnly = [{ mode: "code" as const, requiresLocalLoopback: false }];
   expect(selectAgentSignInMode("local", codeOnly)).toBe("code");
   expect(selectAgentSignInMode("remote", codeOnly)).toBe("code");
+});
+
+test("the bridge preserves known auth errors and drops arbitrary daemon values", () => {
+  for (const reason of [...AgentAuthFailureReasonSchema.options, "flow_not_active"] as const) {
+    expect(authProblemReasonOf({ data: { reason } })).toBe(reason);
+  }
+  for (const reason of ["private text", "__proto__", "constructor", 3, null]) {
+    expect(authProblemReasonOf({ data: { reason } })).toBe("failed");
+  }
 });

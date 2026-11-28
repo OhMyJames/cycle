@@ -1,6 +1,3 @@
-// Same rule as `commandPrefixes` / `UNREMEMBERABLE_PROGRAMS` in harness/agy/src/agent.ts (CYC-287), copied because
-// harnesses cannot import each other. Keep the two in step; the tests are the same cases.
-
 /** Shell programs that run other commands or are too wide to remember by their name: never remembered. */
 const UNREMEMBERABLE_PROGRAMS = new Set([
   "sudo",
@@ -66,7 +63,7 @@ export const commandPrefixes = (command: string): string[] | undefined => {
     if (UNREMEMBERABLE_PROGRAMS.has(program.split("/").pop() ?? program)) return undefined;
     // The program, the flags straight after it, and the plain word that follows: `git status`, `git -C repo`.
     // Flags are part of the prefix but the word after them is not taken (`git -C repo status` and
-    // `git -C repo push` are both `git -C repo`): as wide as agy's rule, kept the same on purpose.
+    // `git -C repo push` are both `git -C repo`).
     let end = 1;
     while (words[end]?.startsWith("-")) end += 1;
     if (/^[a-z][\w-]*$/i.test(words[end] ?? "")) end += 1;

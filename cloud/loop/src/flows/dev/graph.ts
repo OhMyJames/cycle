@@ -5,11 +5,10 @@
 // `fix-<n>` node (origin: "fix") at the end of the graph while keeping completed nodes monotonic.
 
 import type { CriteriaBook } from "../../criteria.ts";
-import { parseVerify, readSummary, withStrict } from "../../criteria.ts";
+import { parseVerify, verifyOutcome, withStrict } from "../../criteria.ts";
 import type { StoreOps } from "../../db/store.ts";
 import { Blocked, branchOf, NetworkWait, tail } from "../../engine/flow.ts";
 import { writeIntent } from "../../engine/reconcile.ts";
-import { ensureVerifyDirs, verifyEnv } from "../../env.ts";
 import { summarizeFailure } from "../../failure.ts";
 import {
   appendFixNode,
@@ -36,16 +35,11 @@ import {
   parseQuestion,
 } from "../../prompts/index.ts";
 import type { RunPatch } from "../../store.ts";
-import {
-  type Exec,
-  type ExecResult,
-  type Issue,
-  SessionLost,
-  type TurnResult,
-} from "../../types.ts";
+import { type Issue, SessionLost, type TurnResult } from "../../types.ts";
 import { type DevRun, type FlowHost, type Save, where } from "./context.ts";
 import { docTexts } from "./docs.ts";
 import { restoreNodeModules } from "./node-modules.ts";
+import { verificationPass } from "./verification.ts";
 
 /** Queues a one-way, idempotent summary comment on the Level-1 tracker issue when a multi-node graph begins. */
 export const postGraphReadyComment = (
@@ -394,33 +388,7 @@ export async function nodeVerify(h: FlowHost, run: DevRun, save: Save): Promise<
     throw new Blocked(`执行图中不存在节点 ${nodeId}。`);
   }
 
-  const results = new Map<string, ExecResult>();
-  const exec: Exec = async (argv, options) => {
-    const key = argv.join(" ");
-    const known = results.get(key);
-    if (known !== undefined) return known;
-    let done = await h.d.exec(argv, options);
-    for (
-      let attempt = 1;
-      attempt <= config.maxVerifyRetries && done.code !== 0 && !done.timedOut;
-      attempt++
-    ) {
-      done = await h.d.exec(argv, options);
-      await store.event(run.key, "verify_retried", {
-        round: run.round,
-        nodeId: node.id,
-        command: key,
-        attempt,
-        passed: done.code === 0 && !done.timedOut,
-      });
-    }
-    results.set(key, done);
-    return done;
-  };
-
-  const isolation = { stateDir: config.stateDir, key: run.key };
-  ensureVerifyDirs(isolation);
-  const env = verifyEnv(h.d.env, isolation);
+  const { exec, options } = verificationPass(h, run, worktree, node.id);
   const failures: string[] = [];
   for (const rawCommand of node.verify) {
     const parsed = parseVerify(rawCommand);
@@ -429,19 +397,8 @@ export async function nodeVerify(h: FlowHost, run: DevRun, save: Save): Promise<
       break;
     }
     const argv = withStrict(parsed);
-    const done = await exec(argv, { cwd: worktree, env, timeoutMs: config.commandTimeoutMs });
-    let failed = done.code !== 0 || done.timedOut;
-    let note = "";
-    if (!failed && argv[0] === "bun" && argv[1] === "test") {
-      const { pass, skip } = readSummary(done.output);
-      if (pass === undefined) {
-        failed = true;
-        note = "no test summary in the output: cannot tell that any test ran\n";
-      } else if (pass === 0) {
-        failed = true;
-        note = `${pass} pass, ${skip} skip: no test passed\n`;
-      }
-    }
+    const done = await exec(argv, options);
+    const { failed, note } = verifyOutcome(argv, done);
     if (failed) {
       const outcome = done.timedOut ? "timed out" : `exit ${done.code}`;
       failures.push(

@@ -3,6 +3,7 @@
 // daemon gives against the hardcoded allowlist (agent-auth-guard.ts), and opens one only when the person clicks.
 import { agentOf } from "@cycle/analytics/events";
 import type { ClientEvents, CycleClient } from "@cycle/client";
+import { AgentAuthFailureReasonSchema, CycleErrorCode } from "@cycle/protocol";
 import type {
   AgentAuthLogoutAnswer,
   AgentAuthProblemReason,
@@ -18,31 +19,23 @@ import type { Runtime } from "./runtime.ts";
 
 type AgentAuthCompleted = Parameters<NonNullable<ClientEvents["agentAuthCompleted"]>>[0];
 
-const AUTH_PROBLEM_REASONS = new Set<AgentAuthProblemReason>([
-  "binary_unavailable",
-  "auth_in_progress",
-  "parse_failed",
-  "invalid_code",
-  "expired",
-  "cancelled",
-  "process_failed",
-  "timeout",
-  "unsupported_mode",
-  "untrusted_url",
-  "flow_not_found",
-  "flow_forbidden",
-  "flow_consumed",
-  "flow_not_active",
-  "disconnected",
-  "failed",
-]);
+// Keep the installed shell's bridge definition stable. The compiler checks the runtime
+// vocabulary against it, including the failure reasons the daemon protocol already owns.
+const authProblemReasons = Object.values({
+  ...AgentAuthFailureReasonSchema.enum,
+  unsupported_mode: "unsupported_mode",
+  untrusted_url: "untrusted_url",
+  flow_not_found: "flow_not_found",
+  flow_forbidden: "flow_forbidden",
+  flow_consumed: "flow_consumed",
+  flow_not_active: "flow_not_active",
+  disconnected: "disconnected",
+  failed: "failed",
+} as const satisfies { [Reason in AgentAuthProblemReason]: Reason });
 
-const authProblemReasonOf = (error: unknown): AgentAuthProblemReason => {
+export const authProblemReasonOf = (error: unknown): AgentAuthProblemReason => {
   const reason = (error as { data?: { reason?: unknown } } | null)?.data?.reason;
-  if (typeof reason === "string" && AUTH_PROBLEM_REASONS.has(reason as AgentAuthProblemReason)) {
-    return reason as AgentAuthProblemReason;
-  }
-  return "failed";
+  return authProblemReasons.find((known) => known === reason) ?? "failed";
 };
 
 export class AgentAuthFlows {
@@ -150,14 +143,14 @@ export class AgentAuthFlows {
             : {}),
         };
       }
-      if (rpc.code === -32014 && rpc.data?.reason === "file_corrupt") {
+      if (rpc.code === CycleErrorCode.InvalidConfig && rpc.data?.reason === "file_corrupt") {
         return {
           saved: false,
           problem: "file_corrupt",
           ...(typeof rpc.message === "string" ? { message: rpc.message } : {}),
         };
       }
-      if (rpc.code === -32014) {
+      if (rpc.code === CycleErrorCode.InvalidConfig) {
         return {
           saved: false,
           problem: "invalid_config",

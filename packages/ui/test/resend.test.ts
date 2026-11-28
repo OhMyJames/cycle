@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
+import { CycleErrorCode } from "@cycle/protocol";
 import { blocksOf, failureOf, reduce, resendOf, stepOf } from "../src/model/index.ts";
 
 const u = (update: object) => update as SessionUpdate;
@@ -90,10 +91,10 @@ test("calls that may have changed something are named: started commands and edit
 });
 
 test("the failure is named by Cycle's code, never by its message", () => {
-  expect(failureOf(-32012)).toBe("agent_exited");
-  expect(failureOf(-32018)).toBe("daemon_stopped");
-  expect(failureOf(-32015)).toBe("history");
-  expect(failureOf(-32013)).toBe("resume");
+  expect(failureOf(CycleErrorCode.AgentExited)).toBe("agent_exited");
+  expect(failureOf(CycleErrorCode.DaemonStopped)).toBe("daemon_stopped");
+  expect(failureOf(CycleErrorCode.LogUnavailable)).toBe("history");
+  expect(failureOf(CycleErrorCode.ResumeFailed)).toBe("resume");
   expect(failureOf(-32603)).toBe("agent_error");
   expect(failureOf(undefined)).toBe("agent_error");
 });

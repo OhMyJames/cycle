@@ -1,11 +1,7 @@
 import { expect, test } from "bun:test";
 import { type AppEvent, createTranslator, enUS } from "@cycle/ui";
-import {
-  heldNotifications,
-  MAX_TITLE,
-  type NotifyWindow,
-  notifyAttention,
-} from "../src/main/attention.ts";
+import { heldNotifications, MAX_TITLE, notifyAttention } from "../src/main/attention.ts";
+import type { NotifyWindow } from "../src/main/background-notifications.ts";
 import type { AttentionNotice } from "../src/main/manager.ts";
 
 const notice = (over: Partial<AttentionNotice> = {}): AttentionNotice => ({

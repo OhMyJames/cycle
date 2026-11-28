@@ -1,6 +1,6 @@
 import { type AgentContext, methods } from "@agentclientprotocol/sdk/experimental/v2";
+import { commandPrefixes } from "@cycle/command-permissions";
 import { RpcError } from "@cycle/line-rpc";
-import { commandPrefixes } from "./prefixes.ts";
 import type {
   CommandExecutionRequestApprovalParams,
   FileChangeRequestApprovalParams,

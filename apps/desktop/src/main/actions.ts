@@ -3,6 +3,7 @@
 // shows, rather than a throw, goes through `runAction`.
 import { agentOf, renameWhereOf, settingOf, sizeOf, viaOf } from "@cycle/analytics/events";
 import type { CycleClient } from "@cycle/client";
+import { CycleErrorCode } from "@cycle/protocol";
 import type {
   AgentInfo,
   ConnectorAnswer,
@@ -106,7 +107,7 @@ export const terminalProblemOf = (
   const reason = data?.reason;
   if (typeof reason === "string" && (TERMINAL_REASONS as readonly string[]).includes(reason))
     return { problem: reason as TerminalProblem };
-  if (code === -32019) return { problem: "limit" };
+  if (code === CycleErrorCode.TerminalLimit) return { problem: "limit" };
   if (code === -32002) return { problem: "not_found" };
   return { problem: "failed", message: messageOf(error) };
 };
@@ -120,7 +121,7 @@ export const connectorProblemOf = (
   if (typeof reason === "string" && (PROBLEMS as readonly string[]).includes(reason))
     return { problem: reason as ConnectorProblem };
   if (code === -32002) return { problem: "not_found" };
-  if (code === -32017) return { problem: "unreachable" };
+  if (code === CycleErrorCode.ConnectorFailed) return { problem: "unreachable" };
   if (code === -32602) return { problem: "invalid" };
   if (messageOf(error).includes("too old to keep connectors")) return { problem: "unsupported" };
   return { problem: "failed", message: messageOf(error) };

@@ -217,6 +217,7 @@ const switching = (
   socket: string,
   stop: () => Promise<void>,
   started: { new?: () => Promise<void> },
+  say: (line: string) => void = () => {},
 ) => ({
   isRunning: () => isListening(socket),
   stop: (force: boolean) =>
@@ -228,7 +229,7 @@ const switching = (
       working: () => askWorking(socket, 2_000),
       choose: async () => "cancel" as const,
       signal: () => void stop(),
-      say: () => {},
+      say,
       pollMs: 20,
       stopWithinMs: 2_000,
     }),
@@ -253,15 +254,22 @@ test("it waits for a running turn to end, then the new daemon is already listeni
     prompt: [{ type: "text", text: "go" }],
   });
   const started: { new?: () => Promise<void> } = {};
-  const h = harness({ recorded: async () => "0.3.5", ...switching(socket, stop, started) });
+  const messages: string[] = [];
+  const h = harness({
+    recorded: async () => "0.3.5",
+    ...switching(socket, stop, started, (line) => messages.push(line)),
+  });
   const updating = runUpdate(h.deps);
-  await until(() => h.calls.installs.length === 1, "the install");
-  await Bun.sleep(150);
+  await until(
+    () => messages.some((line) => line.startsWith("Waiting for them to finish")),
+    "the updater to observe the running turn",
+    1_000,
+  );
+  expect(h.calls.installs).toEqual(["v0.3.5"]);
   // The program is replaced, but the daemon with a turn running is not touched.
   expect(await isListening(socket)).toBe(true);
   expect(started.new).toBeUndefined();
   release();
-  await until(() => c.ended() === 1, "the turn to end");
   expect(await updating).toBe(0);
   expect(started.new).toBeDefined();
   expect(await isListening(socket)).toBe(true);

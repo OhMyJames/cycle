@@ -6,7 +6,7 @@
 
 import { z } from "zod";
 import { summarizeFailure } from "./failure.ts";
-import type { Exec } from "./types.ts";
+import type { Exec, ExecResult } from "./types.ts";
 
 export const CriterionSchema = z.object({
   id: z.number().int().positive(),
@@ -144,6 +144,20 @@ export const readSummary = (
   return { pass: count("pass"), skip: count("skip") ?? 0, fail: count("fail") ?? 0 };
 };
 
+/** For a targeted bun test, successful execution also requires evidence that a test ran. */
+export function verifyOutcome(
+  argv: string[],
+  result: ExecResult,
+): { failed: boolean; note: string } {
+  if (result.code !== 0 || result.timedOut) return { failed: true, note: "" };
+  if (argv[0] !== "bun" || argv[1] !== "test") return { failed: false, note: "" };
+  const { pass, skip } = readSummary(result.output);
+  if (pass === undefined)
+    return { failed: true, note: "no test summary in the output: cannot tell that any test ran\n" };
+  if (pass === 0) return { failed: true, note: `${pass} pass, ${skip} skip: no test passed\n` };
+  return { failed: false, note: skip > 0 ? `${pass} pass, ${skip} skip\n` : "" };
+}
+
 /** What the loop actually runs: `bun run test:integration <suite>` gets `--strict`, so a skipped suite is a failure. */
 export const withStrict = (argv: string[]): string[] =>
   argv.length === 4 && argv[0] === "bun" && argv[1] === "run" && argv[2] === "test:integration"
@@ -211,20 +225,7 @@ export class CriteriaBook {
         timeoutMs: run.timeoutMs,
       });
       const outcome = result.timedOut ? "timed out" : `exit ${result.code}`;
-      let failed = result.code !== 0 || result.timedOut;
-      let note = "";
-      if (!failed && argv[0] === "bun" && argv[1] === "test") {
-        const { pass, skip } = readSummary(result.output);
-        if (pass === undefined) {
-          failed = true;
-          note = "no test summary in the output: cannot tell that any test ran\n";
-        } else if (pass === 0) {
-          failed = true;
-          note = `${pass} pass, ${skip} skip: no test passed\n`;
-        } else if (skip > 0) {
-          note = `${pass} pass, ${skip} skip\n`;
-        }
-      }
+      const { failed, note } = verifyOutcome(argv, result);
       const shown = failed ? summarizeFailure(result.output) : tail(result.output, 1500);
       evidence.push(`$ ${argv.join(" ")}\n${outcome}\n${note}${shown}`);
       if (failed) {

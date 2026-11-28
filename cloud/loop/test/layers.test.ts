@@ -19,6 +19,7 @@ test("the protocol, daemon, harness and desktop core add the integration tests",
     "packages/protocol/src/a.ts",
     "apps/daemon/src/a.ts",
     "harness/agy/src/a.ts",
+    "packages/command-permissions/src/index.ts",
     "apps/desktop/src/main/a.ts",
   ]) {
     expect(names([file])).toEqual(["check", "test:integration"]);

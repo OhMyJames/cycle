@@ -2,6 +2,8 @@
 
 状态:草稿
 
+各 workspace 的依赖、核心状态的写入者和待确认的设计取舍见[架构治理进度](architecture-governance.md)。
+
 ## 分层
 
 ```
@@ -49,6 +51,7 @@ packages/protocol          Cycle 对 ACP 的扩展:_cycle/* 方法、_meta 键�
 packages/client            纯 Node 客户端 CycleClient + 客户端传输(unix socket、stdio、ssh)
 packages/analytics         产品分析事件字典(zod)与 PostHog 客户端
 packages/ui                前端纯会话模型、Store、React UI、Gallery
+packages/command-permissions  Codex 和 agy 的会话命令审批前缀规则（纯函数）
 packages/line-rpc          按行的 JSON-RPC 子进程通道,Codex 的 app-server 和 agy 的 ACP 都走它
 packages/model-gateway     模型 provider 网关(基于 pi-ai),让 agent 用其他 provider 的模型
 packages/oidc              桌面端账号登录(OIDC)

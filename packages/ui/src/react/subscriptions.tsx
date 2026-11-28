@@ -1,9 +1,10 @@
 // Settings → Model providers → Subscriptions: the accounts the agents themselves are signed in with (Claude, Codex,
 // Antigravity), one location at a time. What an agent's session may use depends on it, so signing in and out, and what
 // the plan has left, are here and not on the agent's Harness page.
-import type { AgentWord } from "@cycle/analytics/events";
+
 import { Button } from "@ui-sdk/react/button";
 import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
+import { agentWord } from "../agent-word.ts";
 import type { AgentAuthProblemReason, AgentInfo, LocationConfig, LocationStatus } from "../api.ts";
 import {
   AgentSignInDialog,
@@ -13,6 +14,7 @@ import {
   type SignInModalState,
 } from "./agent-account-parts.tsx";
 import { useAgentSetup } from "./agent-setup.ts";
+import { UnavailableBinary } from "./agent-unavailable.tsx";
 import { ConfirmDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import { LocationScope } from "./location-scope.tsx";
@@ -21,11 +23,6 @@ import { PlanUsageBars, planRowsOf } from "./plan-usage-bars.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { AGENT_AUTH_DOT, StatusDot } from "./status.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
-
-const AGY_INSTALL_COMMAND = "curl -fsSL https://antigravity.google/cli/install.sh | bash";
-
-const agentWord = (id: string): AgentWord =>
-  id === "claude" || id === "codex" || id === "agy" || id === "pi" ? id : "other";
 
 export type SubscriptionsSectionProps = {
   /** The agents, in the order the Harness pages list them: every one of them can be signed in. */
@@ -238,33 +235,13 @@ function SubscriptionGroup({
         ) : null
       ) : (
         <>
-          {snapshot.binary.problem !== undefined ? (
-            <StateBlock
-              size="inline"
-              align="start"
-              tone="away"
-              title={
-                snapshot.binary.problem === "version_too_old"
-                  ? t("settings.harness.unavailable.tooOld", {
-                      agent: agentName,
-                      version: snapshot.binary.version ?? "",
-                      location: location.name,
-                      minVersion: snapshot.binary.minVersion ?? "",
-                    })
-                  : snapshot.binary.problem === "probe_failed"
-                    ? t("settings.harness.unavailable.probeFailed", {
-                        agent: agentName,
-                        location: location.name,
-                      })
-                    : t("settings.harness.unavailable.missing", {
-                        agent: agentName,
-                        location: location.name,
-                      })
-              }
-              reason={agentId === "agy" ? AGY_INSTALL_COMMAND : undefined}
-              action={{ label: t("settings.harness.account.refresh"), onAction: retry }}
-            />
-          ) : null}
+          <UnavailableBinary
+            binary={snapshot.binary}
+            agentId={agentId}
+            agentName={agentName}
+            locationName={location.name}
+            action={{ label: t("settings.harness.account.refresh"), onAction: retry }}
+          />
           {loadError !== undefined ? (
             <StateBlock
               size="inline"

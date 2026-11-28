@@ -1,7 +1,7 @@
 // A new session before its first message (docs/protocol.md §6): where it runs and with which agent are chosen here, the
 // first message is written in the box below, and sending it is what makes the session. Until then nothing of it is in
 // the daemon, and so nothing of it is in the sidebar.
-import type { AgentWord } from "@cycle/analytics/events";
+
 import { Button } from "@ui-sdk/react/button";
 import {
   Dialog,
@@ -25,10 +25,12 @@ import {
   MenuTrigger,
 } from "@ui-sdk/react/menu";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { agentWord } from "../agent-word.ts";
 import type { LocationConfig } from "../api.ts";
 import { applyUpdate, emptyConversation } from "../model/index.ts";
 import { BLANK_KEY, type BlankConversation } from "../store/index.ts";
 import { AgentLogo } from "./agent-logos.tsx";
+import { installCommandOf } from "./agent-unavailable.tsx";
 import { Composer, composerInput } from "./composer.tsx";
 import { propertiesOf, withEffortFor } from "./config-form.tsx";
 import { ConversationView } from "./conversation.tsx";
@@ -41,11 +43,6 @@ import { StateBlock } from "./state-block.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
 import { Tip } from "./tip.tsx";
 import { WorktreePicker } from "./worktrees.tsx";
-
-const AGY_INSTALL_COMMAND = "curl -fsSL https://antigravity.google/cli/install.sh | bash";
-
-const agentWord = (id: string): AgentWord =>
-  id === "claude" || id === "codex" || id === "agy" || id === "pi" ? id : "other";
 
 /** A folder offered on the blank page: one the location already has sessions in, newest first. */
 export type RecentFolder = { cwd: string; name: string };
@@ -502,7 +499,7 @@ export function BlankConversationView({
                   location: locationName,
                 })
           }
-          reason={agent.id === "agy" ? AGY_INSTALL_COMMAND : undefined}
+          reason={installCommandOf(agent.id)}
           action={{
             label: t("blank.retryAgents"),
             onAction: () => void store.reloadAgents(blank.locationId),

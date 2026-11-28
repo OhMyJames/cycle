@@ -69,3 +69,28 @@ test("the proxy variables pass by default to agy, Claude and Codex", () => {
     expect(env.SECRET_KEY).toBeUndefined();
   }
 });
+
+test("config env overrides Claude and agy defaults, while CODEX_HOME belongs to the daemon", () => {
+  const config = ConfigSchema.parse({
+    claude: { configDir: "/claude", allowEnv: ["PATH"], env: { CLAUDE_CONFIG_DIR: "/explicit" } },
+    codex: { configDir: "/codex", allowEnv: ["PATH"], env: { CODEX_HOME: "/explicit" } },
+    agy: { home: "/agy", allowEnv: ["PATH", "HOME"], env: { AGY_FAST_AUTO_UPDATE: "on" } },
+  });
+  const inherited = { PATH: "/bin", HOME: "/host", SECRET: "host-only" };
+  expect(claudeEnv(config.claude, "/data", inherited)).toEqual({
+    PATH: "/bin",
+    CLAUDE_CONFIG_DIR: "/explicit",
+    HOME: "/explicit",
+  });
+  expect(codexEnv(config.codex, "/data", inherited)).toEqual({
+    PATH: "/bin",
+    CODEX_HOME: "/codex",
+    HOME: "/codex",
+  });
+  expect(agyEnv(config.agy, "/data", inherited)).toEqual({
+    PATH: "/bin",
+    HOME: "/agy",
+    AGY_FAST_AUTO_UPDATE: "on",
+    AGY_CLI_FORCE_FILE_TOKEN_STORAGE: "1",
+  });
+});

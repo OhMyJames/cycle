@@ -1,10 +1,11 @@
 // Reading one agent's setup for the Harness and Subscriptions pages (agent-setup.ts): what each page shows is the newest
 // answer, whatever order the answers come in.
-import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, render, renderHook, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, expect, test } from "vitest";
-import type { AgentSetupSnapshot } from "../../src/api.ts";
+import type { AgentBinaryProblem, AgentSetupSnapshot } from "../../src/api.ts";
 import { useAgentSetup } from "../../src/react/agent-setup.ts";
+import { UnavailableBinary } from "../../src/react/agent-unavailable.tsx";
 import { StoreProvider } from "../../src/react/store-context.tsx";
 import { AppStore } from "../../src/store/store.ts";
 import { fakeBridge } from "../fake-bridge.ts";
@@ -110,3 +111,26 @@ test("after a save is shown, no read sent before it replaces it", async () => {
   await answer(0, setup("stale"));
   expect(hook.result.current.snapshot?.name).toBe("saved");
 });
+
+test.each<[AgentBinaryProblem, string]>([
+  ["missing", "Antigravity is not installed on Local."],
+  ["probe_failed", "Antigravity on Local could not be checked."],
+  ["version_too_old", "Antigravity 1 on Local is older than the required 2."],
+])(
+  "the shared binary diagnosis shows the daemon's %s result and delegates retry",
+  (problem, title) => {
+    let attempts = 0;
+    render(
+      <UnavailableBinary
+        agentId="agy"
+        agentName="Antigravity"
+        locationName="Local"
+        binary={{ source: "path", version: "1", minVersion: "2", problem }}
+        action={{ label: "Retry", onAction: () => attempts++ }}
+      />,
+    );
+    expect(screen.getByText(title)).toBeTruthy();
+    screen.getByRole("button", { name: "Retry" }).click();
+    expect(attempts).toBe(1);
+  },
+);
