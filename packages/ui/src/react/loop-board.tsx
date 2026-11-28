@@ -31,6 +31,7 @@ import {
 } from "./icons.tsx";
 import { BatchBar } from "./loop-batch-bar.tsx";
 import { GraphProgress } from "./loop-graph.tsx";
+import { BoardAlerts, type RetryIntents } from "./loop-notices.tsx";
 import {
   type Act,
   PRIORITIES,
@@ -392,6 +393,7 @@ export function Board({
   answer,
   openIdentifier,
   onOpen,
+  onOpenOverview,
   onBack,
   onChatStarted,
 }: {
@@ -400,6 +402,7 @@ export function Board({
   /** The ticket whose drawer is open, if any: it is the Loop's navigation state, not the board's. */
   openIdentifier: string | undefined;
   onOpen: (identifier: string) => void;
+  onOpenOverview?: (() => void) | undefined;
   onBack: () => void;
   onChatStarted: () => void;
 }) {
@@ -440,10 +443,24 @@ export function Board({
   const refresh = async () => {
     setRefreshing(true);
     try {
-      await store.loadLoopBoard(projectKey);
+      await Promise.all([store.loadLoopBoard(projectKey), store.loadLoopNotices(projectKey)]);
     } finally {
       setRefreshing(false);
     }
+  };
+
+  const noticesAnswer = useAppState((s) => s.loop.notices[projectKey]);
+  const projectNotices = noticesAnswer?.kind === "ok" ? noticesAnswer.notices : [];
+  const retryIntents: RetryIntents = async (key, identifier) => {
+    const result = await store.retryLoopIntents(key, identifier);
+    if (result.kind === "failed") return { ok: false, message: t(`loop.fail.${result.reason}`) };
+    return {
+      ok: true,
+      message:
+        result.retried > 0
+          ? t("loop.notices.retried", { count: result.retried })
+          : t("loop.notices.retryNone"),
+    };
   };
 
   const request = useAppState((s) => s.loop.request);
@@ -532,16 +549,23 @@ export function Board({
   }, [columns, openIdentifier]);
 
   // The drawer stays mounted after it is closed until its slide-out has played (CYC-506); a new ticket picked
-  // meanwhile replaces it at once.
-  const [held, setHeld] = useState<{ identifier: string; summary: LoopTicket | undefined }>();
+  // meanwhile replaces it at once, and switching Projects clears any held drawer from the previous Project.
+  const [held, setHeld] = useState<{
+    projectKey: string;
+    identifier: string;
+    summary: LoopTicket | undefined;
+  }>();
+  const sameProjectHeld = held?.projectKey === projectKey ? held : undefined;
   if (
     openIdentifier !== undefined &&
-    (held?.identifier !== openIdentifier || held.summary !== openSummary)
+    (sameProjectHeld?.identifier !== openIdentifier || sameProjectHeld.summary !== openSummary)
   ) {
-    setHeld({ identifier: openIdentifier, summary: openSummary });
+    setHeld({ projectKey, identifier: openIdentifier, summary: openSummary });
+  } else if (openIdentifier === undefined && held !== undefined && held.projectKey !== projectKey) {
+    setHeld(undefined);
   }
-  const drawerId = openIdentifier ?? held?.identifier;
-  const drawerSummary = openIdentifier !== undefined ? openSummary : held?.summary;
+  const drawerId = openIdentifier ?? sameProjectHeld?.identifier;
+  const drawerSummary = openIdentifier !== undefined ? openSummary : sameProjectHeld?.summary;
   const drawerClosing = openIdentifier === undefined;
 
   const togglePick = (identifier: string) =>
@@ -745,6 +769,17 @@ export function Board({
       </div>
 
       {openIdentifier === undefined ? alert : null}
+      <BoardAlerts
+        projectKey={projectKey}
+        notices={projectNotices}
+        onRetryIntents={retryIntents}
+        onOpenOverview={onOpenOverview}
+        onOpen={(notice) => {
+          store.track("loop_notice_opened", { kind: notice.kind });
+          if (notice.session === null || !store.joinLoopSession(notice.session.id))
+            openTicket(notice.identifier);
+        }}
+      />
       {batchProblem !== undefined ? (
         <div data-slot="loop-board-notice" data-tone="error" role="alert">
           <ErrorCircleIcon size={14} />

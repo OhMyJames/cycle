@@ -41,12 +41,15 @@ import {
   actOnTicket,
   answerBoard,
   answerNotices,
+  answerRun,
   answerRuns,
   answerTicket,
   callLoop,
+  cancelLoopRun,
   loopFeed,
   readLoopProjects,
   retireKeyFile,
+  retryLoopIntents,
   startTicketChat,
 } from "./loop.ts";
 import { noticePoller, showAlert } from "./loop-alerts.ts";
@@ -244,6 +247,7 @@ export const startApp = async (options: AppOptions) => {
     ? loopFeed({
         call: (method, params) => callLoop(options.loop?.socket ?? "", method, params, 3000),
         changed: (runs) => emit({ type: "loop-runs", runs }),
+        activity: (projectKeys) => emit({ type: "loop-activity", projectKeys }),
         lazy: true,
       })
     : undefined;
@@ -400,6 +404,16 @@ export const startApp = async (options: AppOptions) => {
       answerBoard(loopOptions(), projectKey, (event, props) => analytics.track(event, props)),
     loopTicket: (projectKey: unknown, identifier: unknown) =>
       answerTicket(loopOptions(), projectKey, identifier, (event, props) =>
+        analytics.track(event, props),
+      ),
+    loopRun: (projectKey: unknown, identifier: unknown) =>
+      answerRun(loopOptions(), projectKey, identifier),
+    loopCancelRun: (projectKey: unknown, identifier: unknown) =>
+      cancelLoopRun(loopOptions(), projectKey, identifier, (event, props) =>
+        analytics.track(event, props),
+      ),
+    loopRetryIntents: (projectKey: unknown, identifier: unknown) =>
+      retryLoopIntents(loopOptions(), projectKey, identifier, (event, props) =>
         analytics.track(event, props),
       ),
     loopAct: (projectKey: unknown, identifier: unknown, action: unknown, confirmed: unknown) =>

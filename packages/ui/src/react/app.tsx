@@ -162,6 +162,12 @@ function AppWindow() {
   const connected = locationState === "connected";
 
   const pages = usePages(appRef);
+  const loopNoticeCount = useAppState((s) =>
+    s.loop.projects.reduce((sum, p) => {
+      const answer = s.loop.notices[p.projectKey];
+      return sum + (answer?.kind === "ok" ? answer.notices.length : 0);
+    }, 0),
+  );
   const { layout, sidebarCollapsed, toggleSidebar } = useSidebarFold(appRef, ready);
   const sessionPanel = useSessionPanel(session, blank);
   const { panelKey, sidePanel } = sessionPanel;
@@ -416,6 +422,7 @@ function AppWindow() {
                 pages.leaveLoop();
               }}
               mode={pages.loop !== undefined ? "loop" : "sessions"}
+              loopNoticeCount={loopNoticeCount}
               loopNav={
                 pages.loop !== undefined ? (
                   <LoopNav view={pages.loop} onView={pages.showLoopView} />

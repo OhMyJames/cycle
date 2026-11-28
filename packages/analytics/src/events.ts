@@ -124,13 +124,61 @@ export const EVENTS = {
     failed: z.number(),
   }),
   /** The Loop page read a Project's Notices: how many of each kind, never which or what they say. */
-  loop_notices_read: o({ permission: z.number(), blocked: z.number(), review: z.number() }),
-  /** A system notification was shown for a Notice (Blocked or an escalated review; never a permission). */
-  loop_notice_notified: o({ kind: z.enum(["blocked", "review"]) }),
-  /** The person opened a Notice's ticket from the Notice area. */
-  loop_notice_opened: o({ kind: z.enum(["permission", "blocked", "review"]) }),
-  /** The person joined a ticket's Dev session from its page. */
+  loop_notices_read: o({
+    permission: z.number(),
+    blocked: z.number(),
+    review: z.number(),
+    stuck: z.number(),
+    intent_stuck: z.number(),
+  }),
+  /** A system notification was shown for a Notice (Blocked, escalated review, stuck run or stuck write; never a permission). */
+  loop_notice_notified: o({ kind: z.enum(["blocked", "review", "stuck", "intent_stuck"]) }),
+  /** The person opened a Notice's ticket from the Notice area or board alert strip. */
+  loop_notice_opened: o({
+    kind: z.enum([
+      "permission",
+      "blocked",
+      "review",
+      "stuck",
+      "intent_stuck",
+      "supervisor",
+      "operator",
+    ]),
+  }),
+  /** The person joined a ticket's session from its page or run workflow. */
   loop_session_joined: o({}),
+  /** A ticket's drawer drew its run workflow: kind, run state and how many sessions it has; never text or ids. */
+  loop_run_viewed: o({
+    kind: z.enum(["dev", "research"]),
+    state: z.enum(["active", "blocked", "done"]),
+    sessions: count,
+  }),
+  /** The person cancelled an active Loop run from the ticket drawer (`loop/run/cancel`). */
+  loop_run_cancelled: o({
+    result: z.enum([
+      "ok",
+      "not_running",
+      "no_server",
+      "forbidden",
+      "conflict",
+      "not_allowed",
+      "offline",
+      "refused",
+    ]),
+  }),
+  /** The person retried stuck tracker writes for a ticket (`loop/intents/retry`). */
+  loop_intents_retried: o({
+    result: z.enum([
+      "ok",
+      "no_server",
+      "forbidden",
+      "conflict",
+      "not_allowed",
+      "offline",
+      "refused",
+    ]),
+    retried: count,
+  }),
   /** A ticket's drawer drew its Execution Graph: how many nodes and where the graph came from; never a title or goal. */
   loop_graph_viewed: o({
     node_count: count,
@@ -518,6 +566,7 @@ export const UI_EVENTS = [
   "loop_notice_opened",
   "loop_tickets_acted",
   "loop_session_joined",
+  "loop_run_viewed",
   "loop_graph_viewed",
   "loop_graph_node_opened",
   "sessions_mode_shown",

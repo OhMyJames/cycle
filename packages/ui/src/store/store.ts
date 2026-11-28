@@ -208,6 +208,9 @@ export class AppStore extends StoreBase {
       case "loop-runs":
         this.#loop.setRuns(event.runs);
         return;
+      case "loop-activity":
+        this.#loop.noteActivity(event.projectKeys);
+        return;
       case "open-loop-ticket":
         this.#loop.requestTicket(event.projectKey, event.identifier);
         return;
@@ -358,6 +361,9 @@ export class AppStore extends StoreBase {
   loadLoopBoard = this.#loop.loadBoard;
   loadLoopRuns = this.#loop.loadRuns;
   loadLoopTicket = this.#loop.loadTicket;
+  loadLoopRun = this.#loop.loadRun;
+  cancelLoopRun = this.#loop.cancelRun;
+  retryLoopIntents = this.#loop.retryIntents;
   actOnLoopTicket = this.#loop.act;
   actOnLoopMany = this.#loop.actMany;
   actOnLoopGraph = this.#loop.actOnGraph;

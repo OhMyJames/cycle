@@ -16,13 +16,24 @@ describe("system notifications", () => {
   const review = (id: string) => notice("review", id) as Alertable;
   const permission = (id: string) => notice("permission", id);
 
-  test("the first read says nothing; a new Blocked or escalated one is told once", () => {
+  test("the first read says nothing; a new Blocked, review, stuck or intent_stuck notice is told once", () => {
     expect(newAlerts(undefined, [blocked("CYC-1")])).toEqual([]);
     const before = new Set(["blocked:CYC-1"]);
-    expect(newAlerts(before, [blocked("CYC-1"), blocked("CYC-2"), review("CYC-3")])).toEqual([
-      blocked("CYC-2"),
-      review("CYC-3"),
-    ]);
+    const stuck = notice("stuck", "CYC-4") as Alertable;
+    const intentStuck = notice("intent_stuck", "CYC-5") as Alertable;
+    const intentStuckDup = { ...intentStuck, id: "CYC:intent_stuck:2" } as Alertable;
+    const supervisor = notice("supervisor", "CYC-6");
+    expect(
+      newAlerts(before, [
+        blocked("CYC-1"),
+        blocked("CYC-2"),
+        review("CYC-3"),
+        stuck,
+        intentStuck,
+        intentStuckDup,
+        supervisor,
+      ]),
+    ).toEqual([blocked("CYC-2"), review("CYC-3"), stuck, intentStuck]);
   });
 
   test("a session waiting on a permission is never told here", () => {

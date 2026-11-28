@@ -887,7 +887,9 @@ export type AppEvent =
   /** A Loop notification was pressed: show this ticket on the Loop page. */
   | { type: "open-loop-ticket"; projectKey: string; identifier: string }
   /** Loop's run state changed (the main process follows its event stream): the whole answer, replacing the last. */
-  | { type: "loop-runs"; runs: LoopRunsAnswer };
+  | { type: "loop-runs"; runs: LoopRunsAnswer }
+  /** Loop's event stream saw new events in these Projects: refresh open boards, notices and run details. */
+  | { type: "loop-activity"; projectKeys: string[] };
 
 /** Whether the app reports how it is used (docs/analytics.md). `available` is false when there is nowhere to report to. */
 export type AnalyticsStatus = { available: boolean; enabled: boolean; noticed: boolean };
@@ -1315,6 +1317,12 @@ export type AppApi = {
   loopBoard(projectKey: string): Promise<LoopBoardAnswer>;
   /** One ticket's body, acceptance criteria, PR/MR links and the buttons it gets, as the Loop server answers it. */
   loopTicket(projectKey: string, identifier: string): Promise<LoopTicketAnswer>;
+  /** One ticket's run workflow detail (phase, round, heartbeat, sessions, recent events) from `loop/run/get`. */
+  loopRun(projectKey: string, identifier: string): Promise<LoopRunAnswer>;
+  /** Cancels the active turn of a running Loop ticket (`loop/run/cancel`). */
+  loopCancelRun(projectKey: string, identifier: string): Promise<LoopCancelRunResult>;
+  /** Requeues stuck tracker write intents for a ticket (`loop/intents/retry`). */
+  loopRetryIntents(projectKey: string, identifier: string): Promise<LoopRetryIntentsResult>;
   /** What needs a person in a Project: Blocked tickets, escalated reviews, sessions waiting on an answer (§17). */
   loopNotices(projectKey: string): Promise<LoopNoticesAnswer>;
   /**
@@ -1538,6 +1546,38 @@ export type LoopTicketAnswer =
   | { kind: "no_server" }
   | { kind: "unreachable" };
 
+/** One ticket's Loop run record (`loop/run/get`, docs/protocol.md §17). */
+export type LoopRunDetail = {
+  key: string;
+  title: string;
+  kind: "dev" | "research";
+  phase: string;
+  state: "active" | "blocked" | "done";
+  round: number;
+  startedAt: string;
+  updatedAt: string;
+  blockedReason: string | null;
+  sessions: { kind: string; id: string }[];
+  prUrl: string | null;
+  events: { ts: string; kind: string }[];
+  heartbeat: { at: string; detail: string | null } | null;
+  graph?: LoopGraph;
+};
+export type LoopRunAnswer =
+  | { kind: "ok"; run: LoopRunDetail }
+  /** No run exists for this ticket yet. */
+  | { kind: "none" }
+  | { kind: "no_server" }
+  | { kind: "unreachable" };
+
+export type LoopCancelRunResult =
+  | { kind: "ok"; cancelled: boolean }
+  | { kind: "failed"; reason: LoopActFailure };
+
+export type LoopRetryIntentsResult =
+  | { kind: "ok"; retried: number }
+  | { kind: "failed"; reason: LoopActFailure };
+
 /** One column of the Project's board. `more`: the column has tickets that are not listed. */
 export type LoopBoardColumn = {
   id: number;
@@ -1670,6 +1710,9 @@ const METHODS: { readonly [method in keyof AppApi]-?: true } = {
   loopRuns: true,
   loopBoard: true,
   loopTicket: true,
+  loopRun: true,
+  loopCancelRun: true,
+  loopRetryIntents: true,
   loopAct: true,
   loopGraphAct: true,
   loopChat: true,

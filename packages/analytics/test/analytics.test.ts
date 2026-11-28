@@ -216,6 +216,34 @@ describe("the dictionary", () => {
     ).toBe(false);
   });
 
+  test("the run workflow, cancel, intent retry and extended notice events take words and numbers only", () => {
+    expect(isUiEvent("loop_run_viewed")).toBe(true);
+    expect(isUiEvent("loop_run_cancelled")).toBe(false);
+    expect(isUiEvent("loop_intents_retried")).toBe(false);
+    expect(
+      EVENTS.loop_run_viewed.safeParse({ kind: "dev", state: "active", sessions: 2 }).success,
+    ).toBe(true);
+    expect(
+      EVENTS.loop_run_viewed.safeParse({
+        kind: "dev",
+        state: "active",
+        sessions: 2,
+        title: "CYC-1",
+      }).success,
+    ).toBe(false);
+    expect(EVENTS.loop_run_cancelled.safeParse({ result: "ok" }).success).toBe(true);
+    expect(EVENTS.loop_run_cancelled.safeParse({ result: "not_running" }).success).toBe(true);
+    expect(EVENTS.loop_run_cancelled.safeParse({ result: "ok", key: "CYC-1" }).success).toBe(false);
+    expect(EVENTS.loop_intents_retried.safeParse({ result: "ok", retried: 3 }).success).toBe(true);
+    expect(
+      EVENTS.loop_intents_retried.safeParse({ result: "ok", retried: 1, error: "secret" }).success,
+    ).toBe(false);
+    expect(EVENTS.loop_notice_notified.safeParse({ kind: "stuck" }).success).toBe(true);
+    expect(EVENTS.loop_notice_notified.safeParse({ kind: "intent_stuck" }).success).toBe(true);
+    expect(EVENTS.loop_notice_opened.safeParse({ kind: "intent_stuck" }).success).toBe(true);
+    expect(EVENTS.loop_notice_opened.safeParse({ kind: "operator" }).success).toBe(true);
+  });
+
   test("no event takes free text: every property is a number, a boolean or one of a list", () => {
     for (const [name, schema] of Object.entries(EVENTS)) {
       for (const [key, field] of Object.entries(schema.shape)) {

@@ -10,14 +10,17 @@ import {
   actOnTicket,
   answerBoard,
   answerNotices,
+  answerRun,
   answerRuns,
   answerTicket,
   type Called,
   callLoop,
+  cancelLoopRun,
   loopFeed,
   readLoopProjects,
   readLoopRuns,
   retireKeyFile,
+  retryLoopIntents,
   startTicketChat,
 } from "../src/main/loop.ts";
 import { type Answer, type Asked, fakeLoop } from "./loop-server.ts";
@@ -200,7 +203,9 @@ describe("Notices", () => {
       ["CYC-3", "dev"],
       ["CYC-4", undefined],
     ]);
-    expect(events).toEqual([["loop_notices_read", { permission: 2, blocked: 1, review: 0 }]]);
+    expect(events).toEqual([
+      ["loop_notices_read", { permission: 2, blocked: 1, review: 0, stuck: 1, intent_stuck: 0 }],
+    ]);
   });
 
   test("no server, and an error, are said as they are", async () => {
@@ -1051,5 +1056,143 @@ describe("graph nodes (loop/graph/act)", () => {
       ["loop_graph_acted", { action: "skip_node", result: "not_allowed" }],
       ["loop_graph_acted", { action: "skip_node", result: "no_server" }],
     ]);
+  });
+});
+
+describe("run detail, cancel, intent retry and activity feed", () => {
+  const runDetail = {
+    key: "CYC-9",
+    title: "Secret title",
+    kind: "dev" as const,
+    phase: "qa",
+    state: "active" as const,
+    round: 1,
+    startedAt: "2026-11-26T00:00:00Z",
+    updatedAt: "2026-11-26T00:10:00Z",
+    blockedReason: null,
+    sessions: [{ kind: "dev", id: "sess-1" }],
+    prUrl: null,
+    events: [{ ts: "2026-11-26T00:00:00Z", kind: "claimed" }],
+    heartbeat: { at: "2026-11-26T00:10:00Z", detail: "Running QA" },
+  };
+
+  test("answerRun parses a run, maps unknown_run to none, and guards project keys", async () => {
+    const socket = sock();
+    const server = await fakeLoop(socket, (asked) =>
+      asked.params?.key === "CYC-9"
+        ? { result: runDetail }
+        : { error: { code: -32602, data: { reason: "unknown_run" } } },
+    );
+    expect(await answerRun({ socket }, "CYC", "CYC-9")).toEqual({
+      kind: "ok",
+      run: runDetail,
+    });
+    expect(await answerRun({ socket }, "CYC", "CYC-99")).toEqual({ kind: "none" });
+    expect(await answerRun({ socket }, "CYC", "OTHER-9")).toEqual({ kind: "unreachable" });
+    await server.close();
+    expect(await answerRun({ socket: sock() }, "CYC", "CYC-9")).toEqual({ kind: "no_server" });
+    expect(await answerRun(undefined, "CYC", "CYC-9")).toEqual({ kind: "no_server" });
+  });
+
+  test("cancelLoopRun calls loop/run/cancel and reports behaviour-only outcome", async () => {
+    const socket = sock();
+    let cancelled = true;
+    const server = await fakeLoop(socket, () => ({ result: { cancelled } }));
+    const events: unknown[] = [];
+    const track = (e: string, p: unknown) => events.push([e, p]);
+    expect(await cancelLoopRun({ socket, actor: () => "小明" }, "CYC", "CYC-9", track)).toEqual({
+      kind: "ok",
+      cancelled: true,
+    });
+    cancelled = false;
+    expect(await cancelLoopRun({ socket }, "CYC", "CYC-9", track)).toEqual({
+      kind: "ok",
+      cancelled: false,
+    });
+    await server.close();
+    expect(await cancelLoopRun({ socket: sock() }, "CYC", "CYC-9", track)).toEqual({
+      kind: "failed",
+      reason: "no_server",
+    });
+    expect(server.asked[0]).toEqual({
+      method: "loop/run/cancel",
+      params: { project: "CYC", key: "CYC-9", actor: "小明", actorKind: "desktop" },
+    });
+    expect(events).toEqual([
+      ["loop_run_cancelled", { result: "ok" }],
+      ["loop_run_cancelled", { result: "not_running" }],
+      ["loop_run_cancelled", { result: "no_server" }],
+    ]);
+    expect(JSON.stringify(events)).not.toContain("CYC-9");
+  });
+
+  test("retryLoopIntents calls loop/intents/retry and reports outcome and count only", async () => {
+    const socket = sock();
+    const server = await fakeLoop(socket, () => ({ result: { retried: 2 } }));
+    const events: unknown[] = [];
+    const track = (e: string, p: unknown) => events.push([e, p]);
+    expect(await retryLoopIntents({ socket, actor: () => "小明" }, "CYC", "CYC-9", track)).toEqual({
+      kind: "ok",
+      retried: 2,
+    });
+    await server.close();
+    expect(await retryLoopIntents({ socket: sock() }, "CYC", "CYC-9", track)).toEqual({
+      kind: "failed",
+      reason: "no_server",
+    });
+    expect(server.asked[0]).toEqual({
+      method: "loop/intents/retry",
+      params: { project: "CYC", key: "CYC-9", actor: "小明", actorKind: "desktop" },
+    });
+    expect(events).toEqual([
+      ["loop_intents_retried", { result: "ok", retried: 2 }],
+      ["loop_intents_retried", { result: "no_server", retried: 0 }],
+    ]);
+    expect(JSON.stringify(events)).not.toContain("CYC-9");
+  });
+
+  test("loopFeed reports project activity when new events arrive even if active run keys stay the same", async () => {
+    let seq = 1;
+    const activities: string[][] = [];
+    const changes: unknown[] = [];
+    const feed = loopFeed({
+      call: async (method, params): Promise<Called> => {
+        if (method === "runs/list")
+          return {
+            kind: "ok",
+            result: {
+              projects: [
+                {
+                  projectKey: "CYC",
+                  runs: [
+                    {
+                      key: "CYC-9",
+                      kind: "dev",
+                      state: "active",
+                      startedAt: "2026-11-26T00:00:00Z",
+                      updatedAt: "2026-11-26T00:01:00Z",
+                    },
+                  ],
+                },
+              ],
+            },
+          };
+        const afterSeq = (params as { afterSeq?: number } | undefined)?.afterSeq ?? 0;
+        const events =
+          seq > afterSeq
+            ? [{ seq, ts: "2026-11-26T00:02:00Z", run: "CYC-9", kind: "phase_changed" }]
+            : [];
+        return { kind: "ok", result: { projectKey: "CYC", events, lastSeq: seq, hasMore: false } };
+      },
+      changed: (runs) => changes.push(runs),
+      activity: (keys) => activities.push(keys),
+    });
+    await feed.tick(); // seeds history at seq=1: not reported as new activity
+    expect(activities).toEqual([]);
+    expect(changes).toHaveLength(1);
+    seq = 2;
+    await feed.tick(); // same active run key, new event -> activity fires!
+    expect(activities).toEqual([["CYC"]]);
+    expect(changes).toHaveLength(1);
   });
 });

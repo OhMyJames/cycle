@@ -45,6 +45,8 @@ export type SidebarProps = {
   mode?: "sessions" | "loop";
   /** The lower half in the Loop mode (loop.tsx `LoopNav`). */
   loopNav?: ReactNode;
+  /** How many Loop Notices currently need the person, for the badge on the Loop mode switch. */
+  loopNoticeCount?: number;
   onConnectLocation: (locationId: string) => void;
   onToggleArchived: () => void;
   onShowAll: () => void;
@@ -125,10 +127,20 @@ export function Sidebar(props: SidebarProps) {
             data-mode="loop"
             aria-pressed={loopMode}
             data-selected={loopMode ? "" : undefined}
+            aria-description={
+              props.loopNoticeCount !== undefined && props.loopNoticeCount > 0
+                ? t("loop.notices.count", { count: props.loopNoticeCount })
+                : undefined
+            }
             onClick={props.onLoop}
           >
             <RefreshIcon size={14} />
-            {t("loop.open")}
+            <span>{t("loop.open")}</span>
+            {props.loopNoticeCount !== undefined && props.loopNoticeCount > 0 ? (
+              <span data-slot="loop-nav-badge" aria-hidden="true">
+                {props.loopNoticeCount}
+              </span>
+            ) : null}
           </Button>
         </section>
       ) : null}

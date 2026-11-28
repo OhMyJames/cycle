@@ -1,25 +1,41 @@
-// Tells the person, with a system notification, that a ticket needs them: Blocked, or a review escalated to a person.
-// A session waiting on a permission is NOT told here: the session's own attention notification (attention.ts) already
-// does, and a second one would repeat it. Only a Notice that was not there at the last read is told, and the first
-// read of a Project says nothing (it is what was already there), as `attentionOf` does for sessions.
+// Tells the person, with a system notification, that a ticket needs them: Blocked, escalated review, stuck run or stuck
+// tracker write. A session waiting on a permission is NOT told here: the session's own attention notification
+// (attention.ts) already does, and a second one would repeat it. Only a Notice that was not there at the last read is
+// told, and the first read of a Project says nothing (it is what was already there), as `attentionOf` does for sessions.
 import type { LoopNotice, LoopNoticesAnswer, LoopProjectInfo } from "@cycle/ui/api";
 import type { NotificationLike, NotifyWindow } from "./attention.ts";
 
-export type Alertable = LoopNotice & { kind: "blocked" | "review" };
+export type Alertable = LoopNotice & { kind: "blocked" | "review" | "stuck" | "intent_stuck" };
 
 const keyOf = (n: LoopNotice): string => `${n.kind}:${n.identifier}`;
 
-/** The Notices to tell now: Blocked and review ones not in `before`. `before` undefined is the first read: nothing. */
+/**
+ * The Notices to tell now: Blocked, review, stuck and intent_stuck ones not in `before`, deduplicated by kind+ticket
+ * within the same poll batch (multiple stuck intents on one ticket fire one notification). `before` undefined is the
+ * first read: nothing.
+ */
 export const newAlerts = (
   before: ReadonlySet<string> | undefined,
   notices: LoopNotice[],
-): Alertable[] =>
-  before === undefined
-    ? []
-    : notices.filter(
-        (n): n is Alertable =>
-          (n.kind === "blocked" || n.kind === "review") && !before.has(keyOf(n)),
-      );
+): Alertable[] => {
+  if (before === undefined) return [];
+  const seen = new Set<string>();
+  const out: Alertable[] = [];
+  for (const n of notices) {
+    if (
+      n.kind !== "blocked" &&
+      n.kind !== "review" &&
+      n.kind !== "stuck" &&
+      n.kind !== "intent_stuck"
+    )
+      continue;
+    const key = keyOf(n);
+    if (before.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    out.push(n as Alertable);
+  }
+  return out;
+};
 
 export type PollDeps = {
   projects: () => Promise<LoopProjectInfo[]>;
