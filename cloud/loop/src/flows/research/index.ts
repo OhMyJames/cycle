@@ -1,7 +1,8 @@
 // The research flow (CYC-447): a Research work item, answered by a read-only session and published by the loop.
 //
-// claimed → research → research_qa → publishing → done. The sessions only read; the loop checks the reply, has it
-// judged, and publishes it. There is no install, no commit, no push and no pull request.
+// claimed → research → research_qa → publishing → done, as a one-node Task Graph (CYC-545): a `research` node, then
+// `qa-n` nodes, and a `fix-n` research node (a new session) after each QA that does not pass. The sessions only read;
+// the loop checks the reply, has it judged, and publishes it. There is no install, no commit, no push and no pull request.
 
 import type { StoreOps } from "../../db/store.ts";
 import type { Save, StepResult } from "../../engine/flow.ts";
@@ -18,29 +19,64 @@ import {
   tail,
 } from "../../engine/flow.ts";
 import { writeIntent } from "../../engine/reconcile.ts";
+import {
+  appendFixNode,
+  appendQaNode,
+  buildGraph,
+  type TaskGraph,
+  type TaskNode,
+  updateGraphNode,
+} from "../../graph.ts";
 import { conclusionIsEmpty } from "../../preflight.ts";
 import {
+  designBrief,
   formatFindings,
   researchBrief,
   researchContinueBrief,
   researchFixBrief,
   researchQaBrief,
+  researchReworkNote,
 } from "../../prompts/index.ts";
 import { findSecrets } from "../../secrets.ts";
 import { type ResearchState, type RunRecord, researchOf } from "../../store.ts";
 import { type Config, type Issue, SessionLost, type TurnResult } from "../../types.ts";
 import { judge, newQaSession, nextRound } from "../dev/qa.ts";
 import { blockTicket, tellTicket, ticketStillMine, ticketStillWanted } from "../ticket.ts";
-import { checkResearch, parseResearch, replaceConclusion } from "./output.ts";
+import { checkDesign, checkResearch, parseResearch, replaceConclusion } from "./output.ts";
+
+/** What differs between a research and a design ticket (CYC-545): the rest of the flow is the same. */
+const PROFILES = {
+  research: {
+    name: "调研",
+    session: "Research",
+    nodeTitle: "调研",
+    brief: researchBrief,
+    extraChecks: () => [] as string[],
+  },
+  design: {
+    name: "设计",
+    session: "Design",
+    nodeTitle: "设计",
+    brief: designBrief,
+    extraChecks: checkDesign,
+  },
+} as const;
+
+/** The options of a ticket kind, which the project must have turned on to take that kind. */
+const optionsOf = (kind: "research" | "design", config: Config) =>
+  kind === "design" ? config.design : config.research;
 
 export class ResearchFlow implements Flow {
-  readonly kind = "research";
+  readonly kind: "research" | "design";
+  readonly #p;
   readonly #host: FlowHost;
   readonly phases: Partial<Record<Phase, PhaseDef>>;
   readonly firstPhase = "research";
   readonly qa: Flow["qa"];
 
-  constructor(host: FlowHost) {
+  constructor(host: FlowHost, kind: "research" | "design" = "research") {
+    this.kind = kind;
+    this.#p = PROFILES[kind];
     this.#host = host;
     this.phases = {
       // A research run that has just been claimed already shows 调研, not 开发.
@@ -61,25 +97,25 @@ export class ResearchFlow implements Flow {
     };
     this.qa = {
       role: "research_qa",
-      title: (key) => `[${key}] Research QA`,
-      subject: "调研内容",
-      readRoots: (config) => host.need(config.research ?? undefined).readRoots,
+      title: (key) => `[${key}] ${this.#p.session} QA`,
+      subject: `${this.#p.name}内容`,
+      readRoots: (config) => host.need(optionsOf(kind, config) ?? undefined).readRoots,
     };
   }
 
   /** Turned off with a run under way: it waits in the state directory until research is on again. */
   enabled(config: Config): boolean {
-    return config.research !== null;
+    return optionsOf(this.kind, config) !== null;
   }
 
   /** A research work item has questions, not criteria: its book is empty, kept so a resume reads it as for any run. */
   open(accepted: Accepted): Opening {
-    if (accepted.kind !== "research")
-      throw new Error(`a ${accepted.kind} work item is not a research run`);
+    if (accepted.kind !== this.kind)
+      throw new Error(`a ${accepted.kind} work item is not a ${this.kind} run`);
     return {
       specs: [],
       state: {
-        kind: "research",
+        kind: this.kind,
         research: {
           questions: accepted.questions,
           output: null,
@@ -91,20 +127,20 @@ export class ResearchFlow implements Flow {
         },
       },
       // `runKind` is what `stats` tells the runs apart by (`kind` is taken: it is the event's name).
-      claimed: { runKind: "research", questions: accepted.questions.length },
+      claimed: { runKind: this.kind, questions: accepted.questions.length },
     };
   }
 
   wouldTake(issue: Issue, accepted: Accepted): StepResult {
-    if (accepted.kind !== "research")
-      throw new Error(`a ${accepted.kind} work item is not a research run`);
+    if (accepted.kind !== this.kind)
+      throw new Error(`a ${accepted.kind} work item is not a ${this.kind} run`);
     this.#host.d.log(
-      `dry run: would take ${issue.key} (research, ${accepted.questions.length} questions)`,
+      `dry run: would take ${issue.key} (${this.kind}, ${accepted.questions.length} questions)`,
     );
     return {
       status: "would-take",
       key: issue.key,
-      kind: "research",
+      kind: this.kind,
       questions: accepted.questions.length,
     };
   }
@@ -130,13 +166,13 @@ export class ResearchFlow implements Flow {
   block(args: BlockArgs) {
     return blockTicket(this.#host, args, {
       firstPhase: "research",
-      session: `调研会话「[${args.run.key}] Research」`,
+      session: `${this.#p.name}会话「[${args.run.key}] ${this.#p.session}」`,
       // A research block can quote what the sessions wrote (QA's findings, draft titles), and the tracker is their
       // only way out: the same check as before publishing, naming the kinds only.
       redact: (said) => {
         const leaked = findSecrets(said);
         return leaked.length > 0
-          ? `卡住的原因里有疑似凭据（${leaked.join("、")}），没有贴出原文；详情在调研会话和 QA 会话里。`
+          ? `卡住的原因里有疑似凭据（${leaked.join("、")}），没有贴出原文；详情在${this.#p.name}会话和 QA 会话里。`
           : said;
       },
     });
@@ -160,7 +196,7 @@ export class ResearchFlow implements Flow {
       agent: config.devAgent,
       ...(config.devModel ? { model: config.devModel } : {}),
       ...(config.devEffort ? { effort: config.devEffort } : {}),
-      title: `[${run.key}] Research`,
+      title: `[${run.key}] ${this.#p.session}`,
       // The same name again is the worktree that is there: the daemon reuses it, and files the session under it.
       cwd: config.repoRoot,
       worktree: { base: config.baseRef, name: branchOf(issue.number) },
@@ -192,40 +228,151 @@ export class ResearchFlow implements Flow {
       await this.#host.d.store.event(run.key, "research_session", { new: true });
     }
     await save({ phase: "research" });
+    await this.#ensureGraph({ ...run, phase: "research" });
+  }
+
+  /**
+   * The run's graph. A run begun before research was a graph has none: it is made from the phase it is in, so the
+   * rest runs as a new run does (a reply already kept is a finished node, a judged one a passed QA node).
+   */
+  async #ensureGraph(run: RunRecord): Promise<TaskGraph> {
+    const { store, clock } = this.#host.d;
+    const existing = await store.loadGraph(run.key);
+    if (existing !== undefined) return existing;
+    const nowIso = clock.now().toISOString();
+    const state = researchOf(run);
+    let graph = buildGraph(
+      run.key,
+      "single",
+      [
+        {
+          id: this.kind,
+          title: this.#p.nodeTitle,
+          goal: `回答工单里要回答的问题：\n${state.questions.map((q, i) => `${i + 1}. ${q}`).join("\n")}`,
+          dependsOn: [],
+          filesHint: [],
+          verify: [],
+          role: this.kind,
+        },
+      ],
+      nowIso,
+    );
+    const beyond = run.phase === "research_qa" || run.phase === "publishing";
+    graph = updateGraphNode(
+      graph,
+      this.kind,
+      beyond
+        ? {
+            status: "passed",
+            sessionId: run.devSessionId,
+            summary: state.output?.summary ?? "",
+            report: state.output?.report ?? "",
+            startedAt: nowIso,
+            finishedAt: nowIso,
+          }
+        : { status: "running", sessionId: run.devSessionId, startedAt: nowIso },
+      nowIso,
+      beyond ? null : "research",
+    );
+    if (run.phase === "publishing") {
+      const qa = this.#addQaNode(graph, nowIso);
+      graph = updateGraphNode(
+        qa.graph,
+        qa.node.id,
+        {
+          status: "passed",
+          verdict: "pass",
+          sessionId: run.qaSessionId,
+          startedAt: nowIso,
+          finishedAt: nowIso,
+        },
+        nowIso,
+        null,
+      );
+    }
+    await store.saveGraph(graph);
+    await store.event(run.key, "graph_built", { phase: run.phase, nodes: graph.nodes.length });
+    return graph;
+  }
+
+  #addQaNode(graph: TaskGraph, nowIso: string): { graph: TaskGraph; node: TaskNode } {
+    const appended = appendQaNode(graph, { commitSha: "", verify: [], nowIso });
+    return {
+      graph: updateGraphNode(
+        appended.graph,
+        appended.node.id,
+        { goal: `独立验收${this.#p.name}产出` },
+        nowIso,
+      ),
+      node: appended.node,
+    };
   }
 
   /**
    * One research turn. The reply is checked by rule; what fails goes back to the same session as a fix round, what
    * passes is kept as the output to publish and goes to QA. The worktree must be as it was.
    */
-  async #research(
-    run: RunRecord,
-    issue: Issue,
-    byPerson: boolean,
-    save: (patch: Partial<RunRecord>) => Promise<void>,
-  ): Promise<void> {
-    const { config, store } = this.#host.d;
-    const bounds = this.#host.need(config.research ?? undefined);
+  async #research(run: RunRecord, issue: Issue, byPerson: boolean, save: Save): Promise<void> {
+    const { config, store, clock } = this.#host.d;
+    const bounds = this.#host.need(optionsOf(this.kind, config) ?? undefined);
     const state = researchOf(run);
     const worktree = this.#host.need(run.worktree ?? undefined);
+    let graph = await this.#ensureGraph(run);
+    let node = graph.nodes
+      .filter((n) => n.role === this.kind)
+      .find((n) => n.status === "running" || n.status === "blocked" || n.status === "pending");
+    if (node === undefined) {
+      // The last research node was judged and sent back (or put back after that): a `fix-n` node, a new session,
+      // told the report it replaces and what was found wrong with it.
+      const nowIso = clock.now().toISOString();
+      const appended = appendFixNode(graph, {
+        title: `${this.#p.name}返工`,
+        goal: run.findings ?? `Redo the ${this.kind}.`,
+        verify: [],
+        role: this.kind,
+        nowIso,
+      });
+      if (!appended.ok) throw new Blocked(appended.reason);
+      const created = await this.#newSession(run, issue);
+      graph = updateGraphNode(
+        appended.graph,
+        appended.node.id,
+        { status: "running", sessionId: created.sessionId, startedAt: nowIso },
+        nowIso,
+        appended.node.id,
+      );
+      const started = graph;
+      await save({ devSessionId: created.sessionId }, (tx) => {
+        tx.saveGraph(started);
+        tx.event(run.key, "graph_fix_added", { nodeId: appended.node.id, round: run.round });
+        tx.event(run.key, "research_session", { new: true, nodeId: appended.node.id });
+      });
+      run = { ...run, devSessionId: created.sessionId };
+      node = graph.nodes.find((n) => n.id === appended.node.id) as TaskNode;
+    }
+    const current = node;
+    const rework = current.origin === "fix";
+    const previous = graph.nodes.filter((n) => n.role === this.kind && n.report !== null).at(-1);
     const brief = () => {
-      const first = researchBrief(issue, state.questions, {
+      const first = this.#p.brief(issue, state.questions, {
         readRoots: bounds.readRoots,
         maxFollowups: bounds.maxFollowups,
         maxCriteria: config.maxCriteria,
       });
+      if (rework)
+        return `${first}\n\n${researchReworkNote(previous?.report ?? "", run.findings ?? current.goal)}`;
       return run.findings === null
         ? first
         : `${first}\n\nAn earlier reply to this work item was sent back with these findings; do not repeat them:\n${run.findings}`;
     };
     // Which brief is chosen from what is saved: a session that has had no turn yet is given the whole brief.
     const progress = await store.readProgress(run.key);
-    const prompt =
-      progress === ""
-        ? brief()
-        : run.findings !== null
-          ? researchFixBrief(run.round, run.findings, bounds.maxFollowups)
-          : researchContinueBrief(issue, byPerson, bounds.maxFollowups);
+    const untouched = rework ? current.rounds === 0 && current.lastError === null : progress === "";
+    const prompt = untouched
+      ? brief()
+      : run.findings !== null
+        ? researchFixBrief(run.round, run.findings, bounds.maxFollowups)
+        : researchContinueBrief(issue, byPerson, bounds.maxFollowups);
     const turnOptions = {
       role: "research" as const,
       worktree,
@@ -234,7 +381,7 @@ export class ResearchFlow implements Flow {
     };
 
     const before = await this.#host.snapshot(worktree);
-    let sessionId = this.#host.need(run.devSessionId ?? undefined);
+    let sessionId = this.#host.need(current.sessionId ?? run.devSessionId ?? undefined);
     let result: TurnResult;
     try {
       result = await this.#host.turn(run.key, sessionId, prompt, turnOptions);
@@ -242,10 +389,21 @@ export class ResearchFlow implements Flow {
       if (!(error instanceof SessionLost)) throw error;
       // Nothing on disk to take over from: a new session starts the research again, told what was sent back.
       const created = await this.#newSession(run, issue);
-      await save({
-        devSessionId: created.sessionId,
-        replacedSessions: [...run.replacedSessions, sessionId],
-      });
+      const swapped = updateGraphNode(
+        graph,
+        current.id,
+        { sessionId: created.sessionId },
+        clock.now().toISOString(),
+        current.id,
+      );
+      await save(
+        {
+          devSessionId: created.sessionId,
+          replacedSessions: [...run.replacedSessions, sessionId],
+        },
+        (tx) => tx.saveGraph(swapped),
+      );
+      graph = swapped;
       sessionId = created.sessionId;
       await store.event(run.key, "research_session", { replaced: true });
       result = await this.#host.turn(run.key, sessionId, brief(), turnOptions);
@@ -254,16 +412,21 @@ export class ResearchFlow implements Flow {
     // Read-only, kept by a check and not by trust.
     const after = await this.#host.snapshot(worktree);
     if (before !== after)
-      throw new Blocked("调研会话修改了工作区（提交或文件状态变了），自动化不信任这次调研结果。");
-    this.#host.mustHaveEnded("调研", result);
+      throw new Blocked(
+        `${this.#p.name}会话修改了工作区（提交或文件状态变了），自动化不信任这次${this.#p.name}结果。`,
+      );
+    this.#host.mustHaveEnded(this.#p.name, result);
 
     const output = parseResearch(result.text);
-    const findings = checkResearch(output, state.questions, {
-      maxCriteria: config.maxCriteria,
-      featureTypeId: config.featureTypeId,
-      bugTypeId: config.bugTypeId,
-      maxFollowups: bounds.maxFollowups,
-    });
+    const findings = [
+      ...checkResearch(output, state.questions, {
+        maxCriteria: config.maxCriteria,
+        featureTypeId: config.featureTypeId,
+        bugTypeId: config.bugTypeId,
+        maxFollowups: bounds.maxFollowups,
+      }),
+      ...this.#p.extraChecks(output),
+    ];
     await store.appendProgress(
       run.key,
       run.round,
@@ -271,12 +434,25 @@ export class ResearchFlow implements Flow {
         ? `The reply passed the checks.\n\n${output.summary ?? ""}`
         : `The reply did not pass the checks:\n${findings.map((f) => `- ${f}`).join("\n")}`,
     );
+    const nowIso = clock.now().toISOString();
     if (findings.length > 0) {
+      const text = `The loop's checks found:\n${findings.map((f) => `- ${f}`).join("\n")}`;
+      const retry = updateGraphNode(
+        graph,
+        current.id,
+        { status: "running", rounds: current.rounds + 1, lastError: text },
+        nowIso,
+        current.id,
+      );
       await nextRound(
         this.#host,
         run,
-        `The loop's checks found:\n${findings.map((f) => `- ${f}`).join("\n")}`,
-        save,
+        text,
+        (patch, also) =>
+          save(patch, (tx) => {
+            tx.saveGraph(retry);
+            also?.(tx);
+          }),
         "research",
       );
       return;
@@ -289,52 +465,160 @@ export class ResearchFlow implements Flow {
         f.type === null ? [] : [{ type: f.type, title: f.title, body: f.body }],
       ),
     };
-    await save({
-      phase: "research_qa",
-      findings: null,
-      research: {
-        ...state,
-        output: kept,
-        followups: kept.followups.map((f) => ({
-          title: f.title,
-          issueId: null,
-          number: null,
-          linked: false,
-        })),
+    const passed = updateGraphNode(
+      graph,
+      current.id,
+      {
+        status: "passed",
+        summary: kept.summary,
+        report: kept.report,
+        lastError: null,
+        finishedAt: nowIso,
       },
-    });
+      nowIso,
+      null,
+    );
+    await save(
+      {
+        phase: "research_qa",
+        findings: null,
+        research: {
+          ...state,
+          output: kept,
+          followups: kept.followups.map((f) => ({
+            title: f.title,
+            issueId: null,
+            number: null,
+            linked: false,
+          })),
+        },
+      },
+      (tx) => {
+        tx.saveGraph(passed);
+        tx.event(run.key, "graph_node_passed", { nodeId: current.id, rounds: current.rounds });
+      },
+    );
   }
 
-  /** Independent QA of the saved output, as `Pipeline`'s `#qa` does for code: a rejection is a fix round back in research. */
-  async #researchQa(
-    run: RunRecord,
-    issue: Issue,
-    save: (patch: Partial<RunRecord>) => Promise<void>,
-  ): Promise<void> {
-    const { config } = this.#host.d;
-    const bounds = this.#host.need(config.research ?? undefined);
+  /**
+   * Independent QA of the saved output, in a `qa-n` node of the graph, as `Pipeline`'s `#qa` does for code: each new
+   * node is its own session, and a rejection is a `fix-n` research node.
+   */
+  async #researchQa(run: RunRecord, issue: Issue, save: Save): Promise<void> {
+    const { config, clock, store } = this.#host.d;
+    const bounds = this.#host.need(optionsOf(this.kind, config) ?? undefined);
     const state = researchOf(run);
     const output = this.#host.need(state.output ?? undefined);
     const worktree = this.#host.need(run.worktree ?? undefined);
-    if (run.qaSessionId === null) {
-      const sessionId = await newQaSession(this.#host, this.qa, run, issue);
-      await save({ qaSessionId: sessionId });
-      run = { ...run, qaSessionId: sessionId };
+    const graph0 = await this.#ensureGraph(run);
+    const nowIso = clock.now().toISOString();
+    const open = graph0.nodes.find(
+      (n) =>
+        n.role === "qa" &&
+        (n.status === "running" || n.status === "blocked" || n.status === "pending"),
+    );
+    let base = graph0;
+    let id: string;
+    if (open !== undefined) id = open.id;
+    else {
+      const added = this.#addQaNode(graph0, nowIso);
+      base = added.graph;
+      id = added.node.id;
     }
+    let graph = updateGraphNode(
+      base,
+      id,
+      { status: "running", startedAt: open?.startedAt ?? nowIso },
+      nowIso,
+      id,
+    );
+    // A new node is a new session; one gone on with after a restart keeps the one it had.
+    if (open?.sessionId == null || run.qaSessionId === null) {
+      const sessionId = await newQaSession(this.#host, this.qa, run, issue);
+      graph = updateGraphNode(graph, id, { sessionId }, nowIso, id);
+      const g = graph;
+      await save({ qaSessionId: sessionId }, (tx) => {
+        tx.saveGraph(g);
+        if (open === undefined) tx.event(run.key, "graph_qa_added", { nodeId: id });
+      });
+      run = { ...run, qaSessionId: sessionId };
+    } else {
+      const g = graph;
+      await save({}, (tx) => tx.saveGraph(g));
+    }
+    const recordSession: Save = async (patch, also) => {
+      const sessionId = patch.qaSessionId;
+      if (sessionId == null) return save(patch, also);
+      graph = updateGraphNode(graph, id, { sessionId }, clock.now().toISOString(), id);
+      const g = graph;
+      return save(patch, (tx) => {
+        also?.(tx);
+        tx.saveGraph(g);
+      });
+    };
     const before = await this.#host.snapshot(worktree);
     const prompt = researchQaBrief(issue, state.questions, output, bounds.readRoots);
-    const verdict = await judge(this.#host, this.qa, run, issue, worktree, before, prompt, save);
+    let verdict: Awaited<ReturnType<typeof judge>>;
+    try {
+      verdict = await judge(
+        this.#host,
+        this.qa,
+        run,
+        issue,
+        worktree,
+        before,
+        prompt,
+        recordSession,
+      );
+    } catch (error) {
+      if (error instanceof Blocked)
+        await store.saveGraph(
+          updateGraphNode(
+            graph,
+            id,
+            { status: "blocked", lastError: error.message },
+            clock.now().toISOString(),
+            id,
+          ),
+        );
+      throw error;
+    }
+    const doneAt = clock.now().toISOString();
+    const finished = updateGraphNode(
+      graph,
+      id,
+      {
+        status: "passed",
+        verdict: verdict.pass ? "pass" : "fail",
+        report: verdict.pass && verdict.findings.length === 0 ? null : formatFindings(verdict),
+        lastError: null,
+        finishedAt: doneAt,
+      },
+      doneAt,
+      null,
+    );
+    const commit: Save = (patch, also) =>
+      save(patch, (tx) => {
+        tx.saveGraph(finished);
+        tx.event(run.key, "graph_qa_done", { nodeId: id, verdict: verdict.pass ? "pass" : "fail" });
+        also?.(tx);
+      });
     if (!verdict.pass) {
+      // At the round limit nothing is saved by the fix round: keep the node's result before it blocks.
+      if (run.round >= config.maxFixRounds) {
+        await store.saveGraph(finished);
+        await store.event(run.key, "graph_qa_done", { nodeId: id, verdict: "fail" });
+      }
       await nextRound(
         this.#host,
         run,
         `Independent review found:\n${formatFindings(verdict)}`,
-        save,
+        commit,
         "research",
       );
       return;
     }
-    await save({ phase: "publishing" });
+    await commit({ phase: "publishing" });
   }
 
   /**
@@ -345,7 +629,8 @@ export class ResearchFlow implements Flow {
    */
   async #publish(start: RunRecord, issue: Issue, save: Save): Promise<StepResult> {
     const { config, tracker, store } = this.#host.d;
-    const bounds = this.#host.need(config.research ?? undefined);
+    await this.#ensureGraph(start);
+    const bounds = this.#host.need(optionsOf(this.kind, config) ?? undefined);
     let state = researchOf(start);
     const output = this.#host.need(state.output ?? undefined);
     const progress = async (patch: Partial<ResearchState>, also?: (tx: StoreOps) => void) => {
@@ -367,7 +652,7 @@ export class ResearchFlow implements Flow {
           findings: `The reply holds text shaped like a credential (${kinds.join(", ")}). Nothing was published. Write the blocks again with no secret in them: name a variable or a key by its name alone.`,
         });
         throw new Blocked(
-          `调研结果里有疑似凭据（${kinds.join("、")}），什么都没有发布。请先确认这些内容，再把工单放回 Todo：调研会话会去掉它们后重写。`,
+          `${this.#p.name}结果里有疑似凭据（${kinds.join("、")}），什么都没有发布。请先确认这些内容，再把工单放回 Todo：${this.#p.name}会话会去掉它们后重写。`,
           "research",
         );
       }
@@ -419,7 +704,7 @@ export class ResearchFlow implements Flow {
               kind: "comment",
               dedupe: `researched-summary:${start.key}`,
               payload: {
-                body: `调研摘要（「结论」一节已经有人写过，没有覆盖）：\n\n${output.summary}\n\n报告：「${title}」（已挂在本工单上）`,
+                body: `${this.#p.name}摘要（「结论」一节已经有人写过，没有覆盖）：\n\n${output.summary}\n\n报告：「${title}」（已挂在本工单上）`,
               },
             }),
           );
@@ -467,7 +752,7 @@ export class ResearchFlow implements Flow {
             .join("\n")}`;
     await save({ phase: "done", research: { ...state, commented: true } }, (tx) => {
       tellTicket(tx, start, issue, `researched:${start.key}`, {
-        body: `调研完成。报告：「${title}」（已挂在本工单上）。\n\n${followups}`,
+        body: `${this.#p.name}完成。报告：「${title}」（已挂在本工单上）。\n\n${followups}`,
         to: "done",
       });
       tx.event(start.key, "researched", { docId, followups: keys.length });

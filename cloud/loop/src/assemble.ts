@@ -66,10 +66,12 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
   });
   // Research (CYC-447) is resolved only when it is on; the folder is a document, which `get_project` does not list.
   const research = file.research?.enabled === true ? file.research : null;
+  const design = file.design?.enabled === true ? file.design : null;
   // The planning node (CYC-322), likewise only when it is on.
   const planning = file.planning?.enabled === true ? file.planning : null;
   const {
     research: found,
+    design: designFound,
     planning: planned,
     ...setup
   } = resolveProject(
@@ -83,6 +85,13 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
           documents: await tracker.listDocuments(),
         },
     planning ?? undefined,
+    design === null
+      ? undefined
+      : {
+          type: design.type,
+          folder: design.folder,
+          documents: await tracker.listDocuments(),
+        },
   );
   tracker.setColumns(setup.columns);
   if (planned !== null) tracker.setBacklogColumn(planned.backlogColumn);
@@ -114,6 +123,10 @@ export const setUpProject = async (file: ConfigFile, o: SetUpOptions): Promise<P
       research === null || found === null
         ? null
         : { ...found, readRoots: research.readRoots, maxFollowups: research.maxFollowups },
+    design:
+      design === null || designFound === null
+        ? null
+        : { ...designFound, readRoots: design.readRoots, maxFollowups: design.maxFollowups },
     planning:
       planning === null || planned === null
         ? null

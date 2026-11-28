@@ -49,7 +49,7 @@ const projectRuns = async (
         if (r === undefined || r.key !== name) return undefined;
         return LoopRunSchema.parse({
           key: r.key,
-          kind: r.kind,
+          kind: r.kind === "design" ? "research" : r.kind,
           state: stateOf(r.phase),
           startedAt: r.startedAt,
           updatedAt: r.updatedAt,

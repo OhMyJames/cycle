@@ -11,7 +11,7 @@ import { ALLOWED_COMMANDS } from "../preflight.ts";
 import type { Issue } from "../types.ts";
 import { numbered } from "./common.ts";
 
-const RESEARCH_OUTPUT = (
+export const RESEARCH_OUTPUT = (
   maxFollowups: number,
 ): string => `End your last reply with these blocks, and nothing after them. The loop reads only your last reply, and publishes what is in the blocks: the report as a document, the summary into the work item's 「结论」 section, each follow-up as a new work item in Backlog for a person to approve.
 <summary>
@@ -150,3 +150,66 @@ End with one block and nothing after it:
 // The planning node's sessions (CYC-322): triage sorts the Backlog's candidates, shaping rewrites or splits one work
 // item, and shaping QA compares the result with the original. All three are read-only, like research; the loop
 // checks their replies with planning.ts and writes to the tracker itself.
+
+const NODE_OUTPUT = `End your last reply with these blocks, and nothing after them. The loop reads only your last reply and keeps what is in the blocks on the execution graph node; the Dev nodes that depend on this one are given the report.
+<summary>
+One paragraph: the answer, in at most ${MAX_SUMMARY} characters.
+</summary>
+<report>
+The full report in Markdown, with the answer under the heading 「## 问题 1」, and its evidence.
+</report>
+Do not write <followup> blocks: nothing is drafted from a research node of a graph.`;
+
+/** A research node of a feature's graph: read-only, its goal is the question, and the report goes to the Dev nodes after it. */
+export const nodeResearchBrief = (
+  issue: Issue,
+  node: { id: string; title: string; goal: string; filesHint: string[] },
+  bounds: { readRoots: string[] },
+): string => `You are the researcher executing read-only Task Node \`${node.id}\` (${node.title}) for Level-1 work item ${issue.key}: ${issue.title}.
+
+You are READ-ONLY. Do not edit, create, delete or move files, do not commit, do not use the network, do not read credentials (.env files, keys, tokens, git config), and do not use MCP tools. Requests outside these bounds are refused, not asked about.
+
+Work in the current directory: it is the shared git worktree for ${issue.key}. You may also read these directories:
+${bounds.readRoots.length > 0 ? bounds.readRoots.map((root) => `- ${root}`).join("\n") : "- (none)"}
+You may run read-only commands: cat, ls, rg, grep, head, tail, wc, du, find (without -exec, -execdir, -ok, -delete or -fprint), stat, file, and git status, git diff, git log, git show.
+
+The work item:
+---
+${issue.description}
+---
+
+Your node's goal, the question to answer:
+${node.goal}
+${node.filesHint.length > 0 ? `\nWhere to look first:\n${node.filesHint.map((f) => `- \`${f}\``).join("\n")}\n` : ""}
+How to work:
+- Back every conclusion with evidence: a file path and line number, or a command and what it printed.
+- What needs a person, needs the network, or was refused, write as 「未验证」 with the reason. Do not guess.
+- Never quote a secret. Name an environment variable or a key by its name alone.
+
+${NODE_OUTPUT}`;
+
+export const nodeResearchFixBrief = (
+  node: { id: string; title: string },
+  round: number,
+  findings: string,
+): string => `Your reply for node \`${node.id}\` (${node.title}) did not pass the checks (fix round ${round}). Fix what is listed. Stay read-only.
+
+${findings}
+
+Give the complete blocks again, not only what changed: the loop reads only your last reply.
+
+${NODE_OUTPUT}`;
+
+/** What a replacing research session is told on top of the first brief: the report that was sent back, and why. */
+export const researchReworkNote = (
+  report: string,
+  findings: string,
+): string => `An earlier report on this work item was sent back by independent review. You are a new session: you did not write it. Here it is:
+---
+${report === "" ? "(none)" : report}
+---
+
+What was found:
+${findings}
+
+Answer the questions again and fix what was found; do not repeat the same faults. Give the complete blocks.`;

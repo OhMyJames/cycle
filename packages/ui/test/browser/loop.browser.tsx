@@ -1635,6 +1635,38 @@ test("a QA node shows as a QA session with its verdict, and Dev nodes stay as th
   expect(within(dev).queryByText("QA session")).toBeNull();
 });
 
+test("research and design nodes show as their own sessions with the report and no empty verify", async () => {
+  const mine = ticket(610, "In Progress");
+  const nodes = [
+    node(0, {
+      id: "r1",
+      role: "research",
+      status: "passed",
+      verify: [],
+      summary: "Found it",
+      report: "Full research report",
+    }),
+    node(1, {
+      id: "d1",
+      role: "design",
+      status: "passed",
+      verify: [],
+      report: "Option A vs B",
+      dependsOn: ["r1"],
+    }),
+  ];
+  const { user, drawer } = await openGraphDrawer({
+    loopTickets: { "CYC-610": detailOf(mine, { graph: graphOf(nodes) }) },
+  });
+  const r1 = drawer.querySelector('[data-slot="loop-graph-node"][data-id="r1"]') as HTMLElement;
+  expect(within(r1).getByText("Research session")).toBeTruthy();
+  const d1 = drawer.querySelector('[data-slot="loop-graph-node"][data-id="d1"]') as HTMLElement;
+  expect(within(d1).getByText("Design session")).toBeTruthy();
+  await user.click(within(r1).getByRole("button", { name: /^Expand node/ }));
+  expect(within(r1).getByText("Full research report")).toBeTruthy();
+  expect(r1.querySelector('[data-field="verify"]')).toBeNull();
+});
+
 test("only blocked and failed nodes have retry and skip (with confirm), and editable nodes can be edited in place", async () => {
   const { user, fake, drawer } = await openGraphDrawer();
   expect(within(drawer).getAllByRole("button", { name: /^Retry node/ })).toHaveLength(2);

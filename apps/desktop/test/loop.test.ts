@@ -368,7 +368,10 @@ describe("the ticket page (loop/ticket/get)", () => {
     const answer = await answerTicket({ socket }, "CYC", "CYC-9", (e, p) => events.push([e, p]));
     await server.close();
     expect(server.asked).toEqual([
-      { method: "loop/ticket/get", params: { project: "CYC", key: "CYC-9" } },
+      {
+        method: "loop/ticket/get",
+        params: { project: "CYC", key: "CYC-9", roles: ["dev", "qa", "research", "design"] },
+      },
     ]);
     expect(answer).toEqual({
       kind: "ok",
@@ -1162,6 +1165,7 @@ describe("graph nodes (loop/graph/act)", () => {
           key: "CYC-9",
           nodeId: "n1",
           action: "retry_node",
+          roles: ["dev", "qa", "research", "design"],
           actor: "小明",
           actorKind: "desktop",
         },
@@ -1241,6 +1245,7 @@ describe("graph nodes (loop/graph/act)", () => {
         title: "Better title",
         goal: "Better goal",
         verify: ["bun test"],
+        roles: ["dev", "qa", "research", "design"],
         actor: "小明",
         actorKind: "desktop",
       },

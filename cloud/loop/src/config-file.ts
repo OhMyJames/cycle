@@ -86,6 +86,17 @@ export const ResearchSchema = z
   })
   .strict();
 
+/** Design work items for this Project (CYC-545): the same shape as research, with its own type and folder. */
+export const DesignSchema = z
+  .object({
+    enabled: z.boolean(),
+    type: text.default("Design"),
+    folder: text.default("设计"),
+    readRoots: z.array(text).min(1).optional(),
+    maxFollowups: whole(0, 20).default(5),
+  })
+  .strict();
+
 /**
  * The planning node for this Project (CYC-322): when the Todo column has nothing to take, it refills it from Backlog.
  * Left out, or `enabled: false` (the default), means off. The labels are names looked up in the tracker.
@@ -159,12 +170,14 @@ export const ConfigFileSchema = z.object({
   /** Counts, timeouts and the idle interval (CYC-441). Read again before every step while the loop runs. */
   tuning: TuningSchema.optional(),
   research: ResearchSchema.optional(),
+  design: DesignSchema.optional(),
   planning: PlanningSchema.optional(),
   prReview: PrReviewSchema.optional(),
 });
 /** As parsed: a research section always has its `readRoots`, absolute and with `~` expanded. */
-export type ConfigFile = Omit<z.infer<typeof ConfigFileSchema>, "research"> & {
+export type ConfigFile = Omit<z.infer<typeof ConfigFileSchema>, "research" | "design"> & {
   research?: z.infer<typeof ResearchSchema> & { readRoots: string[] };
+  design?: z.infer<typeof DesignSchema> & { readRoots: string[] };
 };
 
 /** `~` and `~/x` are the home directory; anything else is taken as written. */
@@ -206,18 +219,24 @@ export const parseConfigFile = (raw: string, source = "config"): ConfigFile => {
       throw new Error(`${source}: ${name} must be an absolute path`);
   }
   const repoRoot = resolve(parsed.data.repoRoot);
-  const { research, ...rest } = parsed.data;
-  const readRoots = (research?.readRoots ?? [repoRoot]).map((root) => {
-    const path = expandHome(root);
-    if (!isAbsolute(path))
-      throw new Error(`${source}: research.readRoots must be absolute paths (got ${root})`);
-    return resolve(path);
-  });
+  const { research, design, ...rest } = parsed.data;
+  const rootsOf = (name: string, roots: string[] | undefined) =>
+    (roots ?? [repoRoot]).map((root) => {
+      const path = expandHome(root);
+      if (!isAbsolute(path))
+        throw new Error(`${source}: ${name}.readRoots must be absolute paths (got ${root})`);
+      return resolve(path);
+    });
   return {
     ...rest,
     repoRoot,
     stateDir: resolve(parsed.data.stateDir),
-    ...(research !== undefined ? { research: { ...research, readRoots } } : {}),
+    ...(research !== undefined
+      ? { research: { ...research, readRoots: rootsOf("research", research.readRoots) } }
+      : {}),
+    ...(design !== undefined
+      ? { design: { ...design, readRoots: rootsOf("design", design.readRoots) } }
+      : {}),
   };
 };
 

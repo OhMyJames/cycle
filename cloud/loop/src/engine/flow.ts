@@ -37,7 +37,7 @@ export type StepResult =
   | { status: "idle" }
   | { status: "rejected"; key: string; reasons: string[] }
   | { status: "would-take"; key: string; criteria: number }
-  | { status: "would-take"; key: string; kind: "research"; questions: number }
+  | { status: "would-take"; key: string; kind: "research" | "design"; questions: number }
   | { status: "delivered"; key: string; prUrl: string; autoMerge: boolean }
   /** A research work item is published and Done (CYC-447): its report, and the follow-ups made in Backlog. */
   | { status: "researched"; key: string; docId: number; followups: string[] }
@@ -173,7 +173,7 @@ export type Opening = {
   /** The criteria the run is checked against; empty for a kind that has none. */
   specs: Parameters<typeof CriteriaBook.fromSpecs>[0];
   /** The kind's own state at the start: for a 大档 dev run, the documents and versions it starts on (CYC-328). */
-  state: { kind: "dev"; dev: DevState } | { kind: "research"; research: ResearchState };
+  state: { kind: "dev"; dev: DevState } | { kind: "research" | "design"; research: ResearchState };
   /** The data of the `claimed` event. */
   claimed: EventData;
   /** CYC-508: optional Level-2 Task Graph parsed at preflight, persisted in the same transaction as the run. */

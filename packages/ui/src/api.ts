@@ -1483,7 +1483,7 @@ export type LoopGraphNode = {
   position: number;
   origin: "planned" | "fix";
   /** Absent (older servers) means `dev`. */
-  role?: "dev" | "qa" | undefined;
+  role?: "dev" | "qa" | "research" | "design" | undefined;
   title: string;
   goal: string;
   dependsOn: string[];

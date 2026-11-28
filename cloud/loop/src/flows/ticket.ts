@@ -116,7 +116,8 @@ const stateTypeOf = (columnId: number, config: FlowHost["d"]["config"]): string 
   if (columnId === columns.done) return "completed";
   if (columnId === columns.canceled) return "canceled";
   if (columnId === columns.blocked) return "blocked";
-  if (columnId === config.research?.backlogColumn) return "backlog";
+  if (columnId === config.research?.backlogColumn || columnId === config.design?.backlogColumn)
+    return "backlog";
   return "other";
 };
 
