@@ -127,6 +127,7 @@ const ENVIRONMENTS: EnvironmentsState = {
     {
       id: "env-node",
       name: "Node and Postgres",
+      secrets: [],
       variables: [
         { name: "DATABASE_URL", value: "postgres://dev:dev@localhost:5432/app" },
         { name: "NODE_ENV", value: "development" },
@@ -143,11 +144,12 @@ const ENVIRONMENTS: EnvironmentsState = {
       ],
       setup: { default: "npm ci", windows: "npm.cmd ci" },
     },
-    { id: "env-py", name: "Python 3.12", variables: [], actions: [] },
+    { id: "env-py", name: "Python 3.12", variables: [], secrets: [], actions: [] },
     {
       id: "env-long",
       name: "Billing service with the staging database, the queue and a name that goes on and on",
       variables: [{ name: "QUEUE_URL", value: "amqp://localhost" }],
+      secrets: [],
       actions: [{ id: "worker", name: "Worker", command: { default: "make worker" } }],
     },
   ],
@@ -447,16 +449,16 @@ const clickByLabel = async (root: HTMLElement, label: string) => {
 
 /** The settings page, opened as its button does, on one of its sections. */
 const openSettings = async (root: HTMLElement, section?: string) => {
-  // Settings is in the account's menu, at the sidebar's foot.
+  // Settings is in the account's menu, at the sidebar's foot (by what it is: its name is in the page's language).
   const accountButton = () =>
-    Array.from(root.querySelectorAll<HTMLElement>("button")).find((b) =>
-      /account and settings$/.test(nameOf(b)),
-    );
+    root.querySelector<HTMLElement>('[data-slot="menu-trigger"][data-kind="account-menu"]') ??
+    undefined;
   await until(() => accountButton() !== undefined, "the account's menu");
   accountButton()?.click();
   const settingsItem = () =>
     Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
-      (item) => nameOf(item) === "Settings",
+      // Its name in either language the gallery draws.
+      (item) => ["Settings", "设置"].includes(nameOf(item)),
     );
   await until(() => settingsItem() !== undefined, "the settings item");
   settingsItem()?.click();
@@ -1151,7 +1153,9 @@ export const scenarios: Record<string, Scenario> = {
       await until(() => Math.abs(el.scrollTop - 1500) < 2, "the scroll to 1500");
       await frames(3);
       const where = el.scrollTop;
-      const title = () => root.querySelector('[data-slot="main-title"] h1')?.textContent;
+      // The title's own button: the heading around it also holds the hint read with it ("Rename").
+      const title = () =>
+        root.querySelector('[data-slot="main-title"] [data-kind="session-title"]')?.textContent;
       const open = (text: string) =>
         Array.from(root.querySelectorAll<HTMLElement>('[role="option"]'))
           .find((o) => o.textContent?.includes(text))
@@ -2009,7 +2013,7 @@ export const scenarios: Record<string, Scenario> = {
   },
   "turn-error-changed": {
     title:
-      "A turn that failed after running a command: Send again asks first, as the message may do it again",
+      "A turn that failed after running a command: Edit message asks first, as the message may do it again",
     sessions: [session("s1")],
     history: [
       you("u1", "Bump the version and publish the package."),
@@ -2023,7 +2027,7 @@ export const scenarios: Record<string, Scenario> = {
     ],
     after: async (root) => {
       const button = [...root.querySelectorAll<HTMLButtonElement>("button")].find(
-        (b) => b.textContent === "Send again",
+        (b) => b.textContent === "Edit message",
       );
       button?.click();
       await until(() => document.querySelector('[role="alertdialog"]') !== null, "the dialog");
@@ -2291,12 +2295,12 @@ export const scenarios: Record<string, Scenario> = {
     title: "800 sessions, long titles, every state",
     sessions: Array.from({ length: 800 }, (_, i) =>
       session(`s${i}`, {
-        title:
-          i % 5 === 0
-            ? `${"A title that goes on and on and on, "}${i}`
-            : i % 7 === 0
-              ? undefined
-              : `Session ${i}`,
+        // Every seventh has no title yet: the list names it by its folder.
+        ...(i % 7 === 0 && i % 5 !== 0
+          ? {}
+          : {
+              title: i % 5 === 0 ? `${"A title that goes on and on and on, "}${i}` : `Session ${i}`,
+            }),
         cwd: i % 3 === 0 ? LONG_PATH : "/home/dev/cycle-v1",
         state: (["idle", "running", "requires_action", "stopped"] as const)[i % 4] ?? "idle",
         archived: i % 11 === 0,
@@ -3048,16 +3052,16 @@ export const scenarios: Record<string, Scenario> = {
     after: (root) => click(root, "New session"),
   },
   "settings-defaults": {
-    title: "Settings, Session defaults: an agent's settings on one of two locations",
+    title: "Settings, Harness, Claude: its settings on one of two locations",
     locations: [LOCAL, BUILD],
     sessions: [],
-    after: (root) => openSettings(root, "Session defaults"),
+    after: (root) => openSettings(root, "Claude"),
   },
   "settings-defaults-away": {
-    title: "Settings, Session defaults: no location is connected",
+    title: "Settings, Harness, Claude: no location is connected",
     status: [{ locationId: "local", state: "closed", error: "spawn cycle ENOENT" }],
     sessions: [],
-    after: (root) => openSettings(root, "Session defaults"),
+    after: (root) => openSettings(root, "Claude"),
   },
   "new-session-no-agent": {
     title: "New session with no available agent: explains why and offers to check again",
@@ -3346,6 +3350,7 @@ export const scenarios: Record<string, Scenario> = {
       boards: {
         CYC: {
           kind: "ok",
+          stale: false,
           columns: [
             {
               id: 1,
@@ -3358,35 +3363,27 @@ export const scenarios: Record<string, Scenario> = {
                   title: "支持工具输出、终端输出和大 diff 折叠与按需展开",
                   priority: "urgent",
                   column: "Backlog",
-                  actions: ["approve"],
-                  chat: "new",
-                  pending: { reason: "已补充长输出阈值与折叠交互验收标准。", criteria: 3 },
+                  pending: { reason: "已补充长输出阈值与折叠交互验收标准。" },
                 },
                 {
                   identifier: "CYC-464",
                   title: "支持长会话消息列表只渲染可视区域附近的消息",
                   priority: "urgent",
                   column: "Backlog",
-                  actions: ["approve"],
-                  chat: "new",
-                  pending: { reason: "明确了锚点保持与回到底部边界。", criteria: 4 },
+                  pending: { reason: "明确了锚点保持与回到底部边界。" },
                 },
                 {
                   identifier: "CYC-358",
                   title: "输入框里 @ 选中的内容可以整块插入、整块删除",
                   priority: "high",
                   column: "Backlog",
-                  actions: ["approve"],
-                  chat: "new",
-                  pending: { reason: "包含中文输入法与撤销栈覆盖。", criteria: 6 },
+                  pending: { reason: "包含中文输入法与撤销栈覆盖。" },
                 },
                 {
                   identifier: "CYC-370",
                   title: "模型选择器对自定义服务商模型的协议边界给出提示",
                   priority: "medium",
                   column: "Backlog",
-                  actions: ["approve"],
-                  chat: "new",
                 },
               ],
             },
@@ -3401,24 +3398,18 @@ export const scenarios: Record<string, Scenario> = {
                   title: "人把工单移出 Todo 或 In Progress 后，Loop 仍继续开发",
                   priority: "high",
                   column: "Todo",
-                  actions: ["to_backlog"],
-                  chat: "none",
                 },
                 {
                   identifier: "CYC-498",
                   title: "Loop 崩溃恢复后回到评审阶段时，不再向 GitHub 确认 CI",
                   priority: "low",
                   column: "Todo",
-                  actions: ["to_backlog"],
-                  chat: "none",
                 },
                 {
                   identifier: "CYC-497",
                   title: "Loop 对账在 tracker 断网时退避等待，卡住的写入可以重试",
                   priority: "medium",
                   column: "Todo",
-                  actions: ["to_backlog"],
-                  chat: "none",
                 },
               ],
             },
@@ -3433,36 +3424,18 @@ export const scenarios: Record<string, Scenario> = {
                   title: "Loop 对账会把人手动移走的工单写回 Blocked 或 In Progress",
                   priority: "high",
                   column: "In Progress",
-                  actions: [],
-                  chat: "watch",
-                  loopStage: {
-                    stage: "qa",
-                    since: new Date(Date.now() - 4 * 60_000).toISOString(),
-                  },
                 },
                 {
                   identifier: "CYC-483",
                   title: "Loop 页面只通过 Loop API 读写，桌面端不再保存 itsaplan key",
                   priority: "medium",
                   column: "In Progress",
-                  actions: [],
-                  chat: "watch",
-                  loopStage: {
-                    stage: "develop",
-                    since: new Date(Date.now() - 12 * 60_000).toISOString(),
-                  },
                 },
                 {
                   identifier: "CYC-494",
                   title: "Loop 的 Dev 会话需要人决定时立刻转 Blocked 并写明问题",
                   priority: "high",
                   column: "In Progress",
-                  actions: [],
-                  chat: "watch",
-                  loopStage: {
-                    stage: "ci",
-                    since: new Date(Date.now() - 45 * 60_000).toISOString(),
-                  },
                 },
               ],
             },
@@ -3477,8 +3450,6 @@ export const scenarios: Record<string, Scenario> = {
                   title: "桌面端支持 UI 热更新：只改界面时不发版、不更新应用也能生效",
                   priority: "high",
                   column: "In Review",
-                  actions: ["to_backlog", "to_todo"],
-                  chat: "none",
                 },
               ],
             },
@@ -3500,8 +3471,6 @@ export const scenarios: Record<string, Scenario> = {
                   title: "Loop 页面：在 Backlog 里批量批准或退回待批准的工单",
                   priority: "medium",
                   column: "Done",
-                  actions: [],
-                  chat: "none",
                 },
               ],
             },
@@ -3536,6 +3505,7 @@ export const scenarios: Record<string, Scenario> = {
       boards: {
         CYC: {
           kind: "ok",
+          stale: false,
           columns: [
             {
               id: 1,
@@ -3548,9 +3518,7 @@ export const scenarios: Record<string, Scenario> = {
                   title: "支持工具输出、终端输出和大 diff 折叠与按需展开",
                   priority: "urgent",
                   column: "Backlog",
-                  actions: ["approve"],
-                  chat: "new",
-                  pending: { reason: "已补充长输出阈值与折叠交互验收标准。", criteria: 3 },
+                  pending: { reason: "已补充长输出阈值与折叠交互验收标准。" },
                 },
               ],
             },
@@ -3565,8 +3533,6 @@ export const scenarios: Record<string, Scenario> = {
                   title: "人把工单移出 Todo 或 In Progress 后，Loop 仍继续开发",
                   priority: "high",
                   column: "Todo",
-                  actions: ["to_backlog"],
-                  chat: "none",
                 },
               ],
             },
@@ -3581,12 +3547,6 @@ export const scenarios: Record<string, Scenario> = {
                   title: "Loop 对账会把人手动移走的工单写回 Blocked 或 In Progress",
                   priority: "high",
                   column: "In Progress",
-                  actions: [],
-                  chat: "watch",
-                  loopStage: {
-                    stage: "qa",
-                    since: new Date(Date.now() - 4 * 60_000).toISOString(),
-                  },
                 },
               ],
             },
@@ -3604,7 +3564,7 @@ export const scenarios: Record<string, Scenario> = {
             column: "Backlog",
             actions: ["approve"],
             chat: "new",
-            pending: { reason: "已补充长输出阈值与折叠交互验收标准。", criteria: 3 },
+            pending: { reason: "已补充长输出阈值与折叠交互验收标准。" },
             body: "## 背景\n\n当工具返回上千行输出或超大 diff 时，直接全部展开会拖慢长会话滚动，并淹没上下文。\n\n## 方案\n\n- 超过 `40` 行的输出默认展示末尾并附按需展开按钮\n- 展开状态在流式更新期间保持，不闪烁回弹\n\n```ts\nconst PREVIEW_LINES = 40;\n```",
             acceptance: [
               "长工具输出默认折叠并保留末尾 40 行",
@@ -3656,6 +3616,7 @@ export const scenarios: Record<string, Scenario> = {
       boards: {
         CYC: {
           kind: "ok",
+          stale: false,
           columns: [
             {
               id: 1,
@@ -3668,18 +3629,14 @@ export const scenarios: Record<string, Scenario> = {
                   title: "支持工具输出折叠",
                   priority: "urgent",
                   column: "Backlog",
-                  actions: ["approve"],
-                  chat: "new",
-                  pending: { reason: "待审", criteria: 3 },
+                  pending: { reason: "待审" },
                 },
                 {
                   identifier: "CYC-464",
                   title: "长会话虚拟滚动",
                   priority: "high",
                   column: "Backlog",
-                  actions: ["approve"],
-                  chat: "new",
-                  pending: { reason: "待审", criteria: 4 },
+                  pending: { reason: "待审" },
                 },
               ],
             },
@@ -3694,8 +3651,6 @@ export const scenarios: Record<string, Scenario> = {
                   title: "对账修复",
                   priority: "high",
                   column: "Todo",
-                  actions: ["to_backlog"],
-                  chat: "none",
                 },
               ],
             },
@@ -3710,16 +3665,12 @@ export const scenarios: Record<string, Scenario> = {
                   title: "对账状态写回",
                   priority: "high",
                   column: "In Progress",
-                  actions: [],
-                  chat: "watch",
                 },
                 {
                   identifier: "CYC-483",
                   title: "Loop API",
                   priority: "medium",
                   column: "In Progress",
-                  actions: [],
-                  chat: "watch",
                 },
               ],
             },
@@ -3734,8 +3685,6 @@ export const scenarios: Record<string, Scenario> = {
                   title: "批量批准",
                   priority: "medium",
                   column: "Done",
-                  actions: [],
-                  chat: "none",
                 },
               ],
             },
@@ -3743,6 +3692,7 @@ export const scenarios: Record<string, Scenario> = {
         },
         DOC: {
           kind: "ok",
+          stale: false,
           columns: [
             {
               id: 1,
@@ -3755,8 +3705,6 @@ export const scenarios: Record<string, Scenario> = {
                   title: "更新 Loop 架构文档",
                   priority: "low",
                   column: "Backlog",
-                  actions: ["approve"],
-                  chat: "new",
                 },
               ],
             },
@@ -3769,16 +3717,18 @@ export const scenarios: Record<string, Scenario> = {
           kind: "ok",
           notices: [
             {
+              id: "n-494",
               kind: "blocked",
               identifier: "CYC-494",
-              title: "Loop 的 Dev 会话需要人决定时立刻转 Blocked",
-              reason: "自动化在「开发」卡住了：需要确认是否保留旧协议的兼容字段。",
+              text: "自动化在「开发」卡住了：需要确认是否保留旧协议的兼容字段。",
+              session: null,
             },
             {
+              id: "n-469",
               kind: "review",
               identifier: "CYC-469",
-              title: "桌面端支持 UI 热更新",
-              conclusion: "升级给人：PR 修改了主进程加载路径，需负责人确认安全边界。",
+              text: "升级给人：PR 修改了主进程加载路径，需负责人确认安全边界。",
+              session: null,
             },
           ],
         },
@@ -3797,7 +3747,7 @@ export const scenarios: Record<string, Scenario> = {
 
 /** The snapshot a session of a scenario opens on: its own history, if it has one. */
 export const sessionSnapshotOf = (s: Scenario, sessionId: string): SessionSnapshot =>
-  snapshotOf({ ...s, history: s.histories?.[sessionId] ?? s.history });
+  snapshotOf({ ...s, history: s.histories?.[sessionId] ?? s.history ?? [] });
 
 export const snapshotOf = (s: Scenario): SessionSnapshot => ({
   conversation: (s.history ?? []).reduce((c, u) => applyUpdate(c, u), emptyConversation()),

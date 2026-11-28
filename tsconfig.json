@@ -4,6 +4,7 @@
     "packages/*/src",
     "packages/*/test",
     "packages/*/vitest.config.ts",
+    "packages/ui/gallery",
     "harness/*/src",
     "harness/*/test",
     "apps/*/src",

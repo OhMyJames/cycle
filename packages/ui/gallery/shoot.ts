@@ -46,12 +46,12 @@ const jobs = names.flatMap((name) =>
 
 /** In the page: what the eye can miss. Overflow, a clipped first session, the message box's edge against its ground. */
 function measureLayout() {
-  const root = document.scrollingElement;
+  const root = document.scrollingElement ?? document.documentElement;
   const sidebar = document.querySelector('[data-slot="sidebar"]');
   const list = sidebar?.querySelector('[role="listbox"]');
   const row = list?.querySelector('[role="option"]');
   let firstSessionVisible = false;
-  if (row) {
+  if (row && sidebar && list) {
     const visible = row.getBoundingClientRect();
     const outer = sidebar.getBoundingClientRect();
     const inner = list.getBoundingClientRect();
@@ -70,13 +70,14 @@ function measureLayout() {
     const canvas = document.createElement("canvas");
     canvas.width = canvas.height = 1;
     const context = canvas.getContext("2d");
+    if (context === null) throw new Error("no 2d canvas");
     const surface = getComputedStyle(document.body).backgroundColor;
-    const luminance = (color) => {
+    const luminance = (color: string) => {
       context.fillStyle = surface;
       context.fillRect(0, 0, 1, 1);
       context.fillStyle = color;
       context.fillRect(0, 0, 1, 1);
-      const [r, g, b] = Array.from(context.getImageData(0, 0, 1, 1).data).map((n) => {
+      const [r = 0, g = 0, b = 0] = Array.from(context.getImageData(0, 0, 1, 1).data).map((n) => {
         const v = n / 255;
         return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
       });
@@ -99,6 +100,10 @@ function measureLayout() {
 
 const DEVICE_SCALE_FACTOR = 2;
 
+/** The moment and the zone every shot is taken at: the page's clock does not move between runs. */
+const SHOT_TIME = new Date("2026-06-01T17:00:00Z");
+const SHOT_TIMEZONE = "America/Los_Angeles";
+
 /** A shot through the DevTools protocol: it can be webp, clipped to a region, and scaled down to a width. */
 async function shoot(
   page: Page,
@@ -112,6 +117,21 @@ async function shoot(
     for (const a of document.getAnimations()) {
       if (a.effect?.getComputedTiming().endTime === Number.POSITIVE_INFINITY) a.cancel();
       else a.finish();
+    }
+    // A long conversation goes on placing itself at its end for a few frames after it is drawn: the shot waits until
+    // nothing scrolls for several frames in a row, or it lands a pixel apart from one run to the next.
+    const frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+    const where = () =>
+      [...document.querySelectorAll("*")]
+        .filter((el) => el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth)
+        .map((el) => `${el.scrollTop},${el.scrollLeft}`)
+        .join(";");
+    let last = where();
+    for (let still = 0, frames = 0; still < 5 && frames < 120; frames++) {
+      await frame();
+      const now = where();
+      still = now === last ? still + 1 : 0;
+      last = now;
     }
   });
   let clip = { x: 0, y: 0, width: job.width, height: job.height };
@@ -150,7 +170,7 @@ async function shoot(
     });
     await Bun.write(job.out, Buffer.from(data, "base64"));
   } finally {
-    await hideCaret.evaluate((el) => el.remove());
+    await hideCaret.evaluate((el) => (el as Element).remove());
     await cdp.detach();
   }
 }
@@ -168,8 +188,16 @@ try {
       // At twice the pixels, as a Mac's screen shows it: a hairline and an edge's colour are what a review looks at.
       deviceScaleFactor: DEVICE_SCALE_FACTOR,
       colorScheme: job.theme,
+      // As someone who asked for less motion sees it: what moves by script (a spring, the loader's dots) stands in its
+      // resting pose. Otherwise a shot catches it at a frame that differs from one run to the next, and two runs of the
+      // same code differ (the browser's own animations are finished below; these it cannot see).
+      reducedMotion: "reduce",
+      // And at one moment, in one place: a time the page works out from now ("resets Mon 6:42 PM") is the same in every
+      // run and on every machine.
+      timezoneId: SHOT_TIMEZONE,
     });
     const page = await context.newPage();
+    await page.clock.setFixedTime(SHOT_TIME);
     const errors: string[] = [];
     page.on("console", (message) => {
       if (message.type() === "error") errors.push(message.text());
