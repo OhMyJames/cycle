@@ -7,12 +7,6 @@ import {
   checkPrompt,
   DaemonUpdateStateSchema,
   describePromptProblem,
-  LoopCardSchema,
-  LoopGraphActionSchema,
-  LoopGraphActParamsSchema,
-  LoopGraphActResultSchema,
-  LoopRunDetailSchema,
-  LoopTicketDetailSchema,
   META,
   NOTIFICATIONS,
   normalizePrompt,
@@ -23,6 +17,14 @@ import {
   ToolResultSchema,
   tsOf,
 } from "../src/index.ts";
+import {
+  LoopCardSchema,
+  LoopGraphActionSchema,
+  LoopGraphActParamsSchema,
+  LoopGraphActResultSchema,
+  LoopRunDetailSchema,
+  LoopTicketDetailSchema,
+} from "../src/loop.ts";
 
 test("Cycle's error codes do not collide with ACP's or each other", () => {
   const codes = Object.values(CycleErrorCode);

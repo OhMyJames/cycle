@@ -47,7 +47,7 @@ import {
   type LoopTimelineListResult,
   type LoopTimelineStep,
   type LoopTimelineStepStatus,
-} from "@cycle/protocol";
+} from "@cycle/protocol/loop";
 import { parseVerify } from "./criteria.ts";
 import { SqliteStore } from "./db/store.ts";
 import type { TaskGraph } from "./graph.ts";

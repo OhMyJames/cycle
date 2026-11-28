@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./loop": "./src/loop.ts",
     ".": "./src/index.ts"
   },
   "dependencies": {
