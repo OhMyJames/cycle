@@ -867,6 +867,42 @@ test("a tool call left going in a turn that has ended is not shown running; in a
   expect(log.querySelector('[data-slot="step"]')).toBeNull();
 });
 
+test("a call the person opened stays open when a second call makes it a card", async () => {
+  const { user, log, emit } = await open(
+    you("u1"),
+    state({ state: "running" }),
+    ...tool("a", "Bash", "completed", { command: "make lint" }),
+  );
+  await user.click(await screen.findByRole("button", { name: /make lint/ }));
+  expect(log.querySelector('[data-item-id="a"] > button')?.getAttribute("aria-expanded")).toBe(
+    "true",
+  );
+  await emit(...tool("b", "Bash", "completed", { command: "make test" }));
+  await waitFor(() => expect(log.querySelector('[data-kind="work"]')).not.toBeNull());
+  expect(log.querySelector('[data-kind="work"] > button')?.getAttribute("aria-expanded")).toBe(
+    "true",
+  );
+  expect(log.querySelector('[data-item-id="a"] > button')?.getAttribute("aria-expanded")).toBe(
+    "true",
+  );
+  expect(log.querySelector('[data-item-id="b"] > button')?.getAttribute("aria-expanded")).toBe(
+    "false",
+  );
+});
+
+test("a call never opened is closed, and so is its card, when a second call joins it", async () => {
+  const { log, emit } = await open(
+    you("u1"),
+    state({ state: "running" }),
+    ...tool("a", "Bash", "failed", { command: "make lint" }),
+  );
+  await emit(...tool("b", "Bash", "completed", { command: "make test" }));
+  await waitFor(() => expect(log.querySelector('[data-kind="work"]')).not.toBeNull());
+  expect(log.querySelector('[data-kind="work"] > button')?.getAttribute("aria-expanded")).toBe(
+    "false",
+  );
+});
+
 test("a card with a call the turn left is not finished, not done", async () => {
   await open(
     you("u1"),
