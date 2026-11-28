@@ -366,6 +366,27 @@ test("a person closing the PR while the run waits stops it at the next wake inst
   expect(s.store.waits("CYC-1")).toHaveLength(0);
 });
 
+test("a PR merged while the run waits counts as delivered at the next wake, with no new wait", async () => {
+  const s = setup([ready()], undefined, [pending, pending]);
+  await s.engine.step();
+  s.world.prState = "MERGED";
+  wakeRun(s);
+  const result = await s.engine.step();
+  expect(result.status).not.toBe("waiting");
+  expect(s.store.waits("CYC-1")).toHaveLength(0);
+});
+
+test("a work item moved out of In Progress while the run waits stops it at the next wake", async () => {
+  const s = setup([ready()], undefined, [pending, pending]);
+  await s.engine.step();
+  const item = s.tracker.issues.find((i) => i.key === "CYC-1");
+  if (item) item.columnId = 25; // Canceled
+  wakeRun(s);
+  const result = await s.engine.step();
+  expect(result.status).not.toBe("waiting");
+  expect(s.store.waits("CYC-1")).toHaveLength(0);
+});
+
 const red = (job: string): CiResponse => ({
   headRefOid: "abc",
   statusCheckRollup: [

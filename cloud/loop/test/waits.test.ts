@@ -48,6 +48,21 @@ test("a signal wakes the work waiting on its subject, and a repeat counts once",
   s.close();
 });
 
+test("one signal wakes a dev run and a human PR waiting on the same subject", async () => {
+  const s = await open();
+  s.wait("CYC-1", "ci:o/r@a", later(600));
+  s.wait("pr:o/r#1", "ci:o/r@a", later(600));
+  expect(s.dueWaits()).toEqual([]);
+  expect(s.signal("ci:o/r@a:settled:1", "ci:o/r@a", "poll")).toBe(true);
+  expect(
+    s
+      .dueWaits()
+      .map((w) => w.owner)
+      .sort(),
+  ).toEqual(["CYC-1", "pr:o/r#1"]);
+  s.close();
+});
+
 test("without a signal a wait is due at its recheck time", async () => {
   const s = await open();
   s.wait("pr:o/r#1", "ci:o/r@a", later(60));
