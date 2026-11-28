@@ -98,7 +98,7 @@ function Overview({
         notices={notices}
         onRetryIntents={retryIntents}
         onOpen={(projectKey, notice) => {
-          store.track("loop_notice_opened", { kind: notice.kind });
+          store.track("loop_notice_opened", { kind: notice.kind, from: "console" });
           // The session it names, when it is here; else the ticket's page, where it is joined or its story is read.
           if (notice.session === null || !store.joinLoopSession(notice.session.id)) {
             if (notice.identifier !== null) onOpenTicket(projectKey, notice.identifier);

@@ -757,7 +757,7 @@ export function Board({
         onRetryIntents={retryIntents}
         onOpenOverview={onOpenOverview}
         onOpen={(notice) => {
-          store.track("loop_notice_opened", { kind: notice.kind });
+          store.track("loop_notice_opened", { kind: notice.kind, from: "board" });
           if (notice.session === null || !store.joinLoopSession(notice.session.id)) {
             if (notice.identifier !== null) openTicket(notice.identifier);
           }
