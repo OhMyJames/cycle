@@ -100,6 +100,17 @@ test("a daemon that does not run is replaced even when it says nothing", async (
   expect(await versionIn(d.managedDir)).toBe("0.3.1100");
 });
 
+test("the folder of a running daemon that would not say its version is never replaced", async () => {
+  const d = await deps({
+    installed: "0.3.1000",
+    versionOf: async () => undefined,
+    running: async () => true,
+  });
+  expect(await seedDaemon(d)).toBe("staged");
+  expect(await versionIn(d.managedDir)).toBe("0.3.1000");
+  expect(await versionIn(stagedDir(d.managedDir))).toBe("0.3.1100");
+});
+
 test("the result is counted as one fixed word, and a failure as `failed`, never its reason", async () => {
   const tracked: unknown[] = [];
   const track = (name: string, props: unknown) => tracked.push([name, props]);

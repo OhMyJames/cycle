@@ -40,7 +40,7 @@ export const startDetached = (
   paths: Paths,
   /** The program to start, when it is not this process's own (an update has just replaced that file). */
   command: string[] = selfCommand(),
-): { exited: () => boolean } => {
+): { exited: () => boolean; pid: number } => {
   mkdirSync(paths.dataDir, { recursive: true, mode: 0o700 });
   // One run's worth is enough to find a reason; the file does not grow for ever.
   try {
@@ -53,7 +53,7 @@ export const startDetached = (
       { detached: true, stdin: "ignore", stdout: fd, stderr: fd, env: process.env },
     );
     child.unref();
-    return { exited: () => child.exitCode !== null };
+    return { exited: () => child.exitCode !== null, pid: child.pid };
   } finally {
     closeSync(fd);
   }

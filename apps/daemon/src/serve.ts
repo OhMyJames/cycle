@@ -11,6 +11,7 @@ import { errorText, type FileLogger, fileLogger } from "./logger.ts";
 import { RELEASE_KEYS, verifySignature } from "./release-keys.ts";
 import { compiled, selfCommand } from "./self.ts";
 import {
+  forgetStaged,
   QUIET_MS,
   recordBad,
   SelfUpdate,
@@ -176,10 +177,13 @@ export const serve = async (paths: Paths, options: ServeOptions = {}) => {
   }, options.sweepMs ?? 30_000);
 
   /**
-   * Hands over to the staged version: stops, switches the folders, starts the new daemon. If it does not listen in time,
-   * it is thrown away, remembered as bad, and the version before is started again. Either way this process then ends.
+   * Hands over to the staged version: stops, switches the folders, starts the new daemon. If the folders cannot be
+   * switched, or the new daemon does not listen in time (it is then killed), the version is thrown away and remembered
+   * as bad, and the version before is started again. Either way this process then ends. A stop already under way (a
+   * signal, the idle exit) wins: nothing is switched or started.
    */
   const switchTo = async (staged: Staged): Promise<void> => {
+    if (closing !== undefined) return;
     const stateFile = join(paths.dataDir, "daemon-update.json");
     let swapped = false;
     await close(async () => {
@@ -187,16 +191,23 @@ export const serve = async (paths: Paths, options: ServeOptions = {}) => {
       swapped = true;
     });
     const program = join(installDir, "cycle");
-    if (swapped && (await startAndWait(paths, program))) {
-      (options.switched ?? (() => process.exit(0)))();
-      return;
-    }
+    const done = options.switched ?? (() => process.exit(0));
     if (swapped) {
-      await swapBack(installDir).catch(() => {});
-      await recordBad(stateFile, staged.version).catch(() => {});
+      const started = await startAndWait(paths, program);
+      if (started.listening) {
+        done();
+        return;
+      }
+      started.kill();
+      await swapBack(installDir).catch((error: unknown) =>
+        log.warn("self_update_swap_back_failed", { error: errorText(error) }),
+      );
+    } else {
+      await forgetStaged(installDir).catch(() => {});
     }
-    await startAndWait(paths, program).catch(() => false);
-    (options.switched ?? (() => process.exit(0)))();
+    await recordBad(stateFile, staged.version).catch(() => {});
+    await startAndWait(paths, program).catch(() => undefined);
+    done();
   };
 
   if (notUpdating === undefined) {

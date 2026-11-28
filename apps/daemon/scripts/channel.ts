@@ -251,6 +251,11 @@ export const publish = async (o: {
   const have = new Set((await listed()).map((a) => a.name));
   const published: string[] = [];
   const manifests = new Map<string, DaemonManifest>();
+  /**
+   * The manifests just replaced: a daemon may have read one a moment ago and be downloading its files, so they stay
+   * until the next publish. Measuring from a file's upload would not do: an old file is as needed as a new one.
+   */
+  const replaced: DaemonManifest[] = [];
   for (const dir of o.dirs) {
     const name = (await readdir(dir)).find((n) => /^daemon-[a-z0-9]+-[a-z0-9]+\.json$/.test(n));
     if (name === undefined) throw new Error(`${dir} has no manifest.`);
@@ -270,6 +275,7 @@ export const publish = async (o: {
       manifests.set(name, current);
       continue;
     }
+    if (current !== undefined) replaced.push(current);
     for (const file of Object.values(made.files)) {
       const blob = blobName(file.sha256);
       if (have.has(blob)) continue;
@@ -299,7 +305,9 @@ export const publish = async (o: {
     if (other !== undefined) manifests.set(asset.name, other);
   }
   const needed = new Set(
-    [...manifests.values()].flatMap((m) => Object.values(m.files).map((f) => blobName(f.sha256))),
+    [...manifests.values(), ...replaced].flatMap((m) =>
+      Object.values(m.files).map((f) => blobName(f.sha256)),
+    ),
   );
   const deleted = blobsToDelete(assets, needed, o.now);
   for (const blob of deleted)

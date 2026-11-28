@@ -69,6 +69,8 @@ const harness = (over: Partial<UpdateDeps> = {}) => {
     swap: async () => {
       calls.swaps += 1;
     },
+    stillStaged: async () => true,
+    selfUpdating: async () => true,
     say: (line) => said.push(line),
     ...over,
   };
@@ -159,11 +161,39 @@ test("where a program is decides whether it can be replaced", () => {
   expect(installOf("/Users/u/.cycle/daemon/bin/cycle", false, "darwin").kind).toBe("source");
 });
 
-test("a daemon that will not stop keeps running the old version, and says it switches by itself", async () => {
+test("a daemon that will not stop keeps running the old version, and is told what happens next", async () => {
   const h = harness({ isRunning: async () => true, stop: async () => 4 });
   expect(await runUpdate(h.deps)).toBe(1);
   expect(h.calls.swaps).toBe(0);
   expect(h.said.join("\n")).toContain("switches by itself");
+  // One that does not update itself is not said to.
+  const off = harness({
+    isRunning: async () => true,
+    stop: async () => 4,
+    selfUpdating: async () => false,
+  });
+  expect(await runUpdate(off.deps)).toBe(1);
+  expect(off.said.join("\n")).not.toContain("switches by itself");
+  expect(off.said.join("\n")).toContain("cycle stop --wait");
+});
+
+test("a daemon that switched by itself while this waited is not switched again, and is started", async () => {
+  const h = harness({ isRunning: async () => true, stillStaged: async () => false });
+  expect(await runUpdate(h.deps)).toBe(0);
+  expect(h.calls.swaps).toBe(0);
+  expect(h.calls.starts).toBe(1);
+});
+
+test("a switch that fails starts the current version again", async () => {
+  const h = harness({
+    isRunning: async () => true,
+    swap: async () => {
+      throw new Error("ENOENT");
+    },
+  });
+  expect(await runUpdate(h.deps)).toBe(1);
+  expect(h.calls.starts).toBe(1);
+  expect(h.said.join("\n")).toContain("started again");
 });
 
 /** What `cycle update` does with a daemon: stop it as `cycle stop` does, then start one on the same socket. */

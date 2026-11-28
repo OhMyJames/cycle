@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { CycleClient, connectUnix } from "@cycle/client";
 import { CYCLE_PROTOCOL_VERSION } from "@cycle/protocol";
 import { parseCli } from "./args.ts";
 import { defaultDataDir, loadConfig, pathsFor } from "./config.ts";
@@ -9,13 +10,23 @@ import { tailLines } from "./logger.ts";
 import { logTail, proxy } from "./proxy.ts";
 import { RELEASE_KEYS, verifySignature } from "./release-keys.ts";
 import { compiled } from "./self.ts";
-import { readStaged, SelfUpdate } from "./self-update.ts";
+import { forgetStaged, readBad, readStaged, SelfUpdate, type Skipped } from "./self-update.ts";
 import { checkFolder, startAndWait } from "./self-update-host.ts";
 import { onSignalsAndCrashes, serve } from "./serve.ts";
 import { askWorking, stopDaemon } from "./stop.ts";
 import { AlreadyRunningError, isListening, NotASocketError } from "./transport/server.ts";
 import { installOf, runUpdate } from "./update.ts";
-import { VERSION } from "./version.ts";
+import { olderThan, VERSION } from "./version.ts";
+
+/** What `cycle update` says when the newest version on the channel was not taken. */
+const SKIPPED_SAYS: Record<Skipped, string> = {
+  manifest_invalid: "the channel's manifest is not one this daemon can read.",
+  signature_refused: "the channel's manifest is not signed by a key this daemon knows.",
+  wrong_platform: "the channel's manifest is for another platform.",
+  failed_before: "the newest version did not start here before, so it is not taken again.",
+  needs_manual_update:
+    "the newest version speaks another major version of the protocol: install it with install.sh (docs/daemon.md).",
+};
 
 const usage = (harnesses: readonly Harness[]): string => {
   const withCli = harnesses.filter((h) => h.cli !== undefined);
@@ -178,6 +189,7 @@ export const runCli = async (argv: string[], harnesses: readonly Harness[]): Pro
   } else if (command === "update") {
     const pidFile = join(paths.dataDir, "daemon.pid");
     const installDir = dirname(process.execPath);
+    const stateFile = join(paths.dataDir, "daemon-update.json");
     const code = await runUpdate({
       version: VERSION,
       requested: values.version,
@@ -194,7 +206,7 @@ export const runCli = async (argv: string[], harnesses: readonly Harness[]): Pro
           keys: RELEASE_KEYS,
           verify: verifySignature,
           fetch,
-          stateFile: join(paths.dataDir, "daemon-update.json"),
+          stateFile,
           check: checkFolder(process.execPath),
           idle: async () => false,
           apply: async () => {},
@@ -202,8 +214,17 @@ export const runCli = async (argv: string[], harnesses: readonly Harness[]): Pro
         });
         const state = await updater.check();
         if (state.updates === "on" && state.error !== undefined) return { error: state.error };
+        if (state.updates === "on" && state.skipped !== undefined)
+          return { error: SKIPPED_SAYS[state.skipped] };
         const staged = await readStaged(installDir);
-        return staged !== undefined ? { staged } : {};
+        if (staged === undefined) return {};
+        // What an app or an earlier run left there is taken only if it is newer and has not failed here before.
+        const bad = await readBad(stateFile);
+        if (!olderThan(VERSION, staged.version) || bad.includes(staged.version)) {
+          await forgetStaged(installDir);
+          return {};
+        }
+        return { staged };
       },
       isRunning: () => isListening(paths.socket),
       stop: async (force) => {
@@ -229,9 +250,22 @@ export const runCli = async (argv: string[], harnesses: readonly Harness[]): Pro
           say: (line) => console.log(line),
         });
       },
+      stillStaged: async () => (await readStaged(installDir)) !== undefined,
+      selfUpdating: async () => {
+        const client = new CycleClient({
+          connect: () => connectUnix(paths.socket),
+          name: "cycle-update",
+        });
+        try {
+          await client.start();
+          return (await client.readDaemonUpdate())?.updates === "on";
+        } finally {
+          await client.close();
+        }
+      },
       // From the folder just switched in, not this process's own path's old contents.
       start: async (installed) => {
-        if (await startAndWait(paths, installed)) return true;
+        if ((await startAndWait(paths, installed)).listening) return true;
         const said = logTail(paths);
         if (said !== "") console.log(said);
         return false;

@@ -161,19 +161,23 @@ test("a newer version is built from the installed files where they are the same,
 test("a manifest that is not signed by a built-in key, not a daemon's, or for another platform is not taken", async () => {
   const installDir = await installed(OLD);
   const cases = [
-    channel(manifestFor(NEW), NEW, { key: other }),
-    channel(manifestFor(NEW, { keyId: "nope" }), NEW),
-    channel(manifestFor(NEW, { kind: "ui" }), NEW),
-    channel(manifestFor(NEW, { arch: "arm64" }), NEW),
-    channel(
-      manifestFor(NEW, { files: { claude: { sha256: sha("x"), size: 1, mode: 0o755 } } }),
-      NEW,
-    ),
-  ];
-  for (const c of cases) {
+    [channel(manifestFor(NEW), NEW, { key: other }), "signature_refused"],
+    [channel(manifestFor(NEW, { keyId: "nope" }), NEW), "signature_refused"],
+    [channel(manifestFor(NEW, { kind: "ui" }), NEW), "manifest_invalid"],
+    [channel(manifestFor(NEW, { arch: "arm64" }), NEW), "wrong_platform"],
+    [
+      channel(
+        manifestFor(NEW, { files: { claude: { sha256: sha("x"), size: 1, mode: 0o755 } } }),
+        NEW,
+      ),
+      "manifest_invalid",
+    ],
+  ] as const;
+  for (const [c, why] of cases) {
     const { update } = updater(installDir, c.baseUrl);
     const state = await update.check();
-    expect(state).toEqual({ updates: "on" });
+    // Said, so that `cycle update` does not take it for "nothing newer".
+    expect(state).toEqual({ updates: "on", skipped: why });
     expect(c.asked.some((n) => n.startsWith("daemon-blob-"))).toBe(false);
   }
   expect(existsSync(stagedDir(installDir))).toBe(false);
@@ -187,12 +191,12 @@ test("the same or an older version, one that failed before, or another protocol 
   );
   const major = updater(installDir, channel(manifestFor(NEW, { protocol: "1.0" }), NEW).baseUrl);
   await major.update.check();
-  expect(major.update.state).toEqual({ updates: "on" });
+  expect(major.update.state).toEqual({ updates: "on", skipped: "needs_manual_update" });
   expect(major.logged).toContain("self_update_needs_manual_update");
   const bad = updater(installDir, channel(manifestFor(NEW), NEW).baseUrl);
   await recordBad(join(dir, "data", "daemon-update.json"), "0.3.200");
   await bad.update.check();
-  expect(bad.update.state).toEqual({ updates: "on" });
+  expect(bad.update.state).toEqual({ updates: "on", skipped: "failed_before" });
   expect(existsSync(stagedDir(installDir))).toBe(false);
 });
 
@@ -217,7 +221,7 @@ test("a file that is not what the manifest says stages nothing, and the check fa
   expect(state.updates === "on" && state.error).toContain("not what its manifest says");
   expect(logged).toContain("self_update_check_failed");
   expect(existsSync(stagedDir(installDir))).toBe(false);
-  expect(existsSync(`${installDir}.staging`)).toBe(false);
+  expect(existsSync(`${installDir}.staging-${process.pid}`)).toBe(false);
 });
 
 test("a folder that fails its check is not staged", async () => {
@@ -354,4 +358,26 @@ test("the daemon counts as idle for a switch only with no turn, after a quiet wh
   } finally {
     await daemon.close();
   }
+});
+
+test("a look at the channel does not start while a switch is deciding", async () => {
+  const installDir = await installed(OLD);
+  const c = channel(manifestFor(NEW), NEW);
+  let decide: (idle: boolean) => void = () => {};
+  const { update } = updater(installDir, c.baseUrl, {
+    idle: () =>
+      new Promise<boolean>((resolve) => {
+        decide = resolve;
+      }),
+  });
+  const ready = join(dir, "ready");
+  await mkdir(ready);
+  await writeFile(join(ready, "cycle"), "daemon v150");
+  await putStaged(installDir, ready, "0.3.150");
+  const switching = update.tryApply();
+  await Bun.sleep(20);
+  await update.check();
+  expect(c.asked).toEqual([]);
+  decide(false);
+  expect(await switching).toBe(false);
 });

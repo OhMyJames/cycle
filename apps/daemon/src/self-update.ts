@@ -12,8 +12,18 @@
 // way. Every step is injected, so the tests drive it with a fake channel and fake folders.
 import { createHash } from "node:crypto";
 import { constants, createReadStream, existsSync } from "node:fs";
-import { chmod, copyFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import {
+  chmod,
+  copyFile,
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import {
   blobName,
   channelBaseUrl,
@@ -43,15 +53,25 @@ const FILE_DEADLINE_MS = 30 * 60_000;
 export const stagedDir = (installDir: string): string => `${installDir}.staged`;
 export const stagedNote = (installDir: string): string => `${installDir}.staged.json`;
 export const oldDir = (installDir: string): string => `${installDir}.old`;
-const stagingDir = (installDir: string): string => `${installDir}.staging`;
+/** Where one process builds a version: its own, so a daemon and `cycle update` at the same time do not meet. */
+const stagingDir = (installDir: string, pid = process.pid): string =>
+  `${installDir}.staging-${pid}`;
 const badDir = (installDir: string): string => `${installDir}.bad`;
 
 /** What `.staged` holds, as `<installDir>.staged.json` says. */
 export type Staged = { version: string };
 
+/** Why the newest version on the channel was not taken, when it was newer than this one. */
+export type Skipped =
+  | "manifest_invalid"
+  | "signature_refused"
+  | "wrong_platform"
+  | "failed_before"
+  | "needs_manual_update";
+
 export type SelfUpdateState =
   | { updates: "off"; why: string }
-  | { updates: "on"; pending?: Staged; error?: string };
+  | { updates: "on"; pending?: Staged; error?: string; skipped?: Skipped };
 
 type Log = Pick<Logger, "info" | "warn">;
 
@@ -109,7 +129,7 @@ const sha256OfFile = async (path: string): Promise<string> => {
 };
 
 /** The versions that were switched to and did not start: never taken again. */
-const readBad = async (stateFile: string): Promise<string[]> => {
+export const readBad = async (stateFile: string): Promise<string[]> => {
   try {
     const value = JSON.parse(await readFile(stateFile, "utf8")) as { bad?: unknown };
     return Array.isArray(value.bad) ? value.bad.filter((v) => typeof v === "string") : [];
@@ -179,6 +199,28 @@ export const swapBack = async (installDir: string): Promise<void> => {
   await rm(badDir(installDir), { recursive: true, force: true });
 };
 
+/** Removes the half-built versions of processes that are gone (a crash, a kill during a download). */
+const cleanStaleStaging = async (installDir: string): Promise<void> => {
+  const parent = dirname(installDir);
+  const prefix = `${basename(installDir)}.staging-`;
+  for (const name of await readdir(parent)) {
+    if (!name.startsWith(prefix)) continue;
+    const pid = Number(name.slice(prefix.length));
+    let alive = false;
+    try {
+      process.kill(pid, 0);
+      alive = pid !== process.pid;
+    } catch {}
+    if (!alive) await rm(join(parent, name), { recursive: true, force: true });
+  }
+};
+
+/** Throws away what is staged: a version that cannot be switched to. */
+export const forgetStaged = async (installDir: string): Promise<void> => {
+  await rm(stagedNote(installDir), { force: true });
+  await rm(stagedDir(installDir), { recursive: true, force: true });
+};
+
 /** After a version has run for a while, the one before it is not needed to go back to. */
 export const forgetOld = (installDir: string): Promise<void> =>
   rm(oldDir(installDir), { recursive: true, force: true });
@@ -190,6 +232,7 @@ export class SelfUpdate {
   readonly #d: SelfUpdateDeps;
   #pending: Staged | undefined;
   #error: string | undefined;
+  #skipped: Skipped | undefined;
   #etag: string | undefined;
   #busy = false;
   #applying = false;
@@ -204,12 +247,14 @@ export class SelfUpdate {
       updates: "on",
       ...(this.#pending !== undefined ? { pending: this.#pending } : {}),
       ...(this.#error !== undefined ? { error: this.#error } : {}),
+      ...(this.#skipped !== undefined ? { skipped: this.#skipped } : {}),
     };
   }
 
   /** Looks for a version staged before this daemon started (by the app, or by a daemon that stopped before switching). */
   async start(): Promise<void> {
     const d = this.#d;
+    await cleanStaleStaging(d.installDir).catch(() => {});
     await this.#adoptStaged();
     const later = d.setTimeout ?? setTimeout;
     const every = d.setInterval ?? setInterval;
@@ -245,17 +290,22 @@ export class SelfUpdate {
   /** Once, with a version ready and the daemon idle, switches to it. */
   async tryApply(): Promise<boolean> {
     if (this.#applying || this.#busy) return false;
-    await this.#adoptStaged().catch(() => {});
-    const pending = this.#pending;
-    if (pending === undefined) return false;
-    if (!(await this.#d.idle())) return false;
+    // Taken before anything is awaited: a look at the channel must not start while the folders may be switched.
     this.#applying = true;
-    this.#d.log.info("self_update_switching", { from: this.#d.version, to: pending.version });
+    let pending: Staged | undefined;
     try {
+      await this.#adoptStaged().catch(() => {});
+      pending = this.#pending;
+      if (pending === undefined) return false;
+      if (!(await this.#d.idle())) return false;
+      this.#d.log.info("self_update_switching", { from: this.#d.version, to: pending.version });
       await this.#d.apply(pending);
       return true;
     } catch (error) {
-      this.#d.log.warn("self_update_switch_failed", { to: pending.version, error: String(error) });
+      this.#d.log.warn("self_update_switch_failed", {
+        to: pending?.version ?? "",
+        error: String(error),
+      });
       this.#pending = undefined;
       return false;
     } finally {
@@ -281,6 +331,7 @@ export class SelfUpdate {
       );
       if (answer.status === 304 || answer.status === 404) {
         this.#error = undefined;
+        if (answer.status === 404) this.#skipped = undefined;
         return this.state;
       }
       if (!answer.ok) throw new Error(`The daemon manifest answered ${answer.status}.`);
@@ -294,27 +345,30 @@ export class SelfUpdate {
       if (!sig.ok) throw new Error(`The daemon manifest's signature answered ${sig.status}.`);
       const signature = await sig.text();
       // What follows does not change by asking again: the manifest is not fetched again until it changes.
-      const settled = (event: string, fields: Record<string, string> = {}): SelfUpdateState => {
+      const settled = (skipped?: Skipped, fields: Record<string, string> = {}): SelfUpdateState => {
         this.#etag = etag;
         this.#error = undefined;
-        if (event !== "") d.log.warn(event, fields);
+        this.#skipped = skipped;
+        if (skipped !== undefined) d.log.warn(`self_update_${skipped}`, fields);
         return this.state;
       };
       const manifest = parseDaemonManifest(bytes);
-      if (manifest === undefined) return settled("self_update_manifest_invalid");
+      if (manifest === undefined) return settled("manifest_invalid");
       if (!d.verify(bytes, signature, manifest.keyId, d.keys))
-        return settled("self_update_signature_refused", { keyId: manifest.keyId });
+        return settled("signature_refused", { keyId: manifest.keyId });
       if (manifest.platform !== d.platform || manifest.arch !== d.arch)
-        return settled("self_update_wrong_platform");
-      if (!olderThan(d.version, manifest.version)) return settled("");
+        return settled("wrong_platform");
+      if (!olderThan(d.version, manifest.version)) return settled();
       if (this.#pending !== undefined && !olderThan(this.#pending.version, manifest.version))
-        return settled("");
-      if ((await readBad(d.stateFile)).includes(manifest.version)) return settled("");
+        return settled();
+      if ((await readBad(d.stateFile)).includes(manifest.version))
+        return settled("failed_before", { to: manifest.version });
       if (protocolMajor(manifest.protocol) !== protocolMajor(d.protocol))
-        return settled("self_update_needs_manual_update", { to: manifest.version });
+        return settled("needs_manual_update", { to: manifest.version });
       await this.#stage(manifest, base);
       this.#etag = etag;
       this.#error = undefined;
+      this.#skipped = undefined;
       this.#pending = { version: manifest.version };
       d.log.info("self_update_staged", { from: d.version, to: manifest.version });
     } catch (error) {

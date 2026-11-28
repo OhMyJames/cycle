@@ -210,3 +210,41 @@ test("a file no manifest needs is kept for a day, for a daemon still downloading
     stale.name,
   ]);
 });
+
+test("the files of the manifest just replaced stay until the next publish, however old they are", async () => {
+  const folder = await built("a", FOLDER);
+  const made = await assembled(folder, await plan(folder, "sources", "0.3"), {
+    signed: false,
+    platform: "linux",
+    arch: "x64",
+  });
+  const out = join(dir, "out", "linux-x64");
+  await mkdir(join(out, "blobs"), { recursive: true });
+  for (const path of made.upload)
+    await writeFile(join(out, "blobs", blobName(made.manifest.files[path]?.sha256 ?? "")), "gz");
+  await writeFile(join(out, "daemon-linux-x64.json"), JSON.stringify(made.manifest));
+  const before = blobName("d".repeat(64));
+  const replacedManifest = {
+    ...made.manifest,
+    version: "0.3.9",
+    files: { cycle: { sha256: "d".repeat(64), size: 1, mode: 0o755 } },
+  };
+  const gh = async (args: string[]) => {
+    if (args[1] === "view" && args.includes("--json"))
+      return JSON.stringify({ assets: [{ name: before, updatedAt: new Date(0).toISOString() }] });
+    if (args[1] === "download") return JSON.stringify(replacedManifest);
+    return "";
+  };
+  const { privateKey } = generateKeyPairSync("ed25519");
+  const result = await publish({
+    gh,
+    repo: "o/r",
+    sha: "abc",
+    dirs: [out],
+    key: privateKey,
+    now: Date.now(),
+    log: () => {},
+  });
+  expect(result.published).toEqual(["linux-x64 0.3.10"]);
+  expect(result.deleted).toEqual([]);
+});

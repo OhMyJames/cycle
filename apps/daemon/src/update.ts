@@ -68,6 +68,10 @@ export type UpdateDeps = {
   stop: (force: boolean) => Promise<number>;
   /** Starts the installed program as a daemon and resolves once it is listening; false when it did not. */
   start: (installed: string) => Promise<boolean>;
+  /** Whether a version is still in `<installDir>.staged`: a running daemon may have switched to it by itself meanwhile. */
+  stillStaged: () => Promise<boolean>;
+  /** Whether the running daemon switches to a staged version by itself (its `_cycle/daemon/update/read` says "on"). */
+  selfUpdating: () => Promise<boolean>;
   say: (line: string) => void;
   /** For the tests: the switch of folders. */
   swap?: (installDir: string) => Promise<void>;
@@ -113,7 +117,14 @@ export const runUpdate = async (deps: UpdateDeps): Promise<number> => {
   }
   const swap = deps.swap ?? swapIn;
   if (!(await deps.isRunning())) {
-    await swap(deps.installDir);
+    try {
+      await swap(deps.installDir);
+    } catch (error) {
+      say(
+        `The new version could not be put in place: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return 1;
+    }
     say(`Installed ${staged.version}. No daemon is running; the next connection starts it.`);
     return 0;
   }
@@ -122,14 +133,28 @@ export const runUpdate = async (deps: UpdateDeps): Promise<number> => {
       ? "Switching now: sessions that are working are interrupted."
       : "Waiting for sessions to finish, then switching to the new version...",
   );
+  const updatesItself = await deps.selfUpdating().catch(() => false);
   const stopped = await deps.stop(deps.now);
   if (stopped !== 0) {
     say(
-      `${staged.version} is ready, but the running daemon was not stopped. It switches by itself once nothing is working.`,
+      updatesItself
+        ? `${staged.version} is ready, but the running daemon was not stopped. It switches by itself once nothing is working.`
+        : `${staged.version} is ready, but the running daemon was not stopped. Run \`cycle stop --wait\`, then \`cycle update\` again.`,
     );
     return 1;
   }
-  await swap(deps.installDir);
+  // While this waited, the daemon may have switched to the same version by itself: then there is nothing to switch.
+  if (await deps.stillStaged()) {
+    try {
+      await swap(deps.installDir);
+    } catch (error) {
+      say(
+        `The new version could not be put in place (${error instanceof Error ? error.message : String(error)}); the current one is started again.`,
+      );
+      await deps.start(join(deps.installDir, "cycle"));
+      return 1;
+    }
+  }
   say("Starting the new version...");
   if (!(await deps.start(join(deps.installDir, "cycle")))) {
     say(

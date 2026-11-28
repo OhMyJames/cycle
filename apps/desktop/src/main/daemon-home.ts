@@ -21,7 +21,7 @@ export const stagedNote = (dir: string): string => `${dir}.staged.json`;
 export type SeedResult =
   /** The managed folder was missing or older and nothing ran from it: the app's daemon was put in its place. */
   | "installed"
-  /** The managed daemon is older and running: the app's is staged, for it to switch to when idle. */
+  /** The managed daemon is older (or would not say) and running: the app's is staged, for it to switch to when idle. */
   | "staged"
   /** The managed daemon is as new as the app's, or newer (it updated itself): nothing was done. */
   | "current";
@@ -47,11 +47,14 @@ export const seedDaemon = async (d: SeedDeps): Promise<SeedResult> => {
     ? await d.versionOf(d.managedDir)
     : undefined;
   if (installed !== undefined && !olderThan(installed, d.bundledVersion)) return "current";
+  // Asked before anything is done: the folder of a daemon that is running is never replaced, even when it would not say
+  // its version (slow, or a scan of a new program), since it runs its agents from there.
+  const running = await d.running();
   const seeding = `${d.managedDir}.seeding`;
   await mkdir(dirname(d.managedDir), { recursive: true, mode: 0o700 });
   await rm(seeding, { recursive: true, force: true });
   await d.copy(d.bundledDir, seeding);
-  if (installed === undefined || !(await d.running())) {
+  if (!running) {
     const aside = `${d.managedDir}.replaced`;
     await rm(aside, { recursive: true, force: true });
     if (existsSync(d.managedDir)) await rename(d.managedDir, aside);

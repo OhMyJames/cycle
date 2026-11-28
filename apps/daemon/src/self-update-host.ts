@@ -69,16 +69,25 @@ export const checkFolder =
     }
   };
 
-/** Starts a daemon from `executable` and waits until it listens; false when it did not within `ms`. */
+/**
+ * Starts a daemon from `executable` and waits until it listens. `kill` ends that daemon, for one that did not listen in
+ * time and must not take the socket later.
+ */
 export const startAndWait = async (
   paths: Paths,
   executable: string,
   ms = 30_000,
-): Promise<boolean> => {
+): Promise<{ listening: boolean; kill: () => void }> => {
   const child = startDetached(paths, [executable]);
+  const kill = () => {
+    if (child.exited()) return;
+    try {
+      process.kill(child.pid, "SIGKILL");
+    } catch {}
+  };
   for (const at = Date.now(); Date.now() - at < ms; await Bun.sleep(100)) {
-    if (await isListening(paths.socket)) return true;
+    if (await isListening(paths.socket)) return { listening: true, kill };
     if (child.exited()) break;
   }
-  return isListening(paths.socket);
+  return { listening: await isListening(paths.socket), kill };
 };
