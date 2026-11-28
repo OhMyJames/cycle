@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "catalog:",
+    "@cycle/command-permissions": "workspace:*",
     "@cycle/line-rpc": "workspace:*",
     "@cycle/protocol": "workspace:*",
     "@openai/codex": "0.171.0"

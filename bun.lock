@@ -74,6 +74,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@agentclientprotocol/sdk": "catalog:",
+        "@cycle/command-permissions": "workspace:*",
         "@cycle/line-rpc": "workspace:*",
         "@cycle/protocol": "workspace:*",
       },
@@ -93,6 +94,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@agentclientprotocol/sdk": "catalog:",
+        "@cycle/command-permissions": "workspace:*",
         "@cycle/line-rpc": "workspace:*",
         "@cycle/protocol": "workspace:*",
         "@openai/codex": "0.171.0",
@@ -120,6 +122,10 @@
       "devDependencies": {
         "@cycle/daemon": "workspace:*",
       },
+    },
+    "packages/command-permissions": {
+      "name": "@cycle/command-permissions",
+      "version": "0.0.0",
     },
     "packages/line-rpc": {
       "name": "@cycle/line-rpc",
@@ -294,6 +300,8 @@
     "@cycle/analytics": ["@cycle/analytics@workspace:packages/analytics"],
 
     "@cycle/client": ["@cycle/client@workspace:packages/client"],
+
+    "@cycle/command-permissions": ["@cycle/command-permissions@workspace:packages/command-permissions"],
 
     "@cycle/daemon": ["@cycle/daemon@workspace:apps/daemon"],
 

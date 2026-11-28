@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { client, methods, type SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
-import { commandPrefixes, createAdapter } from "../src/agent.ts";
+import { createAdapter } from "../src/agent.ts";
 import type { AdapterConfig } from "../src/server.ts";
 import {
   defaultInitResult,
@@ -43,37 +43,6 @@ const OPTIONS = [
   { optionId: "allow", name: "Allow", kind: "allow_once" },
   { optionId: "deny", name: "Deny", kind: "reject_once" },
 ];
-
-describe("commandPrefixes", () => {
-  test("one prefix per segment of a chain", () => {
-    expect(commandPrefixes("git status")).toEqual(["git status"]);
-    expect(commandPrefixes("ls -la")).toEqual(["ls -la"]);
-    expect(commandPrefixes("git -C repo status")).toEqual(["git -C repo"]);
-    expect(commandPrefixes("cd src && git diff | grep foo")).toEqual([
-      "cd src",
-      "git diff",
-      "grep foo",
-    ]);
-  });
-  test("what cannot be judged by segments is not remembered", () => {
-    for (const c of [
-      "echo $(rm -rf x)",
-      "echo `id`",
-      "echo hi > out.txt",
-      "sudo ls",
-      "bash -c 'ls'",
-      "FOO=1 ls",
-      "ls\nrm x",
-      "ls & rm -rf ~",
-      "(ls)",
-      "! ls",
-      "python -c 'x'",
-      "find . -exec rm {} +",
-    ]) {
-      expect(commandPrefixes(c)).toBeUndefined();
-    }
-  });
-});
 
 describe("always allow in this session (CYC-287)", () => {
   const run = async (

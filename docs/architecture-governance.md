@@ -4,21 +4,22 @@
 
 ## 模块、依赖与状态所有权
 
-| 模块                       | 负责的状态或契约                                                                         | 直接生产依赖（仓库内）                                         |
-| -------------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| apps/desktop               | Electron 主进程持有连接、待回答请求和窗口设置，页面经 preload bridge 发起操作            | analytics、client、oidc、protocol、ui                          |
-| apps/daemon                | 会话生命周期、JSONL 历史、环境、工作树、终端和 connector 凭证；CLI 用 client 连接 daemon | client、三个 harness、model-gateway、protocol、clawdot-plugins |
-| cloud/loop                 | 工单执行状态、运行记录、交付流程；通过 L1 驱动任务                                       | client、protocol                                               |
-| harness/claude             | Claude SDK 会话和 ACP 适配状态                                                           | protocol                                                       |
-| harness/codex、harness/agy | 各自的子进程状态与 ACP 更新映射                                                          | line-rpc、protocol                                             |
-| packages/client            | L1 请求、连接、订阅和重放游标                                                            | protocol                                                       |
-| packages/protocol          | Cycle 的 wire schema、方法、错误码与元数据                                               | 无                                                             |
-| packages/ui                | 纯会话投影、页面 store、组件和样式；令牌见 DESIGN.md                                     | analytics                                                      |
-| packages/analytics         | 事件字典、字段校验、发送开关与 PostHog 客户端                                            | 无                                                             |
-| packages/line-rpc          | 行协议子进程通信与请求关联                                                               | 无                                                             |
-| packages/oidc              | 桌面登录协议                                                                             | 无                                                             |
-| packages/model-gateway     | provider 请求适配与网关                                                                  | protocol                                                       |
-| packages/clawdot-plugins   | 随 daemon 分发的插件资源                                                                 | 无                                                             |
+| 模块                         | 负责的状态或契约                                                                         | 直接生产依赖（仓库内）                                         |
+| ---------------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| apps/desktop                 | Electron 主进程持有连接、待回答请求和窗口设置，页面经 preload bridge 发起操作            | analytics、client、oidc、protocol、ui                          |
+| apps/daemon                  | 会话生命周期、JSONL 历史、环境、工作树、终端和 connector 凭证；CLI 用 client 连接 daemon | client、三个 harness、model-gateway、protocol、clawdot-plugins |
+| cloud/loop                   | 工单执行状态、运行记录、交付流程；通过 L1 驱动任务                                       | client、protocol                                               |
+| harness/claude               | Claude SDK 会话和 ACP 适配状态                                                           | protocol                                                       |
+| harness/codex、harness/agy   | 各自的子进程状态与 ACP 更新映射                                                          | command-permissions、line-rpc、protocol                        |
+| packages/client              | L1 请求、连接、订阅和重放游标                                                            | protocol                                                       |
+| packages/protocol            | Cycle 的 wire schema、方法、错误码与元数据                                               | 无                                                             |
+| packages/ui                  | 纯会话投影、页面 store、组件和样式；令牌见 DESIGN.md                                     | analytics                                                      |
+| packages/analytics           | 事件字典、字段校验、发送开关与 PostHog 客户端                                            | 无                                                             |
+| packages/command-permissions | 命令前缀规则。授权集合由各适配器的会话持有                                               | 无                                                             |
+| packages/line-rpc            | 行协议子进程通信与请求关联                                                               | 无                                                             |
+| packages/oidc                | 桌面登录协议                                                                             | 无                                                             |
+| packages/model-gateway       | provider 请求适配与网关                                                                  | protocol                                                       |
+| packages/clawdot-plugins     | 随 daemon 分发的插件资源                                                                 | 无                                                             |
 
 以上生产依赖图无环。开发依赖中 client 和 daemon 成环：client 的集成测试启动 daemon，daemon CLI 的 stop 等命令需要 client。增量测试应同时覆盖两者。进程通信方向、会话数据流与传输约束见 [架构](architecture.md)，主进程内部的写入者见 [桌面端](desktop.md)。
 
@@ -34,3 +35,5 @@
 | 配置、权限与身份     | 三种 harness 的 CLI 与适配器均经各自 env 函数进入 harnessEnv。共同处理白名单、系统代理和显式覆盖，专用目录由适配器决定。system-proxy.test.ts 校验目录冲突时的优先级和宿主秘密隔离。              |
 
 Loop 的节点和整单验证现在各创建一次 verificationPass。每次验证独享结果缓存、隔离目录和超时配置，节点重试事件带 nodeId。目标 bun test 的退出码、跳过计数和证据说明在 criteria.ts 一处判定。整单测试层和工单验收条件仍由各自调用方选择。
+
+Codex 与 agy 曾以互不导入为由复制审批前缀函数。迁移前比较了实现和测试，去除注释、空白后实现一致，测试样例完全一致。共享包只提供纯函数，两个适配器保留各自的权限请求与会话级测试。见[审批规则所有权决定](../.agents/notes/2026-11-27-shared-command-prefix-policy.md)。
