@@ -1091,18 +1091,22 @@ test("views beyond the cap are dropped, the least recently used first", async ()
   expect(views[viewKey("local", "c")]).toBeDefined();
 });
 
-test("the selected session's view is not dropped, even when it was opened first", async () => {
-  const { store } = withSessions();
+test("the selected session's view is not dropped, even when it is the least recently used", async () => {
+  let version = 1;
+  const { store, emit } = withSessions({
+    snapshot: (_l, id) => said(`of ${id}`, id === "b" ? version : 1),
+  });
   await store.start();
   await store.selectSession("local", "a");
   await store.selectSession("local", "b");
-  await store.selectSession("local", "c");
-  // a was dropped; it is read again, and now being the selected one, it stays while others come and go.
   await store.selectSession("local", "a");
-  await store.selectSession("local", "b");
-  await store.selectSession("local", "a");
+  // b is read again by a missed event, so it is now used more recently than the selected a.
+  version = 9;
+  emit(update(4, text("skipped ahead"), "b"));
+  await Bun.sleep(10);
   const views = store.getState().views;
   expect(store.getState().selectedSession).toBe("a");
+  expect(views[viewKey("local", "b")]?.version).toBe(9);
   expect(views[viewKey("local", "a")]).toBeDefined();
   expect(Object.keys(views)).toHaveLength(2);
 });
