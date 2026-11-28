@@ -1,13 +1,18 @@
-# Three jobs, sized for a 2-core, 4 GB machine (GitHub's standard runner is no smaller).
+# Every job is planned for a 2-core, 4 GB machine (what the owner holds CI to, whatever the runner really is: a public
+# repository's ubuntu-latest has 4 cores and 16 GB) and has to finish in about 2 minutes, setup included. A job that
+# would not is split, not given more time: 2 minutes is the aim and timeout-minutes (5) the line (scripts/ci-budget.test.ts holds it there).
+# Measured in a container of 2 CPUs and 4 GB on 2026-11-27: all the browser tests in one job 111 s; in three, 38 to 42 s.
 #
-#  check        every pull request. The same `bun run check` as the pre-commit hook.
-#  browser      every pull request and by hand: the interface's tests in headless Chromium
-#               (`bun run test:browser`). About 23 s of tests and 2.2 GB at its peak, which is why it is not in the gate.
-#  integration  every pull request and by hand: all seven suites. Starts real
-#               processes (Claude, a daemon, Electron under xvfb, the page in headless Chromium): serial, a deadline per suite, about 1.5 GB at
-#               its peak. It needs no secrets: the model is a mock, and nothing here may read an API key from the
+#  changes      what the pull request touches: only documents (*.md, docs/, .agents/) skip browser and integration.
+#  check        every pull request. The same `bun run check` as the pre-commit hook. Never skipped: tests read the documents.
+#  browser      the interface's tests in headless Chromium (`bun run test:browser`), in three parts that take
+#               about the same time (packages/ui/test/shard.ts). `browser` itself is only the verdict of the parts,
+#               and is the name the main ruleset asks for.
+#  integration  all seven suites; starts real processes (Claude, a daemon, Electron under xvfb, the page in headless
+#               Chromium), serial inside each of two jobs: "agents" (no display, no Electron) and "shell" (those).
+#               It needs no secrets: the model is a mock, and nothing here may read an API key from the
 #               environment. --strict: a suite that skipped itself because the runner lacks Electron, xvfb or sshd
-#               is a failure here, not an "ok".
+#               is a failure here, not an "ok". `integration` is likewise only the verdict of the two.
 name: ci
 
 # No push trigger: main only takes pull requests (a ruleset requires check, browser and integration to pass first),
@@ -26,7 +31,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
@@ -40,9 +45,36 @@ jobs:
       - run: bun install --frozen-lockfile --ignore-scripts
       - run: bun run check
 
-  browser:
+  changes:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 2
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The merge commit and its first parent, the base: what the pull request changes.
+          fetch-depth: 2
+      - id: diff
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && ! git diff --name-only HEAD^1 HEAD | grep -qvE '(\.md$|^docs/|^\.agents/)'; then
+            echo "code=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Only documents changed: the browser and integration tests are skipped."
+          else
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  browser-part:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ["1/3", "2/3", "3/3"]
+    env:
+      BROWSER_SHARD: ${{ matrix.part }}
     steps:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
@@ -50,27 +82,39 @@ jobs:
           bun-version: 1.4.4
       - uses: actions/cache@v6
         with:
-          path: |
-            ~/.bun/install/cache
-            ~/.cache/ms-playwright
-          key: browser-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-          restore-keys: browser-${{ runner.os }}-
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
       - run: bun install --frozen-lockfile --ignore-scripts
-      # The libraries Chromium needs (the browser itself is cached, and installed by test:browser when it is not).
-      - run: bunx playwright install-deps chromium-headless-shell
+      # The libraries Chromium needs, and the browser (it is not cached: downloading it takes less than restoring a cache of it).
+      - run: bunx playwright install --with-deps chromium-headless-shell
         working-directory: packages/ui
       - run: bun run test:browser
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
-          name: browser-failures
+          name: browser-failures-${{ strategy.job-index }}
           path: packages/ui/.vitest/
           if-no-files-found: ignore
           retention-days: 14
 
-  integration:
+  browser:
+    needs: [changes, browser-part]
+    if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 2
+    steps:
+      - run: |
+          test "${{ needs.browser-part.result }}" = success || { test "${{ needs.changes.result }}" = success && test "${{ needs.browser-part.result }}" = skipped; }
+
+  integration-part:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [agents, shell]
     steps:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
@@ -81,18 +125,31 @@ jobs:
           path: |
             ~/.bun/install/cache
             ~/.cache/electron
-            ~/.cache/ms-playwright
-          key: integration-${{ runner.os }}-${{ hashFiles('bun.lock') }}
-          restore-keys: integration-${{ runner.os }}-
-      - uses: ./.github/actions/codex-sandbox
-      - name: Libraries Electron needs, and xvfb
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends xvfb libgtk-3-0 libnss3 libgbm1 libasound2t64 libxss1
+          key: integration-${{ matrix.group }}-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: integration-${{ matrix.group }}-${{ runner.os }}-
       - run: bun install --frozen-lockfile --ignore-scripts
+      # agents: Codex's sandbox. shell: what Electron and the page need.
+      - if: matrix.group == 'agents'
+        uses: ./.github/actions/codex-sandbox
+      - if: matrix.group == 'shell'
+        name: Libraries Electron needs, and xvfb
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xvfb libgtk-3-0 libnss3 libgbm1 libasound2t64 libxss1
       # bun does not run Electron's postinstall, which is what downloads the binary.
-      - run: bun node_modules/.bun/electron@*/node_modules/electron/install.js
+      - if: matrix.group == 'shell'
+        run: bun node_modules/.bun/electron@*/node_modules/electron/install.js
       # The web suite's browser, and the libraries it needs.
-      - run: bunx playwright install --with-deps chromium-headless-shell
+      - if: matrix.group == 'shell'
+        run: bunx playwright install --with-deps chromium-headless-shell
         working-directory: apps/desktop
-      - run: bun run test:integration --strict --summary "$GITHUB_STEP_SUMMARY"
+      - run: bun run test:integration --group ${{ matrix.group }} --strict --summary "$GITHUB_STEP_SUMMARY"
+
+  integration:
+    needs: [changes, integration-part]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: |
+          test "${{ needs.integration-part.result }}" = success || { test "${{ needs.changes.result }}" = success && test "${{ needs.integration-part.result }}" = skipped; }

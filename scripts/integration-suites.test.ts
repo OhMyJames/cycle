@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { markdown, outcome, parseSummary, suites } from "./integration-suites.ts";
+import { groups, markdown, outcome, parseSummary, suites } from "./integration-suites.ts";
 
 const root = new URL("..", import.meta.url).pathname;
 const ALL = suites.map((s) => s.name);
@@ -10,6 +10,15 @@ describe("the list of suites", () => {
     expect(ALL).toEqual(["node", "adapter", "codex", "agy", "ssh", "backend", "package", "web"]);
     for (const suite of suites)
       expect(() => readFileSync(`${root}${suite.cwd}/${suite.file}`)).not.toThrow();
+  });
+
+  test("every suite is in a group CI runs, and each group has some: the two jobs together run them all", () => {
+    for (const suite of suites) expect(groups).toContain(suite.group);
+    for (const group of groups) expect(suites.some((s) => s.group === group)).toBe(true);
+    // Only the shell group needs Electron, a display or Chromium: the other job installs none of them.
+    expect(suites.filter((s) => s.group === "agents").map((s) => s.needs ?? "")).not.toContain(
+      "electron",
+    );
   });
 
   test("the documents count the same suites", () => {
@@ -81,7 +90,8 @@ describe("the result of a suite", () => {
 
 test("CI runs every suite, strictly, and writes the step summary", () => {
   const ci = readFileSync(`${root}.github/workflows/ci.yml`, "utf8");
-  expect(ci).toContain('bun run test:integration --strict --summary "$GITHUB_STEP_SUMMARY"');
+  expect(ci).toContain("bun run test:integration --group ");
+  expect(ci).toContain('--strict --summary "$GITHUB_STEP_SUMMARY"');
 });
 
 describe("the command line refuses what it cannot run as asked, before any suite starts", () => {
@@ -92,6 +102,11 @@ describe("the command line refuses what it cannot run as asked, before any suite
     const out = cli("--strickt");
     expect(out.exitCode).toBe(2);
     expect(out.stderr.toString()).toContain("unknown option --strickt");
+  });
+
+  test("--group with nothing after it, or with a group that is not one", () => {
+    expect(cli("--group").exitCode).toBe(2);
+    expect(cli("--group", "both").exitCode).toBe(2);
   });
 
   test("--summary with no file after it, or with an option there", () => {

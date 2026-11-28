@@ -1,14 +1,14 @@
 # 测试与 CI
 
-目标机器:2 核 4 GB。门禁的时间在 2026-11-21 一台 Apple 芯片开发机上量的;集成测试的时间是 GitHub 的 2 核 runner 上的。
+目标机器:2 核 4 GB(GitHub 公开仓库的 `ubuntu-latest` 其实是 4 核 16 GB,CI 仍按 2 核 4 GB 规划)。CI 里每个测试类作业目标 2 分钟(含安装),`timeout-minutes` 5 分钟强制终止;超了就拆。门禁的时间在 2026-11-21 一台 Apple 芯片开发机上量的;界面测试的时间在 2 核 4 GB 的 Docker 容器里量。
 
 ## 三层
 
-|      | 命令                       | 时间     | 峰值内存        | 谁跑                              |
-| ---- | -------------------------- | -------- | --------------- | --------------------------------- |
-| 门禁 | `bun run check`            | 约 16 秒 | 约 1.2 GB       | 每次提交(pre-commit)、每个 PR(CI) |
-| 界面 | `bun run test:browser`     | 约 23 秒 | 约 2.2 GB       | PR、手动(CI)                      |
-| 集成 | `bun run test:integration` | 约 35 秒 | 约 1.5 GB(冒烟) | PR、手动(CI)                      |
+|      | 命令                       | 时间                      | 峰值内存        | 谁跑                              |
+| ---- | -------------------------- | ------------------------- | --------------- | --------------------------------- |
+| 门禁 | `bun run check`            | 约 16 秒                  | 约 1.2 GB       | 每次提交(pre-commit)、每个 PR(CI) |
+| 界面 | `bun run test:browser`     | 约 111 秒(2 核 4 GB 容器) | 约 3 GB         | PR、手动(CI,切三份,每份约 40 秒)  |
+| 集成 | `bun run test:integration` | 约 35 秒                  | 约 1.5 GB(冒烟) | PR、手动(CI)                      |
 
 门禁依次是:边界检查、Tailwind 生成 css、类型检查(约 1 秒)、lint、knip 查没人用的文件和依赖(约 2 秒,配置在根目录 `knip.jsonc`;误报加进它的 `entry` 或 `ignoreDependencies` 并写明原因,不要关掉检查)、常规测试(约 1300 个,两个 worker 并行约 13 秒)。`check.ts` 在最后打印每一步的耗时。
 
@@ -16,9 +16,9 @@
 
 测试用 `bun test --parallel=2`:2026-11-23 量,一个进程跑约 24 秒、峰值约 0.63 GB,两个 worker 约 13 秒、各进程加起来约 1.2 GB。测试大多在等 I/O 和子进程,2 核上也能并起来;不要再往上加 worker,4 GB 的机器要留给编辑器和应用本身。
 
-**界面测试在真实浏览器里跑**(`packages/ui/test/browser/*.browser.tsx`,约 200 个):Vitest 的浏览器模式,经 Playwright 启动无界面的 Chromium,不开窗口、不抢焦点。页面加载应用自己的样式表,窗口 1200×800(和桌面端一样),所以布局、可见性、焦点、选区都是真的。点击和按键用 `vitest/browser` 的 `userEvent`,是浏览器自己的输入事件:点击前等元素可见、可用、静止,和人一样点不到被盖住或已禁用的按钮;输入框(Lexical)是真的敲字和按键,不再走编辑器的命令。Motion 的动画跳过,CSS 的过渡照常跑。第一次运行时 `test:browser` 会自己下载 Chromium(约 100 MB,之后只检查一下,约半秒)。失败时 `packages/ui/.vitest/` 里有那一刻的截图,CI 会上传它。
+**界面测试在真实浏览器里跑**(`packages/ui/test/browser/*.browser.tsx`,约 580 个):Vitest 的浏览器模式,经 Playwright 启动无界面的 Chromium,不开窗口、不抢焦点。页面加载应用自己的样式表,窗口 1200×800(和桌面端一样),所以布局、可见性、焦点、选区都是真的。点击和按键用 `vitest/browser` 的 `userEvent`,是浏览器自己的输入事件:点击前等元素可见、可用、静止,和人一样点不到被盖住或已禁用的按钮;输入框(Lexical)是真的敲字和按键,不再走编辑器的命令。Motion 的动画跳过,CSS 的过渡照常跑。第一次运行时 `test:browser` 会自己下载 Chromium(约 100 MB,之后只检查一下,约半秒)。失败时 `packages/ui/.vitest/` 里有那一刻的截图,CI 会上传它。
 
-它不在门禁里:两个文件并行约 23 秒、各进程内存加起来约 2.2 GB(一个一个跑 41 秒、1.6 GB),对 2 核 4 GB 的提交前检查太重。CI 里它是单独的 `browser` 作业,和 `check`、`integration` 并行;在 GitHub 的 2 核 runner 上测试本身约 33 秒,装 Chromium 要的系统库约 23 秒,整个作业约 1 分 20 秒,是三个作业里最长的。改了界面,提交前自己跑一次 `bun run test:browser`。
+它不在门禁里:在 `docker run --cpus=2 --memory=4g` 的容器里整套约 111 秒、cgroup 峰值约 3 GB(2026-11-27 量;每次交互都是真浏览器的往返,一次点击约 58 毫秒、一次重试的等待约 51 毫秒,跑起来吃满 CPU,所以 2 核上加 worker 没用),对 2 核 4 GB 的提交前检查太重。CI 里它是 `browser-part` 三份并行(`BROWSER_SHARD=1/3` 等,按每个文件的测试数装箱,三份都在 38 到 42 秒),`browser` 作业只汇总三份的结果,名字是 ruleset 要的那个。只改了文档(`*.md`、`docs/`、`.agents/`)的 PR 会跳过它和 `integration`。本机不设 `CI` 时 worker 数取核数的一半(最多 6,15 核约 35 秒),CI 固定 2。改了界面,提交前自己跑一次 `bun run test:browser`。
 
 2026-11-21 从 happy-dom 换过来时,真实浏览器发现了 happy-dom 掩盖的几件事,都是测试写得不对,不是应用的错:ui-sdk 的快捷键提示在挂载后才换成本平台的按键;对话框关闭有退出动画,要等它离开;双击一个第一下就禁用的按钮只能真的双击;选项的输入框被 label 盖着,人点的是 label。
 
@@ -82,7 +82,7 @@ mac-mini 上用同一 Developer ID 团队 `AGKXLGRXJ7` 对发布提交 0.3.6、0
 给 Loop 工单写验收标准时,界面现象用现有的验证命令,不新增命令。三种写法:
 
 1. 整页流程(打包后的应用、浏览器里的端到端):`bun run test:integration web`,约 8 秒。Loop 运行时会补 `--strict`,所以没 build、没 Chromium 而整个跳过的会判失败;不要自己写 `--strict`。
-2. 组件:`bun run test:browser`,在无界面的 Chromium 里跑,约 78 秒。
+2. 组件:`bun run test:browser`,在无界面的 Chromium 里跑,2 核 4 GB 下约 111 秒,本机更快。
 3. 其他测试文件:`bun test ./路径`,如 `bun test ./apps/desktop/test/integration/web.integration.ts`。路径必须以 `./` 开头(不带 `./` 时 bun 把它当成名字过滤,可能一个测试都找不到),不能以 `/` 开头、不能含 `..`、不能带 `--` 选项。Loop 会读汇总行:通过数为 0(全部跳过)或读不出汇总行,判未通过;有通过也有跳过算通过。
 
 不能写 `test:real` 系列:没有 token 时它整个跳过、退回码是 0,不能当验收。理由见[决定笔记](../.agents/notes/2026-11-26-loop-exit-code-zero-is-not-always-a-pass.md)。
