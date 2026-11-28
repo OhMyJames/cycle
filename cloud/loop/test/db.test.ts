@@ -199,6 +199,7 @@ test("CI that went green is recorded, but a reopened store asks GitHub again bef
     dev: {
       ciRound: 0,
       ciFailedSha: null,
+      ciWait: null,
       nodeModulesReleased: false,
       fullFlowDocs: [],
       conflictRound: 0,
@@ -278,6 +279,7 @@ test("CI that went green seen green in this process is not asked again in review
     dev: {
       ciRound: 0,
       ciFailedSha: null,
+      ciWait: null,
       nodeModulesReleased: false,
       fullFlowDocs: [],
       conflictRound: 0,

@@ -72,7 +72,11 @@ const setup = (
     ignoredDirs: "",
   };
   const stop = { value: false };
-  const clock = { now: () => new Date("2026-11-25T00:00:00Z") };
+  let nowMs = new Date("2026-11-25T00:00:00Z").getTime();
+  const clock = { now: () => new Date(nowMs) };
+  const advance = (ms: number) => {
+    nowMs += ms;
+  };
   const store = SqliteStore.open(cfg.stateDir, () => clock.now());
   const pipeline = new Pipeline({
     config: cfg,
@@ -87,7 +91,23 @@ const setup = (
     stopped: () => stop.value,
     ...extra,
   });
-  return { pipeline, tracker, sessions, world, store, stop };
+  return { pipeline, tracker, sessions, world, store, stop, advance };
+};
+
+/** Steps until the run is no longer waiting for CI: a signal on its subject wakes it, as the checker would (CYC-550). */
+const settle = async (s: { pipeline: Pipeline; store: SqliteStore }, key = "CYC-1") => {
+  let result = await s.pipeline.step();
+  for (
+    let i = 0;
+    (result.status === "waiting" || result.status === "idle") &&
+    s.store.waits(key).length > 0 &&
+    i < 10;
+    i++
+  ) {
+    for (const w of s.store.waits(key)) s.store.signal(`${w.subject}:test:${i}`, w.subject, "test");
+    result = await s.pipeline.step();
+  }
+  return result;
 };
 
 const ready = (over: Partial<Issue> = {}) => issue({ description: readyDescription, ...over });
@@ -480,7 +500,9 @@ test("CI all green after polling proceeds to review, auto-merge, and done", asyn
       ],
     },
   );
-  const result = await pipeline.step();
+  const first = await pipeline.step();
+  expect(first).toEqual({ status: "waiting", key: "CYC-1", on: "ci" });
+  const result = await settle({ pipeline, store });
   expect(result).toEqual({
     status: "delivered",
     key: "CYC-1",
@@ -547,7 +569,7 @@ test("red CI sends failure logs back to Dev, pushes fix to the same branch, then
     return out;
   };
 
-  const result = await s.pipeline.step();
+  const result = await settle(s);
   expect(result).toEqual({
     status: "delivered",
     key: "CYC-1",
@@ -597,7 +619,7 @@ test("red CI with no new Dev commit reruns the failed jobs and waits for the new
       greenCi("abc"),
     ],
   });
-  const result = await s.pipeline.step();
+  const result = await settle(s);
   expect(result.status).toBe("delivered");
   const reruns = s.world.calls.filter((c) => c.includes("gh run rerun"));
   expect(reruns).toEqual(["gh run rerun 20 --failed"]);
@@ -748,15 +770,17 @@ test("CI polling timeout ends in Blocked with pending check names", async () => 
       { name: "integration", status: "IN_PROGRESS", conclusion: null },
     ],
   };
-  const { pipeline, tracker, store } = setup(
+  const s = setup(
     [ready()],
     { dev: [done()], qa: [done(PASS)] },
     { ciPollIntervalMs: 1000, ciTimeoutMs: 2000 },
     [],
-    {
-      responses: [pendingIntegration, pendingIntegration, pendingIntegration, pendingIntegration],
-    },
+    { responses: [pendingIntegration, pendingIntegration, pendingIntegration] },
   );
+  const { pipeline, tracker, store } = s;
+  expect((await pipeline.step()).status).toBe("waiting");
+  // the recheck time is the deadline, so the next look finds the timeout, with or without the checker
+  s.advance(3000);
   const result = await pipeline.step();
   expect(result.status).toBe("blocked");
   if (result.status === "blocked") {
@@ -1190,6 +1214,7 @@ test("review crash recovery re-checks CI and refuses auto-merge if CI is not gre
     dev: {
       ciRound: 0,
       ciFailedSha: null,
+      ciWait: null,
       nodeModulesReleased: false,
       fullFlowDocs: [],
       conflictRound: 0,
@@ -1389,6 +1414,7 @@ const doneRun = async (s: ReturnType<typeof setup>) => {
     dev: {
       ciRound: 0,
       ciFailedSha: null,
+      ciWait: null,
       nodeModulesReleased: false,
       fullFlowDocs: [],
       conflictRound: 0,
@@ -1626,6 +1652,7 @@ test("two steps at once: only one goes on with an unfinished run", async () => {
     dev: {
       ciRound: 0,
       ciFailedSha: null,
+      ciWait: null,
       nodeModulesReleased: false,
       fullFlowDocs: [],
       conflictRound: 0,
@@ -2361,6 +2388,7 @@ test("a run that enters verify with node_modules released installs first", async
     dev: {
       ciRound: 0,
       ciFailedSha: null,
+      ciWait: null,
       nodeModulesReleased: true,
       fullFlowDocs: [],
       conflictRound: 0,
@@ -3048,6 +3076,7 @@ test("Task Graph: crash recovery resumes directly on the active node without re-
     dev: {
       ciRound: 0,
       ciFailedSha: null,
+      ciWait: null,
       nodeModulesReleased: false,
       conflictRound: 0,
       conflict: null,
@@ -3159,6 +3188,7 @@ test("Task Graph: a run left in qa by an older version gets a QA node and goes o
     dev: {
       ciRound: 0,
       ciFailedSha: null,
+      ciWait: null,
       nodeModulesReleased: false,
       conflictRound: 0,
       conflict: null,
@@ -3269,6 +3299,7 @@ test("Task Graph: QA system fault blocks the QA node and the run", async () => {
     dev: {
       ciRound: 0,
       ciFailedSha: null,
+      ciWait: null,
       nodeModulesReleased: false,
       conflictRound: 0,
       conflict: null,
@@ -3366,6 +3397,7 @@ const seedQaNodeRun = async (
     dev: {
       ciRound: 0,
       ciFailedSha: null,
+      ciWait: null,
       nodeModulesReleased: false,
       conflictRound: 0,
       conflict: null,

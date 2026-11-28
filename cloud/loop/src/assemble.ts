@@ -40,7 +40,7 @@ export type SetUpOptions = {
 
 export type ProjectUnit = {
   name: string;
-  pipeline: Pick<Pipeline, "step" | "intervalSeconds">;
+  pipeline: Pick<Pipeline, "step" | "watch" | "intervalSeconds">;
   release: () => Promise<void>;
   close: () => Promise<void>;
   workers: number;

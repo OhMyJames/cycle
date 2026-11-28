@@ -10,6 +10,7 @@ import { join, resolve } from "node:path";
 import { setUpProject } from "./assemble.ts";
 import { type ConfigFile, loadConfigFiles } from "./config-file.ts";
 import { idleIntervalMs, parseWorkers, runLoops, workerSpecs } from "./loop.ts";
+import { WATCH_TICK_MS } from "./runtime.ts";
 import { readStats } from "./stats.ts";
 
 const args = process.argv.slice(2);
@@ -90,6 +91,14 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     log("stopping after this step (again to leave now)");
   });
 }
+// CYC-550: the CI checker of each Project. A single run (`--once`) stops at a wait and starts none.
+const watchTimers = once
+  ? []
+  : projects.map((p) => {
+      const timer = setInterval(() => void p.pipeline.watch(), WATCH_TICK_MS);
+      timer.unref?.();
+      return timer;
+    });
 try {
   await runLoops(
     projects.flatMap((p) =>
@@ -107,6 +116,7 @@ try {
     ),
   );
 } finally {
+  for (const timer of watchTimers) clearInterval(timer);
   await Promise.allSettled(projects.map((p) => p.close()));
 }
 process.exit(0);

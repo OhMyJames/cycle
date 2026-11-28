@@ -8,7 +8,13 @@ import type { ProjectUnit } from "../src/assemble.ts";
 import type { ConfigFile } from "../src/config-file.ts";
 import { SqliteStore } from "../src/db/store.ts";
 import { Pipeline } from "../src/pipeline.ts";
-import { handleStopSignals, startPipelines, startServer, startupReason } from "../src/runtime.ts";
+import {
+  handleStopSignals,
+  startPipelines,
+  startServer,
+  startupReason,
+  WATCH_TICK_MS,
+} from "../src/runtime.ts";
 import { readStats } from "../src/stats.ts";
 import { RunStore } from "../src/store.ts";
 import {
@@ -41,6 +47,7 @@ const counting = (name: string, steps: string[], closed: string[] = []): Project
       steps.push(name);
       return { status: "idle" };
     },
+    watch: async () => {},
     intervalSeconds: 0.001,
   } as unknown as ProjectUnit["pipeline"],
   release: async () => {},
@@ -241,7 +248,11 @@ test("a restart picks the run up from run.json: only the unfinished step runs", 
     log: () => {},
     setUp: async () => ({
       name: "CYC",
-      pipeline: { step: () => pipeline.step(), intervalSeconds: 0.01 },
+      pipeline: {
+        step: () => pipeline.step(),
+        watch: () => pipeline.watch(),
+        intervalSeconds: 0.01,
+      },
       release: async () => {},
       close: async () => {},
       workers: 1,
@@ -410,4 +421,44 @@ test("stats reads loop.db when there is one, and the files otherwise", async () 
   await db.event("CYC-8", "claimed");
   db.close();
   expect((await readStats(dir, at)).runs).toBe(2);
+});
+
+test("each Project's CI checker timer is cleared when the server stops", async () => {
+  const watched: string[] = [];
+  const unit = (name: string): ProjectUnit => {
+    const u = counting(name, []);
+    (u.pipeline as unknown as { watch: () => Promise<void> }).watch = async () => {
+      watched.push(name);
+    };
+    return u;
+  };
+  const stopped = { value: false };
+  const realSet = globalThis.setInterval;
+  const cleared: unknown[] = [];
+  const realClear = globalThis.clearInterval;
+  const started: unknown[] = [];
+  globalThis.setInterval = ((fn: () => void, ms: number) => {
+    const t = realSet(fn, ms);
+    if (ms === WATCH_TICK_MS) started.push(t);
+    return t;
+  }) as unknown as typeof setInterval;
+  globalThis.clearInterval = ((t: never) => {
+    cleared.push(t);
+    realClear(t);
+  }) as unknown as typeof clearInterval;
+  try {
+    const running = await startPipelines(
+      [file("A"), file("B")],
+      async (f) => unit(f.projectKey),
+      () => {},
+      stopped,
+    );
+    expect(started).toHaveLength(2);
+    running.stop();
+    await running.done;
+    for (const t of started) expect(cleared).toContain(t);
+  } finally {
+    globalThis.setInterval = realSet;
+    globalThis.clearInterval = realClear;
+  }
 });

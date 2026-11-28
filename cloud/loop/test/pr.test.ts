@@ -6,10 +6,10 @@ import {
   DEFAULT_CI_CHECKS,
   hasClosingKeyword,
   MAX_PR_TITLE_LENGTH,
+  readCiOnce as readCiOnceWith,
   renderPr,
   renderPrTitle,
   validatePr,
-  waitForCi as waitForCiWith,
 } from "../src/pr.ts";
 import type { Exec, ExecResult } from "../src/types.ts";
 import { issue } from "./helpers.ts";
@@ -51,12 +51,12 @@ const rerunFailedCi = (
     ciRound: i.ciRound,
     maxCiRetries: i.maxCiRetries,
   });
-const waitForCi = (
-  i: Omit<Parameters<typeof waitForCiWith>[0], "forge"> & {
+const readCiOnce = (
+  i: Omit<Parameters<typeof readCiOnceWith>[0], "forge"> & {
     exec: Exec;
     env: Record<string, string | undefined>;
   },
-) => waitForCiWith({ ...i, forge: forgeOf(i) });
+) => readCiOnceWith({ ...i, forge: forgeOf(i) });
 
 const sampleIssue = issue({
   number: 330,
@@ -388,110 +388,78 @@ test("parseActionsUrl and readCiFailureLogs fetch job logs via gh run view with 
   expect(longLogs).toContain("无法拉取日志");
 });
 
-test("waitForCi polls until green, returns logs on red, and stops on timeout", async () => {
-  // Pending -> passed.
-  const views = [
-    JSON.stringify({
-      headRefOid: "sha-1",
-      statusCheckRollup: [
-        checkRun("check", "COMPLETED", "SUCCESS"),
-        checkRun("browser", "IN_PROGRESS", null),
-        checkRun("integration", "QUEUED", null),
-      ],
-    }),
-    JSON.stringify({
-      headRefOid: "sha-1",
-      statusCheckRollup: [
-        checkRun("check", "COMPLETED", "SUCCESS"),
-        checkRun("browser", "COMPLETED", "SUCCESS"),
-        checkRun("integration", "COMPLETED", "SUCCESS"),
-      ],
-    }),
-  ];
-  let sleeps = 0;
-  let nowMs = 0;
-  const passed = await waitForCi({
+const pendingView = JSON.stringify({
+  headRefOid: "sha-1",
+  statusCheckRollup: [checkRun("check", "IN_PROGRESS", null)],
+});
+const readOnce = (view: string, mergeable = "MERGEABLE", extra: object = {}) =>
+  readCiOnce({
     prRef: "https://github.com/o/r/pull/9",
     expectedHeadSha: "sha-1",
     exec: async (argv) =>
       okExec(
-        argv.includes("state,mergeable")
-          ? JSON.stringify({ state: "OPEN", mergeable: "MERGEABLE" })
-          : (views.shift() ?? "{}"),
+        argv.includes("state,mergeable") ? JSON.stringify({ state: "OPEN", mergeable }) : view,
       ),
     cwd: "/wt",
     env: fullEnv,
     commandTimeoutMs: 5000,
-    pollIntervalMs: 1000,
-    timeoutMs: 5000,
-    clock: { now: () => new Date(nowMs) },
-    sleep: async (ms) => {
-      sleeps++;
-      nowMs += ms;
-    },
+    ...extra,
   });
-  expect(passed.outcome).toBe("passed");
-  expect(sleeps).toBe(1);
 
-  // Timeout when checks stay pending.
-  nowMs = 0;
-  const timedOut = await waitForCi({
-    prRef: "https://github.com/o/r/pull/9",
-    expectedHeadSha: "sha-1",
-    exec: async () =>
-      okExec(
-        JSON.stringify({
-          headRefOid: "sha-1",
-          statusCheckRollup: [checkRun("check", "IN_PROGRESS", null)],
-        }),
-      ),
-    cwd: "/wt",
-    env: fullEnv,
-    commandTimeoutMs: 5000,
-    pollIntervalMs: 1000,
-    timeoutMs: 2500,
-    clock: { now: () => new Date(nowMs) },
-    sleep: async (ms) => {
-      nowMs += ms;
-    },
+test("readCiOnce reads once: pending, passed, and red with logs", async () => {
+  expect((await readOnce(pendingView)).outcome).toBe("pending");
+  const green = JSON.stringify({
+    headRefOid: "sha-1",
+    statusCheckRollup: [
+      checkRun("check", "COMPLETED", "SUCCESS"),
+      checkRun("browser", "COMPLETED", "SUCCESS"),
+      checkRun("integration", "COMPLETED", "SUCCESS"),
+    ],
   });
-  expect(timedOut.outcome).toBe("timeout");
+  expect((await readOnce(green)).outcome).toBe("passed");
+  const red = JSON.stringify({
+    headRefOid: "sha-1",
+    statusCheckRollup: [
+      { ...checkRun("check", "COMPLETED", "FAILURE"), detailsUrl: "u/1" },
+      checkRun("browser", "COMPLETED", "SUCCESS"),
+      checkRun("integration", "COMPLETED", "SUCCESS"),
+    ],
+  });
+  expect((await readOnce(red)).outcome).toBe("failed");
+  // a read that says only that CI is done skips the log fetch
+  const quick = await readOnce(red, "MERGEABLE", { withLogs: false });
+  expect(quick.outcome === "failed" && quick.logs).toBe("");
 });
 
-test("waitForCi stops at once on a conflicting PR but keeps waiting while mergeability is UNKNOWN", async () => {
-  const pending = JSON.stringify({
+test("readCiOnce treats a red that is only the rerun's old attempt as pending", async () => {
+  const red = JSON.stringify({
     headRefOid: "sha-1",
-    statusCheckRollup: [checkRun("check", "IN_PROGRESS", null)],
+    statusCheckRollup: [
+      { ...checkRun("check", "COMPLETED", "FAILURE"), detailsUrl: "u/1" },
+      checkRun("browser", "COMPLETED", "SUCCESS"),
+      checkRun("integration", "COMPLETED", "SUCCESS"),
+    ],
   });
-  const run = async (mergeable: string) => {
-    let nowMs = 0;
-    let sleeps = 0;
-    const result = await waitForCi({
-      prRef: "https://github.com/o/r/pull/9",
-      expectedHeadSha: "sha-1",
-      exec: async (argv) =>
-        okExec(
-          argv.includes("state,mergeable") ? JSON.stringify({ state: "OPEN", mergeable }) : pending,
-        ),
-      cwd: "/wt",
-      env: fullEnv,
-      commandTimeoutMs: 5000,
-      pollIntervalMs: 1000,
-      timeoutMs: 2500,
-      clock: { now: () => new Date(nowMs) },
-      sleep: async (ms) => {
-        sleeps++;
-        nowMs += ms;
-      },
-    });
-    return { result, sleeps };
-  };
-  const conflict = await run("CONFLICTING");
-  expect(conflict.result.outcome).toBe("conflict");
-  expect(conflict.sleeps).toBe(0);
-  const unknown = await run("UNKNOWN");
-  expect(unknown.result.outcome).toBe("timeout");
-  expect(unknown.sleeps).toBeGreaterThan(0);
+  const old = await readOnce(red, "MERGEABLE", { staleFailedUrls: new Set(["u/1"]) });
+  expect(old.outcome).toBe("pending");
+  const other = await readOnce(red, "MERGEABLE", { staleFailedUrls: new Set(["u/2"]) });
+  expect(other.outcome).toBe("failed");
+});
+
+test("readCiOnce reports a conflicting PR but keeps pending while mergeability is UNKNOWN", async () => {
+  expect((await readOnce(pendingView, "CONFLICTING")).outcome).toBe("conflict");
+  expect((await readOnce(pendingView, "UNKNOWN")).outcome).toBe("pending");
+});
+
+test("readCiOnce returns an error when the status cannot be read", async () => {
+  const result = await readCiOnce({
+    prRef: "https://github.com/o/r/pull/9",
+    exec: async () => ({ code: 1, output: "boom", timedOut: false }),
+    cwd: "/wt",
+    env: fullEnv,
+    commandTimeoutMs: 5000,
+  });
+  expect(result.outcome).toBe("error");
 });
 
 test("postPrComment and enableAutoMerge invoke gh with deliverEnv and handle failures", async () => {

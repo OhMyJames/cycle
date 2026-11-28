@@ -3,13 +3,14 @@
 // waiting. What every run shares (the lock, the workers, the retries, the loop from phase to phase) is the engine's.
 
 import { CriteriaBook } from "../../criteria.ts";
-import type { Flow, FlowHost, StepResult } from "../../engine/flow.ts";
+import { type Flow, type FlowHost, type StepResult, tail } from "../../engine/flow.ts";
 import { buildGraph } from "../../graph.ts";
+import { readCiOnce } from "../../pr.ts";
 import { preflight } from "../../preflight.ts";
 import { DevStateSchema } from "../../store.ts";
 import type { Issue } from "../../types.ts";
 import { blockTicket, sendBack, ticketStillMine, ticketStillWanted } from "../ticket.ts";
-import { ci } from "./ci.ts";
+import { ci, ciSubject } from "./ci.ts";
 import { claim } from "./claim.ts";
 import { rollbackMerge } from "./conflict.ts";
 import { asDev, type Dev } from "./context.ts";
@@ -28,6 +29,7 @@ const bodyHashOf = (issue: Issue): string =>
 
 export const devFlow = (host: FlowHost): Flow => {
   const x: Dev = { h: host, kept: new Set(), greenSeen: new Map() };
+  let lastWatch = 0;
   return {
     kind: "dev",
     phases: {
@@ -108,6 +110,50 @@ export const devFlow = (host: FlowHost): Flow => {
       return { status: "would-take", key: issue.key, criteria: accepted.specs.length };
     },
 
+    // CYC-550: the checker. Reads the CI of every dev run waiting on it, once, and signals the ones whose CI is no
+    // longer running. Read-only: no rerun, no run state, no move. A failed read is a line in the log; the wait's
+    // recheck time covers it.
+    async watch() {
+      const { config, store, clock, log } = host.d;
+      if (config.dryRun) return;
+      const now = clock.now().getTime();
+      if (lastWatch !== 0 && now - lastWatch < config.ciPollIntervalMs) return;
+      lastWatch = now;
+      const rows = store.transaction((tx) => ({ waits: tx.waits(), due: tx.dueWaits() }));
+      for (const run of await host.d.store.unfinished()) {
+        if (run.kind !== "dev" || run.phase !== "ci") continue;
+        const { ciWait, prUrl } = asDev(run).dev;
+        if (ciWait === null || prUrl === null) continue;
+        const subject = ciSubject(config.repoSlug, prUrl, ciWait.sha);
+        const row = rows.waits.find((w) => w.owner === run.key && w.subject === subject);
+        if (row === undefined || rows.due.some((w) => w.owner === run.key)) continue;
+        try {
+          const result = await readCiOnce({
+            staleFailedUrls: new Set(ciWait.staleFailedUrls),
+            prRef: prUrl,
+            requiredChecks: config.ciChecks,
+            expectedHeadSha: ciWait.sha,
+            forge: host.d.forge,
+            cwd: run.worktree ?? config.repoRoot,
+            commandTimeoutMs: config.commandTimeoutMs,
+            withLogs: false,
+          });
+          if (result.outcome === "error") {
+            log(`ci watch: cannot read the CI of ${run.key}: ${tail(result.error)}`);
+            continue;
+          }
+          if (result.outcome === "pending") continue;
+          store.transaction((tx) =>
+            tx.signal(`${subject}:settled:${row.createdAt}`, subject, "poll"),
+          );
+        } catch (error) {
+          log(
+            `ci watch: cannot read the CI of ${run.key}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
+    },
+
     stillWanted: (run) => ticketStillWanted(host, run),
 
     stillMine: (run) => ticketStillMine(host, run),
@@ -143,7 +189,14 @@ export const devFlow = (host: FlowHost): Flow => {
       await resetBlockedNodeOnResume(host, current);
       return {
         ...current,
-        dev: { ...current.dev, ciRound: 0, conflictRound: 0, conflict: null, resolvedFiles: [] },
+        dev: {
+          ...current.dev,
+          ciRound: 0,
+          ciWait: null,
+          conflictRound: 0,
+          conflict: null,
+          resolvedFiles: [],
+        },
       };
     },
 

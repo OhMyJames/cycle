@@ -80,6 +80,18 @@ export const DevStateSchema = z.object({
   ciRound: z.number().int().min(0).default(0),
   /** The HEAD commit whose CI run last came back red; the same commit again means no new CI run unless the failed jobs are rerun. */
   ciFailedSha: z.string().nullable().default(null),
+  /**
+   * CYC-550: set while the run waits for the CI of one commit. `since` is when waiting on this commit began (the CI
+   * timeout counts from it, a wake does not restart it); `staleFailedUrls` are the jobs of the red attempt just rerun.
+   */
+  ciWait: z
+    .object({
+      sha: z.string(),
+      since: z.string(),
+      staleFailedUrls: z.array(z.string()).default([]),
+    })
+    .nullable()
+    .default(null),
   /** CYC-450: the worktree's `node_modules` was deleted while waiting for CI or the merge; Dev installs it again. */
   nodeModulesReleased: z.boolean().default(false),
   /** Times the loop merged the base into the branch after a conflict found while waiting for CI. Counted apart from fix rounds. */
