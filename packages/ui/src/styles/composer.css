@@ -387,6 +387,31 @@
 [data-slot="setting-value"] {
   min-width: 0;
   overflow: hidden;
+  white-space: nowrap;
+}
+
+/* In a narrow conversation (720x480 leaves it 400px) the bar stays one line: the permission, effort and ring keep their
+   words, and only the model's name, the longest, gives way, with an ellipsis. */
+[data-slot="composer-tools-start"],
+[data-kind="context-meter"],
+[data-slot="menu-trigger"][data-variant="ghost"][data-kind="setting-chip"]:not(
+  [data-setting="model"]
+) {
+  flex: none;
+}
+
+[data-slot="composer-tools-end"] {
+  flex: 0 1 auto;
+}
+
+[data-slot="menu-trigger"][data-variant="ghost"][data-kind="setting-chip"][data-setting="model"] {
+  flex: 0 1 auto;
+  min-width: 4rem;
+}
+
+[data-slot="menu-trigger"][data-kind="setting-chip"][data-setting="model"]
+  [data-slot="setting-value"] {
+  text-overflow: ellipsis;
 }
 
 /* A picker's menu: as wide as its longest name, and scrolled inside when the window is short. */
