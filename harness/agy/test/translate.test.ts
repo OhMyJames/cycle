@@ -248,3 +248,60 @@ describe("read-file result numbers (rawOutput shape unverified)", () => {
     }
   });
 });
+
+describe("search result numbers (rawOutput shape unverified)", () => {
+  const search = (status: string | undefined, rawOutput: unknown) =>
+    toV2ToolCallUpdate(
+      {
+        toolCallId: "s1",
+        name: "grep_search",
+        kind: "search",
+        status,
+        rawOutput,
+      } as V1ToolCallPayload,
+      false,
+    ) as { _meta?: Record<string, unknown>; rawOutput?: unknown };
+
+  test("a completed search with counts fills search, without hit text", () => {
+    const u = search("completed", {
+      num_files: 3,
+      num_matches: 7,
+      num_lines: 7,
+      truncated: true,
+      output: "secret hit",
+    });
+    const meta = u._meta?.[META.toolResult];
+    expect(meta).toEqual({ search: { files: 3, matches: 7, lines: 7, more: true } });
+    expect(() => ToolResultSchema.parse(meta)).not.toThrow();
+  });
+
+  test("only files is enough", () => {
+    const meta = search("completed", { num_files: 0 })._meta?.[META.toolResult];
+    expect(meta).toEqual({ search: { files: 0 } });
+    expect(() => ToolResultSchema.parse(meta)).not.toThrow();
+  });
+
+  test("missing or invalid numbers fill nothing and keep the rest", () => {
+    for (const raw of [
+      undefined,
+      "text",
+      {},
+      { num_matches: 4 },
+      { num_files: "2" },
+      { num_files: 1.5 },
+      { num_files: -1 },
+    ]) {
+      const u = search("completed", raw);
+      expect(u._meta).toBeUndefined();
+      expect(u.rawOutput).toEqual(raw);
+    }
+    const bad = search("completed", { num_files: 2, num_matches: -1, truncated: "yes" });
+    expect(bad._meta?.[META.toolResult]).toEqual({ search: { files: 2 } });
+  });
+
+  test("failed or unfinished searches fill nothing", () => {
+    for (const status of ["failed", "in_progress", "pending", undefined]) {
+      expect(search(status, { num_files: 1 })._meta).toBeUndefined();
+    }
+  });
+});
