@@ -11,6 +11,8 @@ export const QUEUE_UPDATE = "_cycle/queue_update";
 export const QueueEntrySchema = z.object({
   queueId: z.string(),
   prompt: z.array(z.unknown()),
+  /** Queued while the daemon drained for an update: sent after the switch, not handed back (docs/protocol.md §8). */
+  hold: z.literal("update").optional(),
 });
 export type QueueEntry = z.infer<typeof QueueEntrySchema>;
 

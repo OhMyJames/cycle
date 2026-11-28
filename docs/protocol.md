@@ -446,7 +446,7 @@ session 不是 `idle` 时(`running` 或 `requires_action`),`session/prompt` 不�
 }
 ```
 
-`hold` 可选(CYC-547),只有 `"update"` 一个值:daemon 正在为更新排空,这个队列是因为它扣着不开新回合而排的(§3 `draining`)。没有这个字段(旧 daemon、没有扣着)的快照照常解析。
+`hold` 可选(CYC-547),只有 `"update"` 一个值:daemon 正在为更新排空,这个队列是因为它扣着不开新回合而排的(§3 `draining`)。没有这个字段(旧 daemon、没有扣着)的快照照常解析。队列里每一条也可带 `hold: "update"`,标出哪几条是等更新而排的(排空之前就在队列里的没有),重启后只有这几条自动发出。
 
 - **`entries` 是状态,`returned` 是事件。** 客户端以最后一条的 `entries` 为当前队列,所以从任意位置补发都能得到它。`returned` 和 `reason` 只在队列被退回的那一条里出现,daemon 只交给最早完成附着且仍在线的一个客户端。客户端**只在它实时到达时**(`replay_complete` 之后)把内容放回输入框;补发过程中遇到的 `returned` 一律忽略,否则重启应用后每次历史里的退回都会再放一遍。
 - **附件字节**照决策 0013 存进 blob(daemon 的提取是递归的,覆盖快照里的 `entries[].prompt[]` 和 `returned[].prompt[]`),同一份内容按 sha256 只存一次,快照反复出现不会反复占用空间。

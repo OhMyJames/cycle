@@ -393,6 +393,7 @@ export class Daemon {
     );
     // Quietly, and not waited for: nothing starts later because of it (a failure is tried again as an agent starts).
     void daemon.#plugins.ensureBuiltins();
+    void daemon.#resumeHeld();
     return daemon;
   }
 
@@ -536,6 +537,45 @@ export class Daemon {
 
   setDraining(draining: boolean): void {
     this.#draining = draining;
+    // The switch did not happen (or was called off): what was held for it goes now, here.
+    if (!draining) this.#sendHeld();
+  }
+
+  /**
+   * What was queued for an update goes on: in a session with no turn, its held prompts are sent, one after the other
+   * (docs/protocol.md §8). Prompts that were already queued before draining are not held, and are not sent by this:
+   * after a restart they are handed back as interrupted.
+   */
+  #sendHeld(): void {
+    for (const session of this.#sessions.values()) {
+      if (session.closed || !session.queue.some((e) => e.hold === "update")) continue;
+      const status = session.status();
+      if (status !== "idle" && status !== "stopped") continue;
+      if (this.#turnInProgress(session)) continue;
+      this.#dispatchNext(session);
+    }
+  }
+
+  /**
+   * A new daemon, after a switch, sends what the old one held for it: each session with prompts queued for the update
+   * has its agent started and resumed (`#send`), no client needed. What was queued before draining is handed back.
+   */
+  async #resumeHeld(): Promise<void> {
+    for (const [id, entry] of this.#index.list()) {
+      if (entry.queued !== true || this.#closing) continue;
+      try {
+        const session = await this.#session(id);
+        if (session.closed || !session.queue.some((e) => e.hold === "update")) continue;
+        const held = session.queue.filter((e) => e.hold === "update");
+        session.queue = session.queue.filter((e) => e.hold !== "update");
+        this.#returnQueue(session, "interrupted", true);
+        session.queue = held;
+        this.#log.info("held_prompts_resumed", { session: id, count: held.length });
+        this.#dispatchNext(session);
+      } catch (error) {
+        this.#log.warn("held_prompts_resume_failed", { session: id, error: errorText(error) });
+      }
+    }
   }
 
   /**
@@ -1516,6 +1556,8 @@ export class Daemon {
   /** What waits goes on after a turn that ended well, and is handed back after one that did not. */
   #queueAfterTurn(session: Session, stopReason: string): void {
     if (session.queue.length === 0) return;
+    // Draining starts no new turn: what waits stays, for after the switch.
+    if (stopReason === "end_turn" && this.#draining) return;
     if (stopReason === "end_turn") this.#dispatchNext(session);
     else this.#returnQueue(session, stopReason === "cancelled" ? "cancelled" : "error");
   }
@@ -1561,6 +1603,7 @@ export class Daemon {
       data: {
         sessionUpdate: QUEUE_UPDATE,
         entries: [...session.queue],
+        ...(session.queue.some((e) => e.hold === "update") ? { hold: "update" } : {}),
         ...(back !== undefined ? back : {}),
       },
     }).then((written) => {
@@ -1643,6 +1686,8 @@ export class Daemon {
   #returnStale(session: Session): void {
     const status = session.status();
     if (status !== "idle" && status !== "stopped") return;
+    // Held for the update: it is sent after the switch, not handed back.
+    if (session.queue.some((e) => e.hold === "update")) return;
     this.#returnQueue(session, session.heldReason ?? "interrupted", true);
   }
 
@@ -2265,6 +2310,7 @@ export class Daemon {
       promptFailed: (session, error) => this.#promptFailed(session, error),
       publishQueue: (session, back) => this.#publishQueue(session, back),
       returnQueue: (session, reason, force) => this.#returnQueue(session, reason, force),
+      draining: () => this.#draining,
       returnStale: (session) => this.#returnStale(session),
       offerReturn: (session) => this.#offerReturn(session),
       ackReturn: (session, conn, id) => this.#ackReturn(session, conn, id),
