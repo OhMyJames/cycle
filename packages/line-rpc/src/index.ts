@@ -123,11 +123,10 @@ export class LineJsonRpcProcess {
       // readline hands over the bytes after the last newline as one more line at EOF. A process
       // stopped while writing a large message therefore leaves half a JSON line. That is its exit,
       // not a protocol disagreement: let the process's own close event provide the real reason.
-      setTimeout(() => {
-        if (this.#closed || this.#process.exitCode !== null || this.#process.signalCode !== null)
-          return;
-        this.close(reason);
-      }, 0).unref();
+      // The stream having ended is what tells the two apart. The exit code is no help: it is often
+      // not set yet when this line arrives (on a busy machine the exit event comes later).
+      if (this.#process.stdout.readableEnded) return;
+      this.close(reason);
     }
   }
 
