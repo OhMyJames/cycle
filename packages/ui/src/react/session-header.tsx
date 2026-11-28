@@ -5,7 +5,7 @@ import { sessionKey } from "../sessions.ts";
 import type { SessionPanel } from "./app-layout.ts";
 import { EnvironmentActions } from "./environments.tsx";
 import { useI18n } from "./i18n.tsx";
-import { DiffIcon, FolderIcon, MoreIcon, OverviewIcon, PanelIcon, TerminalIcon } from "./icons.tsx";
+import { MoreIcon, PanelIcon } from "./icons.tsx";
 import { SessionHeading } from "./rename-field.tsx";
 import { SessionCopyMenu } from "./session-copy-menu.tsx";
 import { ShellTitle, ShellTools } from "./shell.tsx";
@@ -15,7 +15,8 @@ import { useAppStore } from "./store-context.tsx";
 import { Tip } from "./tip.tsx";
 
 /**
- * The open session's title bar: its title (renamed in place), its menu, and the buttons of its right panel's tabs.
+ * The open session's title bar: its title (renamed in place), its menu, and the button of its right panel. The
+ * panel's tabs are in the panel's own strip, not here: one place to choose what it shows.
  */
 export function SessionHeader({
   session,
@@ -38,9 +39,6 @@ export function SessionHeader({
 }) {
   const store = useAppStore();
   const { t } = useI18n();
-  const overviewShown = panel.shows("overview");
-  const filesShown = panel.shows("files");
-  const diffShown = panel.shows("diff");
   return (
     <>
       <ShellTitle>
@@ -105,52 +103,6 @@ export function SessionHeader({
               </MenuItem>
             </MenuContent>
           </Menu>
-          <Tip label={t(overviewShown ? "overview.hide" : "overview.show")} side="bottom">
-            <Button
-              data-variant="ghost"
-              data-kind="panel-toggle"
-              data-active={overviewShown || undefined}
-              onClick={() => panel.toggleTab("overview")}
-            >
-              <OverviewIcon />
-            </Button>
-          </Tip>
-          {panel.canShowFiles ? (
-            <Tip label={t(filesShown ? "files.hide" : "files.show")} side="bottom">
-              <Button
-                data-variant="ghost"
-                data-kind="panel-toggle"
-                data-active={filesShown || undefined}
-                onClick={() => panel.toggleTab("files")}
-              >
-                <FolderIcon />
-              </Button>
-            </Tip>
-          ) : null}
-          {/* Diff needs no daemon: this session's edits are in its conversation. */}
-          <Tip label={t(diffShown ? "diff.hide" : "diff.show")} side="bottom">
-            <Button
-              data-variant="ghost"
-              data-kind="panel-toggle"
-              data-active={diffShown || undefined}
-              onClick={() => panel.toggleTab("diff")}
-            >
-              <DiffIcon />
-            </Button>
-          </Tip>
-          {panel.canOpenTerminals ? (
-            <Tip label={t(panel.terminalShown ? "terminal.hide" : "terminal.show")} side="bottom">
-              <Button
-                data-variant="ghost"
-                data-kind="panel-toggle"
-                data-active={panel.terminalShown || undefined}
-                disabled={!panel.terminalsConnected && !panel.hasTerminals}
-                onClick={() => void panel.toggleTerminal()}
-              >
-                <TerminalIcon />
-              </Button>
-            </Tip>
-          ) : null}
           <Tip
             label={t(panel.sidePanel?.open === true ? "panel.hide" : "panel.show")}
             shortcut="mod+\\"
@@ -159,6 +111,7 @@ export function SessionHeader({
             <Button
               data-variant="ghost"
               data-kind="panel-toggle"
+              data-active={panel.sidePanel?.open === true || undefined}
               onClick={() => panel.toggleSidePanel("click")}
             >
               <PanelIcon />

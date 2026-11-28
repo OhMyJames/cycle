@@ -460,3 +460,35 @@ export const TimelineIcon = ({ size = 16, ...rest }: IconProps) => (
     </g>
   </Svg>
 );
+
+/** iconmcp's grid: unfold (two chevrons apart: show every file's lines) */
+export const UnfoldIcon = ({ size = 16, ...rest }: IconProps) => (
+  <Svg size={size} {...rest}>
+    <g>
+      <path d="M5 5.5 L8 2.75 L11 5.5" />
+      <path d="M5 10.5 L8 13.25 L11 10.5" />
+    </g>
+  </Svg>
+);
+
+/** iconmcp's grid: fold (two chevrons meeting: close every file) */
+export const FoldIcon = ({ size = 16, ...rest }: IconProps) => (
+  <Svg size={size} {...rest}>
+    <g>
+      <path d="M5 2.75 L8 5.5 L11 2.75" />
+      <path d="M5 13.25 L8 10.5 L11 13.25" />
+    </g>
+  </Svg>
+);
+
+/** iconmcp's grid: wrap-text (a line that turns back under itself) */
+export const WrapIcon = ({ size = 16, ...rest }: IconProps) => (
+  <Svg size={size} {...rest}>
+    <g>
+      <path d="M2.75 4 H13.25" />
+      <path d="M2.75 8 H11.25 C12.355 8 13.25 8.895 13.25 10 C13.25 11.105 12.355 12 11.25 12 H8.75" />
+      <path d="M10.25 10.5 L8.75 12 L10.25 13.5" />
+      <path d="M2.75 12 H5.75" />
+    </g>
+  </Svg>
+);

@@ -40,10 +40,21 @@ const REVEAL_IN_DIFF_MS = 3_000;
 /** How long the answer to a check the person asked for stays on screen. */
 const UPDATE_CHECK_MS = 4_000;
 
-/** Which view of its Diff tab each session shows (this session's edits, or the workspace), and who to tell of a change. */
+/**
+ * Which view of its Diff tab each session shows (this session's edits, or the workspace), whether long lines of a
+ * change wrap (the window's, not a session's: it is how the person reads, not what they look at), and who to tell of a change.
+ */
 export class DiffModes {
   readonly #modes = new Map<string, "session" | "workspace">();
   readonly #listeners = new Set<() => void>();
+  #wrap = false;
+  /** Whether a change's long lines wrap. Not by default: code keeps its lines, and the change scrolls sideways. */
+  wraps = (): boolean => this.#wrap;
+  setWrap = (wrap: boolean): void => {
+    if (this.#wrap === wrap) return;
+    this.#wrap = wrap;
+    for (const listener of [...this.#listeners]) listener();
+  };
   get = (key: string): "session" | "workspace" | undefined => this.#modes.get(key);
   set = (key: string, mode: "session" | "workspace"): void => {
     if (this.#modes.get(key) === mode) return;

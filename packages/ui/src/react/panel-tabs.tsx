@@ -9,9 +9,11 @@ export type PanelTab = {
   /** Stable: what is remembered, and what the analytics name (a fixed word, never a title). */
   id: string;
   label: string;
+  /** What kind of tab it is, before its label: decoration, the label names it. */
+  icon?: ReactNode;
   content: ReactNode;
   /**
-   * A tab that can be closed (a Terminal): a cross on it for the pointer, and Delete or Backspace on the focused tab for
+   * A tab that can be closed: a cross on it for the pointer, and Delete or Backspace on the focused tab for
    * the keyboard (said to a screen reader as the tab's shortcut).
    */
   onClose?: (() => void) | undefined;
@@ -31,7 +33,7 @@ export function PanelTabs({
   tabs: readonly PanelTab[];
   value: string | null;
   onValueChange: (id: string) => void;
-  /** Buttons at the end of the strip, outside the tabs (New terminal). */
+  /** Buttons at the end of the strip, outside the tabs (Open a tab). */
   actions?: ReactNode;
 }) {
   return (
@@ -58,6 +60,7 @@ export function PanelTabs({
                 tab.onClose();
               }}
             >
+              {tab.icon}
               <span data-slot="panel-tab-label">{tab.label}</span>
               {tab.onClose !== undefined ? (
                 // For the pointer only: the keyboard closes the focused tab with Delete, and a button inside a tab

@@ -439,8 +439,10 @@ export const EVENTS = {
     via: z.enum(["click", "shortcut", "handle", "tab_button"]),
     tab: panelTab,
   }),
-  /** Another tab of the right panel was chosen. */
+  /** Another tab of the right panel was chosen, in its strip or in its menu of tabs to open. */
   side_panel_tab_shown: o({ tab: panelTab }),
+  /** A view's tab was closed in the panel's strip (a terminal's is `terminal_closed`). */
+  side_panel_tab_closed: o({ tab: panelTab }),
   /** The Overview took the conversation to where something began: the todo list, or a background task. */
   overview_item_revealed: o({ section: z.enum(["todo", "background", "scheduled"]) }),
   /** The line at the end of the conversation that says what still runs in the background opened the Overview. */
@@ -451,6 +453,12 @@ export const EVENTS = {
   diff_view_changed: o({ view: z.enum(["session", "workspace"]) }),
   /** A file in the Diff tab was opened to its changes, in that view. */
   diff_file_opened: o({ view: z.enum(["session", "workspace"]) }),
+  /** Every file of a Diff view was opened to its change, or closed, by the bar's one button. */
+  diff_all_toggled: o({ open: z.boolean(), view: z.enum(["session", "workspace"]) }),
+  /** Long lines of a change were set to wrap, or not to. */
+  diff_wrap_toggled: o({ wrap: z.boolean() }),
+  /** The Files tab's box found files by name: once a box used, never what was typed or found. */
+  files_found: o({}),
   /** A call's change, from the head of its diff in the conversation, opened in the Diff tab (CYCL-133). */
   diff_shown_from_conversation: o({}),
   /** The Diff tab took the conversation to the call that made an edit. */
@@ -594,6 +602,7 @@ export const UI_EVENTS = [
   "connectors_section_shown",
   "side_panel_toggled",
   "side_panel_tab_shown",
+  "side_panel_tab_closed",
   "overview_item_revealed",
   "background_shown_from_conversation",
   "file_previewed",
@@ -608,6 +617,9 @@ export const UI_EVENTS = [
   "loop_timeline_session_opened",
   "diff_view_changed",
   "diff_file_opened",
+  "diff_all_toggled",
+  "diff_wrap_toggled",
+  "files_found",
   "diff_edit_revealed",
   "diff_shown_from_conversation",
   "terminal_opened",

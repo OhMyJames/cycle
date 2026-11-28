@@ -3,6 +3,7 @@ import { afterEach, expect, test } from "vitest";
 import { cdp, userEvent } from "vitest/browser";
 import { AppStore } from "../../src/store/index.ts";
 import { fakeBridge, summary } from "../fake-bridge.ts";
+import { openTab } from "./panel.ts";
 import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
@@ -91,23 +92,63 @@ test("a deleted session's panel is forgotten", async () => {
   expect(localStorage.getItem("cycle:side-panel")).toBeNull();
 });
 
-test("the Overview's own button opens the panel on the Overview, and closes it from there", async () => {
-  const { user, tracked } = await mount();
+test("the panel's tabs are in its own strip: a view is closed there and put back from the menu of tabs, and the last tab closes the panel", async () => {
+  const { user, tracked, store } = await mount();
   await user.click(await screen.findByRole("option", { name: /first/ }));
-  await user.click(await screen.findByRole("button", { name: "Show overview" }));
+  await user.click(await screen.findByRole("button", { name: "Show panel" }));
   await waitFor(() => expect(panel()).not.toBeNull());
+  const tabs = () => screen.getAllByRole("tab").map((tab) => tab.textContent);
+  // Every view the session has is a tab from the start, each with what it is before its name. This daemon does not
+  // read folders, so it has no Files.
+  expect(tabs()).toEqual(["Overview", "Diff"]);
+  for (const tab of screen.getAllByRole("tab")) expect(tab.querySelector("svg")).not.toBeNull();
+  // The header has no button per tab: the strip is the one place to choose what the panel shows.
+  expect(screen.queryByRole("button", { name: /overview|changes|files/i })).toBeNull();
+
+  // Closed with the keyboard (Delete on the focused tab), the tab beside it is shown in its place.
+  screen.getByRole("tab", { name: "Overview" }).focus();
+  await user.keyboard("{Delete}");
+  await waitFor(() => expect(tabs()).toEqual(["Diff"]));
+  expect(screen.getByRole("tab", { name: "Diff", selected: true })).toBeDefined();
+  // Files is kept for a daemon that can show it: not offered here, it is not drawn.
+  expect(store.sidePanels.get("local:s1")).toEqual({
+    open: true,
+    tabs: ["files", "diff"],
+    active: "diff",
+  });
+
+  // The menu has every view: one that was closed is put back, at the end, and shown.
+  await user.click(screen.getByRole("button", { name: "Open a tab" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Overview" }));
+  await waitFor(() => expect(tabs()).toEqual(["Diff", "Overview"]));
   expect(screen.getByRole("tab", { name: "Overview", selected: true })).toBeDefined();
-  // The panel's own button still says it can hide the panel.
-  expect(screen.getByRole("button", { name: "Hide panel" })).toBeDefined();
-  await user.click(screen.getByRole("button", { name: "Hide overview" }));
+  // One already in the strip is shown, not added again.
+  await user.click(screen.getByRole("button", { name: "Open a tab" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Diff" }));
+  expect(screen.getByRole("tab", { name: "Diff", selected: true })).toBeDefined();
+  expect(tabs()).toEqual(["Diff", "Overview"]);
+
+  // The strip's last tab closes the panel instead, and is there when the panel opens again.
+  const cross = (name: string) =>
+    screen.getByRole("tab", { name }).querySelector('[data-slot="panel-tab-close"]') as HTMLElement;
+  await user.click(cross("Overview"));
+  await waitFor(() => expect(tabs()).toEqual(["Diff"]));
+  await user.click(cross("Diff"));
   await waitFor(() => expect(panel()).toBeNull());
+  await user.click(screen.getByRole("button", { name: "Show panel" }));
+  await waitFor(() => expect(tabs()).toEqual(["Diff"]));
   expect(tracked()).toEqual([
-    ["side_panel_toggled", { open: true, via: "tab_button", tab: "overview" }],
-    ["side_panel_toggled", { open: false, via: "tab_button", tab: "overview" }],
+    ["side_panel_toggled", { open: true, via: "click", tab: "overview" }],
+    ["side_panel_tab_closed", { tab: "overview" }],
+    ["side_panel_tab_shown", { tab: "overview" }],
+    ["side_panel_tab_shown", { tab: "diff" }],
+    ["side_panel_tab_closed", { tab: "overview" }],
+    ["side_panel_toggled", { open: false, via: "click", tab: "diff" }],
+    ["side_panel_toggled", { open: true, via: "click", tab: "diff" }],
   ]);
 });
 
-test("the header's six actions sit close together, one line of 28px buttons even in the narrowest window", async () => {
+test("the header's actions sit close together, one line of 28px buttons even in the narrowest window", async () => {
   // The narrowest window (720px, apps/desktop MIN_SIZE), as the page sees it.
   document.body.style.width = "720px";
   try {
@@ -121,7 +162,8 @@ test("the header's six actions sit close together, one line of 28px buttons even
     const buttons = [...(row?.querySelectorAll("button") ?? [])].map((x) =>
       x.getBoundingClientRect(),
     );
-    expect(buttons).toHaveLength(6);
+    // The session's menu and the panel's button: what the panel shows is chosen in the panel.
+    expect(buttons).toHaveLength(2);
     for (const box of buttons) {
       expect(box.width).toBe(28);
       expect(box.top).toBe(buttons[0]?.top);
@@ -291,7 +333,7 @@ test("a tab chosen in the panel fades in, the one it replaced gone at once", asy
     }
   });
   watch.observe(document.body, { subtree: true, attributeFilter: ["data-starting-style"] });
-  await user.click(screen.getByRole("button", { name: "Show changes" }));
+  await openTab(user, "Diff");
   await waitFor(() =>
     expect(screen.getByRole("tab", { name: "Diff" }).getAttribute("aria-selected")).toBe("true"),
   );

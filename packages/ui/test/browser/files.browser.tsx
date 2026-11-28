@@ -5,6 +5,7 @@ import { userEvent } from "vitest/browser";
 import type { FileContent, FileListing, SessionSnapshot, SessionSummary } from "../../src/api.ts";
 import { applyUpdate, emptyConversation } from "../../src/model/index.ts";
 import { fakeBridge, summary } from "../fake-bridge.ts";
+import { openPanel, openTab } from "./panel.ts";
 import { renderApp } from "./render-app.tsx";
 
 afterEach(() => {
@@ -72,6 +73,7 @@ const FILES: Record<string, FileContent> = {
 const mount = async (
   options: {
     fs?: boolean;
+    diff?: boolean;
     updates?: SessionUpdate[];
     failList?: boolean;
     sessions?: SessionSummary[];
@@ -86,7 +88,13 @@ const mount = async (
   const script = fakeBridge({
     connected: true,
     snapshot,
-    capabilities: { queue: true, files: true, folders: true, fs: options.fs ?? true },
+    capabilities: {
+      queue: true,
+      files: true,
+      folders: true,
+      fs: options.fs ?? true,
+      diff: options.diff ?? false,
+    },
   });
   if (options.sessions !== undefined) {
     const sessions = options.sessions;
@@ -127,7 +135,7 @@ const panel = () => document.querySelector('[data-slot="side-panel"]') as HTMLEl
 
 test("the Files button opens the session's folder; folders open in place, a file opens in place of the tree", async () => {
   const { user, script, tracked } = await mount();
-  await user.click(await screen.findByRole("button", { name: "Show files" }));
+  await openTab(user, "Files");
   await waitFor(() => expect(panel()).not.toBeNull());
   const tab = within(panel());
   expect(tab.getByRole("tab", { name: "Files", selected: true })).toBeDefined();
@@ -144,11 +152,23 @@ test("the Files button opens the session's folder; folders open in place, a file
   expect(src.getAttribute("aria-expanded")).toBe("true");
   await user.click(tab.getByRole("button", { name: "main.ts" }));
   await waitFor(() =>
-    expect(tab.getByText("src/main.ts").closest('[data-slot="files"]')?.textContent).toContain(
-      "let x = 1;",
-    ),
+    expect(panel().querySelector('[data-slot="files"]')?.textContent).toContain("let x = 1;"),
   );
-  expect(tab.getByText("src/main.ts")).toBeDefined();
+  // Where it is, in the bar: the folder it is in leads back to the tree, its name is where the person is.
+  const where = tab.getByRole("navigation", { name: "Where this file is" });
+  expect(where.textContent).toBe("src/main.ts");
+  expect(within(where).getByRole("button", { name: "src" })).toBeDefined();
+  expect(within(where).getByText("main.ts").getAttribute("aria-current")).toBe("page");
+  // The file's lines are numbered and drawn in the panel itself: no card around them, no head with its language.
+  const body = panel().querySelector<HTMLElement>('[data-streamdown="code-block-body"]');
+  expect(getComputedStyle(body as HTMLElement).borderTopWidth).toBe("0px");
+  expect(
+    getComputedStyle(body?.querySelector("pre > code > span") as HTMLElement, "::before").content,
+  ).toBe("counter(files-line)");
+  expect(
+    getComputedStyle(panel().querySelector('[data-streamdown="code-block-header"]') as HTMLElement)
+      .display,
+  ).toBe("none");
   await user.click(tab.getByRole("button", { name: "Back to files" }));
   // Back where it was: the folder still open.
   expect(await tab.findByRole("button", { name: "main.ts" })).toBeDefined();
@@ -159,7 +179,7 @@ test("the Files button opens the session's folder; folders open in place, a file
 
 test("Markdown is drawn, an image is shown, and a file with no preview says so", async () => {
   const { user, tracked } = await mount();
-  await user.click(await screen.findByRole("button", { name: "Show files" }));
+  await openTab(user, "Files");
   // Open, not still sliding open: till then the panel's left edge, where "Back to files" is, is cut off.
   await waitFor(() => expect(document.querySelector("[data-slot=split][data-animate]")).toBeNull());
   const tab = within(panel());
@@ -181,7 +201,7 @@ test("Markdown is drawn, an image is shown, and a file with no preview says so",
 
 test("a folder that cannot be read says why, in the daemon's words, and can be read again", async () => {
   const { user, stopFailing } = await mount({ failList: true });
-  await user.click(await screen.findByRole("button", { name: "Show files" }));
+  await openTab(user, "Files");
   const tab = within(panel());
   expect(await tab.findByRole("alert")).toBeDefined();
   expect(tab.getByText("The folder could not be read")).toBeDefined();
@@ -237,7 +257,7 @@ test("a file the agent read, and a file named with @, are shown in Files from th
 
 test("a daemon that cannot show files is not offered Files, and a mention stays words", async () => {
   const u = (update: object) => update as SessionUpdate;
-  await mount({
+  const { user } = await mount({
     fs: false,
     updates: [
       u({
@@ -257,8 +277,72 @@ test("a daemon that cannot show files is not offered Files, and a mention stays 
   });
   const log = await screen.findByRole("log", { name: "Conversation" });
   expect(await within(log).findByText(/Look at @src\/main\.ts/)).toBeDefined();
-  expect(screen.queryByRole("button", { name: "Show files" })).toBeNull();
   expect(within(log).queryByRole("button", { name: "src/main.ts" })).toBeNull();
+  // Neither a tab of the panel nor a choice in its menu of tabs.
+  const tab = within(await openPanel(user));
+  expect(tab.getByRole("tab", { name: "Diff" })).toBeDefined();
+  expect(tab.queryByRole("tab", { name: "Files" })).toBeNull();
+  await user.click(tab.getByRole("button", { name: "Open a tab" }));
+  expect(await screen.findByRole("menuitem", { name: "Diff" })).toBeDefined();
+  expect(screen.queryByRole("menuitem", { name: "Files" })).toBeNull();
+});
+
+test("what git says changed is marked in the tree, and the box finds a file by name wherever it is", async () => {
+  const { user, script, tracked } = await mount({ diff: true });
+  script.bridge.workspaceStatus = async () => ({
+    state: "ok",
+    head: "0123456789abcdef0123456789abcdef01234567",
+    truncated: false,
+    files: [
+      { path: "src/main.ts", status: "modified", additions: 3, deletions: 1 },
+      { path: "README.md", status: "untracked", additions: 2, deletions: 0 },
+    ],
+  });
+  script.bridge.searchFiles = async (_e, _where, query) => {
+    script.calls.push(["searchFiles", query]);
+    return query === "zzz"
+      ? { root: "/work", entries: [], truncated: false }
+      : {
+          root: "/work",
+          entries: [
+            { path: "src/main.ts", kind: "file" },
+            { path: "src", kind: "folder" },
+          ],
+          truncated: false,
+        };
+  };
+  await openTab(user, "Files");
+  const tab = within(panel());
+  // A file that changed says how, and how much; the folder it is in says something inside did; the rest say nothing.
+  const readme = await tab.findByRole("button", { name: /README\.md/ });
+  await waitFor(() => expect(readme.textContent).toContain("untracked"));
+  expect(readme.textContent).toContain("+2");
+  expect(tab.getByRole("button", { name: /^src/ }).textContent).toContain("has changes inside");
+  expect(tab.getByRole("button", { name: /logo\.png/ }).textContent).toBe("logo.png");
+
+  // What is typed is asked of the daemon once the typing stops, and what fits is a row each in place of the tree.
+  const box = tab.getByRole("searchbox", { name: "Find a file by name" });
+  await user.type(box, "main");
+  const found = await tab.findByRole("button", { name: /src\/main\.ts/ });
+  expect(found.textContent).toContain("+3");
+  expect(tab.queryByRole("button", { name: /README\.md/ })).toBeNull();
+  expect(script.calls.filter(([n]) => n === "searchFiles")).toEqual([["searchFiles", "main"]]);
+  await user.click(found);
+  await waitFor(() =>
+    expect(panel().querySelector('[data-slot="files"]')?.textContent).toContain("let x = 1;"),
+  );
+  // Back, the box is as it was left; a name nothing has says so; cleared, the tree is there again.
+  await user.click(tab.getByRole("button", { name: "Back to files" }));
+  await user.clear(box);
+  await user.type(box, "zzz");
+  expect(await tab.findByText("No file or folder has that in its name")).toBeDefined();
+  await user.clear(box);
+  expect(await tab.findByRole("button", { name: /README\.md/ })).toBeDefined();
+  // Counted that the box was used, never what was typed.
+  expect(tracked()).toEqual([
+    ["files_found", {}],
+    ["file_previewed", { kind: "text" }],
+  ]);
 });
 
 test("each session's Files tab is its own: another session shows its own folder, not this one's", async () => {
@@ -268,10 +352,10 @@ test("each session's Files tab is its own: another session shows its own folder,
       { ...summary("s2"), title: "second" },
     ],
   });
-  await user.click(await screen.findByRole("button", { name: "Show files" }));
+  await openTab(user, "Files");
   expect(await within(panel()).findByRole("button", { name: "src" })).toBeDefined();
   await user.click(await screen.findByRole("option", { name: /second/ }));
-  await user.click(await screen.findByRole("button", { name: "Show files" }));
+  await openTab(user, "Files");
   await waitFor(() => expect(panel()).not.toBeNull());
   expect(await within(panel()).findByRole("button", { name: "two.txt" })).toBeDefined();
   expect(within(panel()).queryByRole("button", { name: "src" })).toBeNull();
@@ -296,7 +380,7 @@ const markOf = () => panel().querySelector<HTMLElement>('[data-slot="files-line-
 const seen = (element: HTMLElement | undefined) => {
   if (element === undefined) return false;
   const at = element.getBoundingClientRect();
-  const head = panel().querySelector('[data-slot="files"] > [data-slot="files-head"]');
+  const head = panel().querySelector('[data-slot="files"] > [data-slot="panel-bar"]');
   const top = head?.getBoundingClientRect().bottom ?? panel().getBoundingClientRect().top;
   return at.top >= top - 1 && at.bottom <= panel().getBoundingClientRect().bottom + 1;
 };
@@ -389,13 +473,13 @@ test("a file already shown from its top, named with a line, scrolls there; with 
   try {
     const { user } = await mount({ updates: [say("Look at `src/long.ts:90`.")] });
     fitWindow();
-    // Opened from the tree first: shown from its top, in part, nothing marked.
-    await user.click(await screen.findByRole("button", { name: "Show files" }));
+    // Opened from the tree first: shown from its top, whole (a file is never shown in part), nothing marked.
+    await openTab(user, "Files");
     const tab = within(panel());
     await user.click(await tab.findByRole("button", { name: "src" }));
     await user.click(await tab.findByRole("button", { name: "long.ts" }));
     await waitFor(() => expect(lineOf(1)).toBeDefined());
-    expect(panel().querySelector('[data-slot="code-fold"][data-folded]')).not.toBeNull();
+    expect(panel().querySelector('[data-slot="code-fold"][data-folded]')).toBeNull();
     expect(markOf()).toBeNull();
     const log = await screen.findByRole("log", { name: "Conversation" });
     await user.click(within(log).getByRole("link", { name: "src/long.ts:90" }));

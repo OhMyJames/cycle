@@ -385,7 +385,7 @@ Streamdown 的标记用 Tailwind 的工具类,而且用的是 shadcn 的颜色�
 
 右侧面板里可以开 session 的终端:shell 跑在 daemon 那边,在 session 的文件夹里,本地和 ssh 一样(protocol.md §8"终端",决定笔记 [2026-11-22-terminals-in-the-daemon-over-l1](../.agents/notes/2026-11-22-terminals-in-the-daemon-over-l1.md))。daemon 没有能力 `terminal` 时,界面上没有终端的入口。
 
-- **入口**:会话头部的终端按钮。没有终端时开一个;有就显示上次看的那个,没看过就显示最新的;正在看终端时再按就收起面板。面板标签条末尾的 **New terminal** 再开一个。每个终端一个标签,排在 Overview、Files、Diff 之后,标题是 shell 的名字,shell 设了标题就换成它。
+- **入口**:面板标签条末尾 `+` 菜单里的 **New terminal**(2026-11-28 起会话头部只留开关面板的一个按钮,见 `.agents/notes/2026-11-28-right-panel-tabs-chosen-in-its-strip.md`);已有的终端就是标签条里的标签,点它即可。每个终端一个标签,排在 Overview、Files、Diff 之后,标题是 shell 的名字,shell 设了标题就换成它。
 - **标签从哪来**:终端是 daemon 的,不存在页面里。标签条显示的就是 daemon 列出的这个 session 的终端(`_cycle/terminal/list` 加 `changed` 通知);`side-panel.ts` 只记住上次显示的是哪一个。所以重开应用、刷新页面后标签还在,从 daemon 的屏幕重画。
 - **关闭**:点标签上的叉,或者焦点在标签上时按 Delete 或 Backspace。关闭会结束 shell 和里面跑的东西,不再确认(删除会话才要确认)。关掉正在看的标签时,显示它前面那个。daemon 没收到关闭(连接正好断了)时,说出原因,重新读列表,shell 还在的话标签回来。
 - **显示和输入**:页面用 `@xterm/xterm` 画,只有显示着的标签附着(`attach`),切走或收起就 `detach`,不看的终端不占这边的资源。`attach` 的应答和输出走两条路,先后不定:输出先到的先存着,应答到了以后丢掉屏幕里已经有的(`seq` 不大于应答的),落后时 daemon 发 `reset` 也一样(`terminals.ts` 的 `TerminalFeed`)。按键和粘贴原样发出,大段粘贴切成小于 64 KiB 的几段。复制粘贴用的是应用菜单的复制、粘贴,xterm 自己处理,页面不需要剪贴板权限。

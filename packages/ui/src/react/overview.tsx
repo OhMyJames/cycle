@@ -1,7 +1,7 @@
 // The Overview tab of the right panel (CYCL-88): what the open session is doing besides its turns, read from what the
 // daemon replays, so it is the same after a restart. From where it runs to what it is doing: the location, the goal
-// (only when one is set), the context window, the todo list, the background, what is scheduled. A block with nothing to show
-// says why in a line; what the agent does not report is said, not made up (.agents/notes/2026-11-22-overview-sources-and-layout.md).
+// (only when one is set), the context window, the todo list, the background, what is scheduled. The blocks with nothing to
+// show are a line each at the end, saying why; what the agent does not report is said, not made up (.agents/notes/2026-11-22-overview-sources-and-layout.md).
 import { Button } from "@ui-sdk/react/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "@ui-sdk/react/collapsible";
 import { type ReactNode, useCallback, useId, useMemo } from "react";
@@ -244,6 +244,16 @@ export function Overview() {
           ? t("overview.goal.set", { when })
           : undefined;
 
+  // The blocks that have nothing to show, each with why.
+  const nothing: [title: string, why: string][] = [];
+  if (plan === undefined) nothing.push([t("overview.todo"), t("overview.todo.empty")]);
+  if (background.length === 0)
+    nothing.push([t("overview.background"), t("overview.background.empty")]);
+  if (schedules === undefined)
+    nothing.push([t("overview.scheduled"), t("overview.scheduled.unknown")]);
+  else if (schedules.jobs.length === 0)
+    nothing.push([t("overview.scheduled"), t("overview.scheduled.empty")]);
+
   const row = (item: BackgroundRow) => {
     const label = (
       <>
@@ -403,81 +413,86 @@ export function Overview() {
         />
       </section>
 
-      <Section
-        title={t("overview.todo")}
-        aside={
-          plan !== undefined ? (
+      {plan !== undefined ? (
+        <Section
+          title={t("overview.todo")}
+          aside={
             <span data-slot="overview-count">
               {t("plan.progress", { done, count: plan.entries.length })}
             </span>
-          ) : undefined
-        }
-      >
-        {plan !== undefined ? (
-          <>
-            <PlanList entries={plan.entries} />
-            <Button
-              data-variant="ghost"
-              data-kind="overview-link"
-              onClick={() => goTo(plan.id, "todo")}
-            >
-              {t("overview.showInConversation")}
-            </Button>
-          </>
-        ) : (
-          <Quiet>{t("overview.todo.empty")}</Quiet>
-        )}
-      </Section>
+          }
+        >
+          <PlanList entries={plan.entries} />
+          <Button
+            data-variant="ghost"
+            data-kind="overview-link"
+            onClick={() => goTo(plan.id, "todo")}
+          >
+            {t("overview.showInConversation")}
+          </Button>
+        </Section>
+      ) : null}
 
-      <Section
-        title={t("overview.background")}
-        aside={
-          working > 0 ? (
-            <span data-slot="overview-count">
-              {t("overview.background.running", { count: working })}
-            </span>
-          ) : undefined
-        }
-      >
-        {running.length > 0 ? (
-          <ul data-slot="overview-list">{running.map(row)}</ul>
-        ) : (
-          <Quiet>{t("overview.background.empty")}</Quiet>
-        )}
-        {ended.length > 0 ? (
-          <Collapsible data-kind="overview-ended">
-            <CollapsibleTrigger>
-              {t("overview.background.ended", { count: ended.length })}{" "}
-              <ChevronRightIcon size={12} data-slot="tool-chevron" aria-hidden="true" />
-            </CollapsibleTrigger>
-            <CollapsiblePanel>
-              <ul data-slot="overview-list">{ended.map(row)}</ul>
-            </CollapsiblePanel>
-          </Collapsible>
-        ) : null}
-      </Section>
+      {background.length > 0 ? (
+        <Section
+          title={t("overview.background")}
+          aside={
+            working > 0 ? (
+              <span data-slot="overview-count">
+                {t("overview.background.running", { count: working })}
+              </span>
+            ) : undefined
+          }
+        >
+          {running.length > 0 ? (
+            <ul data-slot="overview-list">{running.map(row)}</ul>
+          ) : (
+            <Quiet>{t("overview.background.empty")}</Quiet>
+          )}
+          {ended.length > 0 ? (
+            <Collapsible data-kind="overview-ended">
+              <CollapsibleTrigger>
+                {t("overview.background.ended", { count: ended.length })}{" "}
+                <ChevronRightIcon size={12} data-slot="tool-chevron" aria-hidden="true" />
+              </CollapsibleTrigger>
+              <CollapsiblePanel>
+                <ul data-slot="overview-list">{ended.map(row)}</ul>
+              </CollapsiblePanel>
+            </Collapsible>
+          ) : null}
+        </Section>
+      ) : null}
 
-      <Section
-        title={t("overview.scheduled")}
-        aside={
-          schedules !== undefined && schedules.jobs.length > 0 ? (
+      {schedules !== undefined && schedules.jobs.length > 0 ? (
+        <Section
+          title={t("overview.scheduled")}
+          aside={
             <span data-slot="overview-count">
               {t("overview.scheduled.count", { count: schedules.jobs.length })}
             </span>
-          ) : undefined
-        }
-      >
-        {schedules === undefined ? (
-          <Quiet>{t("overview.scheduled.unknown")}</Quiet>
-        ) : schedules.jobs.length === 0 ? (
-          <Quiet>{t("overview.scheduled.empty")}</Quiet>
-        ) : (
-          <>
-            <ul data-slot="overview-list">{schedules.jobs.map(scheduledRow)}</ul>
-            {schedules.dormant ? <Quiet>{t("overview.scheduled.dormant")}</Quiet> : null}
-          </>
-        )}
-      </Section>
+          }
+        >
+          <ul data-slot="overview-list">{schedules.jobs.map(scheduledRow)}</ul>
+          {schedules.dormant ? <Quiet>{t("overview.scheduled.dormant")}</Quiet> : null}
+        </Section>
+      ) : null}
+
+      {/* The blocks with nothing in them, together at the end: a line each that says why, where a block each was
+          most of a panel saying "nothing". Said, not left out: what the agent does not report is not made up. */}
+      {nothing.length > 0 ? (
+        <section
+          data-slot="overview-section"
+          data-kind="nothing"
+          aria-label={t("overview.nothing")}
+        >
+          <dl data-slot="overview-facts-list">
+            {nothing.map(([title, why]) => [
+              <dt key={`${title}:t`}>{title}</dt>,
+              <dd key={`${title}:d`}>{why}</dd>,
+            ])}
+          </dl>
+        </section>
+      ) : null}
     </div>
   );
 }

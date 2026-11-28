@@ -612,7 +612,7 @@ nav:has([data-slot="app-notice"]) [data-slot="sidebar-scroll"] {
   align-items: center;
 }
 
-/* A tab's button while its tab is what the panel shows: the selected surface, as a chosen tab has. */
+/* The panel's button while the panel is open: the selected surface, as a chosen tab has. */
 [data-kind="panel-toggle"][data-active] {
   background: var(--cycle-surface-selected);
 }

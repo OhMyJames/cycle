@@ -8,16 +8,19 @@ import {
   ansiTail,
   plainText,
 } from "../ansi.ts";
+import { skippedLines } from "../diff-gaps.ts";
 import { insideFolder, shownPath } from "../files-view.ts";
 import type { Translator } from "../i18n.ts";
-import type { DiffLine, ToolFacts, ToolItem } from "../model/index.ts";
 import {
   activityOf,
   commandLabelOf,
   commandOf,
+  type DiffLine,
   editPathOf,
   isLive,
   streamsOf,
+  type ToolFacts,
+  type ToolItem,
   toolFacts,
 } from "../model/index.ts";
 import { reveal } from "../reveal.ts";
@@ -715,6 +718,7 @@ export function DiffView({ lines }: { lines: DiffLine[] }) {
   const { t } = useI18n();
   const store = useAppStore();
   const [limit, setLimit] = useState(MAX_DIFF_LINES);
+  const skipped = useMemo(() => skippedLines(lines), [lines]);
   // The first hunk's marker says only that the change starts somewhere: its numbers say where. Between hunks it marks the gap.
   const shown = (lines[0]?.kind === "hunk" ? lines.slice(1) : lines).slice(0, limit);
   const rest =
@@ -733,7 +737,13 @@ export function DiffView({ lines }: { lines: DiffLine[] }) {
           {line.kind !== "hunk" ? (
             <span data-slot="visually-hidden">{t(`tool.diff.${line.kind}`)}</span>
           ) : null}
-          <span data-slot="diff-text">{line.kind === "hunk" ? "" : line.text}</span>
+          <span data-slot="diff-text">
+            {line.kind !== "hunk"
+              ? line.text
+              : skipped.has(line.id)
+                ? t("tool.diff.skipped", { count: skipped.get(line.id) ?? 0 })
+                : ""}
+          </span>
         </div>
       ))}
       {rest > 0 ? (
