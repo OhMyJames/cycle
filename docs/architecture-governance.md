@@ -29,6 +29,6 @@
 | 工具链、目录所有权   | 增量选包与 ACP catalog 门禁曾各复制一份目录 glob。二者改读根清单，重叠模式去重。用自定义目录和未注册目录作回归样例。                                                                             |
 | 持久化与缓存         | daemon 的 JsonFile 串行修改并在写失败时回滚内存。desktop 的 KeptEntries 在持久化成功后确认未知字段和条目。保留两端各自的契约，见两个 json-file.ts 和各自的调用方。                               |
 | 分层约束             | 分区门禁已迁移至 Oxc 语法树。删除自制词法器，保留类型、动态导入和 require 检查。原压力测试在本机用时约 0.5 秒，上限 3 秒。                                                                       |
-| UI、状态与业务模型   | 继续核对 renderer、store、纯 model 的实际依赖与写入路径，按 DESIGN.md 和 packages/ui/AGENTS.md 验证。                                                                                            |
+| UI、状态与业务模型   | Harness 已迁入 LocationScope，与订阅、API keys、Vault 共用位置选择、断线保留、能力回退与空状态。每页原有的能力缓存寿命保留。曝光由选中的 Harness 上报，浏览器用例核对两次位置曝光。              |
 | 错误、重试、可观测性 | 桌面主进程的终端限额、connector 和配置保存错误改读协议字典。纯 UI 模型沿用分区约束，由重发测试以 CycleErrorCode 校验四种失败投影。client 持有连接重连的退避计时，Loop 主进程轮询按项目独立退避。 |
 | 配置、权限与身份     | 继续核对 harness 注册表到启动环境、凭证存储与代理网关的调用路径。                                                                                                                                |

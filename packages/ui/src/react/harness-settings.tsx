@@ -4,14 +4,6 @@
 // Degrades smoothly to Session defaults only when connected to an older daemon without `agentSetup`.
 import type { AgentWord } from "@cycle/analytics/events";
 import { Button } from "@ui-sdk/react/button";
-import { Field, FieldLabel } from "@ui-sdk/react/field";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@ui-sdk/react/select";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AgentInfo,
@@ -24,6 +16,7 @@ import { useAgentSetup } from "./agent-setup.ts";
 import { ConfigForm, RuntimeConfigForm, type RuntimeFieldText } from "./config-form.tsx";
 import { StorageGroup } from "./harness-storage.tsx";
 import { useI18n } from "./i18n.tsx";
+import { LocationScope } from "./location-scope.tsx";
 import { PageGroup, PageRow, PageRows } from "./page-layout.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
@@ -86,96 +79,48 @@ export function HarnessSection({
   from,
   onShowLocations,
 }: HarnessSectionProps) {
-  const { t } = useI18n();
   const store = useAppStore();
-  const connected = locations.filter((e) => status[e.id]?.state === "connected");
-  // The chosen location stays chosen while it reconnects: swapping to another (or to none) would unmount the page
-  // and with it a sign-in dialog, which must say that the connection dropped and offer the command instead.
-  const chosen = locations.find((e) => e.id === locationId);
-  const holding = chosen !== undefined && status[chosen.id]?.state === "reconnecting";
-  const location = holding ? chosen : (connected.find((e) => e.id === locationId) ?? connected[0]);
-  const choices = locations.filter(
-    (e) => status[e.id]?.state === "connected" || (holding && e === chosen),
-  );
   const knownSetup = useRef<Record<string, boolean>>({});
-  const revision = useAppState((s) =>
-    location !== undefined ? (s.defaultsRevision[location.id] ?? 0) : 0,
+  const tracked = useRef<string | undefined>(undefined);
+  const trackShown = useCallback(
+    (location: LocationConfig) => {
+      const key = `${agentId}:${location.id}:${from}`;
+      if (tracked.current === key) return;
+      tracked.current = key;
+      store.track("harness_settings_shown", {
+        agent: agentWord(agentId),
+        location: location.kind,
+        from,
+      });
+    },
+    [agentId, from, store],
   );
-
-  // Track which Harness sub-page is shown (behavioral words only, never location names or paths).
-  const trackedRef = useRef<string | undefined>(undefined);
-  useEffect(() => {
-    if (location === undefined) return;
-    const key = `${agentId}:${location.id}:${from}`;
-    if (trackedRef.current === key) return;
-    trackedRef.current = key;
-    store.track("harness_settings_shown", {
-      agent: agentWord(agentId),
-      location: location.kind,
-      from,
-    });
-  }, [store, agentId, location, from]);
-
-  if (location === undefined) {
-    return (
-      <StateBlock
-        size="inline"
-        align="start"
-        tone="away"
-        title={t("settings.defaults.none")}
-        body={t("settings.defaults.noneBody")}
-        action={{ label: t("settings.defaults.showLocations"), onAction: onShowLocations }}
-      />
-    );
-  }
-
-  const envStatus = status[location.id];
-  // What the daemon said it can do, kept through a reconnect (when it has not said again yet).
-  const said = envStatus?.capabilities?.agentSetup;
-  if (said !== undefined) knownSetup.current[location.id] = said === true;
-  const supportsSetup =
-    said === true || (said === undefined && knownSetup.current[location.id] === true);
-  const agentInfo = (agents[location.id] ?? []).find((a) => a.id === agentId);
 
   return (
-    <>
-      {choices.length > 1 ? (
-        <div data-slot="page-form">
-          <Field name="location">
-            <FieldLabel>{t("settings.defaults.location")}</FieldLabel>
-            <Select
-              items={choices.map((e) => ({ value: e.id, label: e.name }))}
-              value={location.id}
-              onValueChange={(next) => {
-                if (typeof next === "string") onLocationChange(next);
-              }}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {choices.map((e) => (
-                  <SelectItem key={e.id} value={e.id}>
-                    {e.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-        </div>
-      ) : null}
-
-      <HarnessLocationBody
-        key={`${location.id}:${agentId}:${supportsSetup ? "setup" : "legacy"}`}
-        agentId={agentId}
-        agentName={agentInfo?.name ?? agentName}
-        agentInfo={agentInfo}
-        location={location}
-        supportsSetup={supportsSetup}
-        supportsStorage={envStatus?.capabilities?.storage === true}
-        revision={revision}
-      />
-    </>
+    <LocationScope
+      locations={locations}
+      status={status}
+      locationId={locationId}
+      onLocationChange={onLocationChange}
+      onShowLocations={onShowLocations}
+      knownSetup={knownSetup}
+    >
+      {(location, supportsSetup) => {
+        const agentInfo = agents[location.id]?.find((agent) => agent.id === agentId);
+        return (
+          <HarnessLocationBody
+            key={`${location.id}:${agentId}:${supportsSetup ? "setup" : "legacy"}`}
+            agentId={agentId}
+            agentName={agentInfo?.name ?? agentName}
+            agentInfo={agentInfo}
+            location={location}
+            supportsSetup={supportsSetup}
+            supportsStorage={status[location.id]?.capabilities?.storage === true}
+            onShown={trackShown}
+          />
+        );
+      }}
+    </LocationScope>
   );
 }
 
@@ -186,7 +131,7 @@ function HarnessLocationBody({
   location,
   supportsSetup,
   supportsStorage,
-  revision,
+  onShown,
 }: {
   agentId: string;
   agentName: string;
@@ -195,10 +140,12 @@ function HarnessLocationBody({
   supportsSetup: boolean;
   /** The daemon can say what the agent keeps and clear its caches. */
   supportsStorage: boolean;
-  revision: number;
+  onShown: (location: LocationConfig) => void;
 }) {
   const { t } = useI18n();
   const store = useAppStore();
+  const revision = useAppState((s) => s.defaultsRevision[location.id] ?? 0);
+  useEffect(() => onShown(location), [location, onShown]);
   // Whether the agent is listed, not the listing itself: a new agents list (a reconnect) is not a reason to read again.
   const hasAgent = agentInfo !== undefined;
   const [runtimeBusyKey, setRuntimeBusyKey] = useState<string | undefined>(undefined);

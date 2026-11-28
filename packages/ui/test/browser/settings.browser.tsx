@@ -409,6 +409,11 @@ test("Harness tab shows read-only Host diagnostics, local reveal and the stale n
   await user.click(await screen.findByRole("option", { name: "Build box" }));
   expect(await screen.findByText("config.json changed since daemon startup")).toBeTruthy();
 
+  expect(tracked(script.calls).filter(([event]) => event === "harness_settings_shown")).toEqual([
+    ["harness_settings_shown", { agent: "claude", location: "local", from: "settings" }],
+    ["harness_settings_shown", { agent: "claude", location: "remote", from: "settings" }],
+  ]);
+
   // Subscriptions, on the same remote location: signed out, with the command to copy.
   await user.click(screen.getByRole("tab", { name: "Subscriptions" }));
   expect((await screen.findAllByText("Not signed in")).length).toBe(2);
@@ -445,14 +450,6 @@ test("Harness tab shows read-only Host diagnostics, local reveal and the stale n
       { forceRefresh: true, refreshUsage: true },
     ]),
   );
-  expect(tracked(script.calls)).toContainEqual([
-    "harness_settings_shown",
-    { agent: "claude", location: "local", from: "settings" },
-  ]);
-  expect(tracked(script.calls)).toContainEqual([
-    "harness_settings_shown",
-    { agent: "claude", location: "remote", from: "settings" },
-  ]);
 });
 
 test("older daemon without agentSetup capability smoothly degrades Harness tab to Session defaults without calling readAgentSetup", async () => {
