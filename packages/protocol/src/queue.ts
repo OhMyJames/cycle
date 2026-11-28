@@ -28,6 +28,8 @@ export const QueueUpdateSchema = z.object({
   returnId: z.string().optional(),
   returned: z.array(QueueEntrySchema).optional(),
   reason: QueueReasonSchema.optional(),
+  /** The queue is held because the daemon is draining to update; its entries are sent after the switch (docs/protocol.md §8). */
+  hold: z.literal("update").optional(),
 });
 export type QueueUpdate = z.infer<typeof QueueUpdateSchema>;
 

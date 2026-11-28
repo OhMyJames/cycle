@@ -9,7 +9,17 @@ export const DaemonUpdateStateSchema = z.object({
   /** "on": it looks for new versions and switches when idle. "off": from source, inside an app bundle, or turned off. */
   updates: z.enum(["on", "off"]),
   /** Downloaded and checked, waiting for the daemon to be idle. */
-  pending: z.object({ version: z.string() }).optional(),
+  pending: z
+    .object({
+      version: z.string(),
+      /** "waiting": looking for a quiet moment. "draining": no new turns start; new prompts queue (CYC-547). */
+      state: z.enum(["waiting", "draining"]).optional(),
+      /** When it entered `state`, ISO 8601 UTC. */
+      since: z.string().optional(),
+      /** While draining: when the daemon will switch whatever is still running. */
+      forceAt: z.string().optional(),
+    })
+    .optional(),
 });
 export type DaemonUpdateState = z.infer<typeof DaemonUpdateStateSchema>;
 

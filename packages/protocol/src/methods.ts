@@ -179,4 +179,6 @@ export const NOTIFICATIONS = {
   requestResolved: "_cycle/request_resolved",
   agentDefaultsChanged: "_cycle/agent_defaults_changed",
   providersChanged: "_cycle/providers_changed",
+  /** The daemon's update state changed (params: `DaemonUpdateStateSchema`); only to clients that sent `cycle/updateNotify`. */
+  daemonUpdate: "_cycle/daemon/update",
 } as const;

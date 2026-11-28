@@ -60,13 +60,15 @@ ACP 方法和类型已对照 `@agentclientprotocol/sdk` 2.7.0 的 v2 稳定版 J
   "sessionMentions": true,
   "search": true,
   "terminal": true,
-  "selfUpdate": true
+  "selfUpdate": true,
+  "selfUpdateDrain": true
 }
 ```
 
 - **旧 daemon 的降级**:远程 daemon 可能比客户端旧。`sessionOps` 里没有 `markRead` 的 daemon,客户端不发 `_cycle/session/mark_read`;它的列表里没有 `updatedAt`、`cycle/unread`、`cycle/background`,客户端按"缺失"处理,不得报错,也不得把缺失当成 `false` 或 0 以外的意思(规则见 §6)。
 
-- **daemon 自更新的状态(`_cycle/daemon/update/read`,CYC-538)**:`{}` → `{version, updates, pending?}`。`version` 是这个 daemon 自己的版本;`updates` 是 `"on"`(装在可以自己更新的位置,会定时查发布通道)或 `"off"`(从源码运行、装在应用包里、关掉了,或没有内置公钥);`pending` 只在已下载、校验好、等着空闲时切换的新版本存在,形如 `{version}`。daemon 的 `cycle/capabilities` 有 `selfUpdate: true` 时才有这个方法;没有的(旧 daemon)客户端当作没有待装版本。Loop 在领新单前读它:有 `pending` 就不领新单,已在进行的 run 照常(docs/daemon.md "自动更新")。daemon 切换版本就是一次停止和启动:连接断开,客户端照常重连到新版本。
+- **daemon 自更新的状态(`_cycle/daemon/update/read`,CYC-538)**:`{}` → `{version, updates, pending?}`。`version` 是这个 daemon 自己的版本;`updates` 是 `"on"`(装在可以自己更新的位置,会定时查发布通道)或 `"off"`(从源码运行、装在应用包里、关掉了,或没有内置公钥);`pending` 只在已下载、校验好、等着切换的新版本存在,形如 `{version, state?, since?, forceAt?}`(CYC-547):`state` 是 `"waiting"`(等空档:没有回合在跑且安静 15 秒就切换)或 `"draining"`(排空:不再开新回合,新 prompt 一律入队,见 §8);`since` 是进入该阶段的时间(ISO 8601、UTC);`forceAt` 只在 `draining` 时有,是预计兜底(按 `cycle update --now` 打断并切换)的时间。三个字段都可选,旧客户端忽略,没有 `state` 的按 `waiting` 看待。daemon 的 `cycle/capabilities` 有 `selfUpdate: true` 时才有这个方法;没有的(旧 daemon)客户端当作没有待装版本。Loop 在领新单前读它:有 `pending` 就不领新单,已在进行的 run 照常(docs/daemon.md "自动更新")。daemon 切换版本就是一次停止和启动:连接断开,客户端照常重连到新版本。
+- **更新通知(`_cycle/daemon/update`,CYC-547)**:daemon → 客户端,参数同 `_cycle/daemon/update/read` 的结果。阶段变化(新版本就绪、进入 `draining`)和切换完成(没有 `pending`)时发。只发给在 `initialize` 的 `_meta["cycle/updateNotify"]` 里为 `true` 的客户端;能力 `selfUpdateDrain: true` 表示 daemon 支持上面的字段和这条通知。新客户端读旧 daemon(没有 `selfUpdateDrain`)时不会有这些字段,也不会收到通知,按 `read` 的结果或没有待装版本处理;旧客户端读新 daemon 时忽略不认识的字段,不会收到通知。
 - 桌面端在 `initialize` 的 `_meta["cycle/appVersion"]` 里报自己的版本,格式 `x.y.z`,其他格式不记。daemon 把最近一次报来的写进数据目录的 `app-version`,`cycle update` 默认装这个版本。别的客户端不发。
 - 客户端在 `initialize` 的 `capabilities.elicitation.form` 里声明自己能回答表单式的提问(见 §9)。不声明就不会收到 `elicitation/create`。
 - 每个 agent 能收什么样的 prompt 内容、能不能带 MCP 服务器等,不在这里:daemon 的 `initialize` 不依赖具体 agent,放在 `_cycle/agents/list`(§10)。
@@ -439,14 +441,18 @@ session 不是 `idle` 时(`running` 或 `requires_action`),`session/prompt` 不�
   "entries": [{ "queueId": "…", "prompt": [{ "type": "text", "text": "…" }] }],
   "returnId": "…",
   "returned": [{ "queueId": "…", "prompt": [] }],
-  "reason": "cancelled"
+  "reason": "cancelled",
+  "hold": "update"
 }
 ```
+
+`hold` 可选(CYC-547),只有 `"update"` 一个值:daemon 正在为更新排空,这个队列是因为它扣着不开新回合而排的(§3 `draining`)。没有这个字段(旧 daemon、没有扣着)的快照照常解析。
 
 - **`entries` 是状态,`returned` 是事件。** 客户端以最后一条的 `entries` 为当前队列,所以从任意位置补发都能得到它。`returned` 和 `reason` 只在队列被退回的那一条里出现,daemon 只交给最早完成附着且仍在线的一个客户端。客户端**只在它实时到达时**(`replay_complete` 之后)把内容放回输入框;补发过程中遇到的 `returned` 一律忽略,否则重启应用后每次历史里的退回都会再放一遍。
 - **附件字节**照决策 0013 存进 blob(daemon 的提取是递归的,覆盖快照里的 `entries[].prompt[]` 和 `returned[].prompt[]`),同一份内容按 sha256 只存一次,快照反复出现不会反复占用空间。
 - **发出**:turn 以 `idle` 加 `stopReason: "end_turn"` 结束时,daemon 取队头发给 agent,再发一条新的 `_cycle/queue_update`。它的 `user_message` 和直接发的 prompt 一样,来自 agent 收到时的回显(Claude 适配会发),所以也是此时才进历史,历史里的顺序就是真实发生的顺序。
 - **退回,不自动发**:turn 以 `end_turn` 之外的原因结束(`cancelled`、`error`、`max_tokens`、`max_turn_requests`、`refusal`),或者 `session/cancel`、`session/close` 到达时,队列里剩下的**整体退回**:`entries` 清空,原内容放在 `returned`,`reason` 说明原因(`cancelled`、`error`、`closed`、`interrupted`)。客户端把 `returned` 的内容放回输入框,不当作错误显示。宁可退回,也不在用户已经叫停或出错之后替他发出他可能想改的消息。
+- **唯一的例外:等更新而排的消息自动发出(CYC-547)。** daemon 为更新排空时(§3),新 prompt 入队并标 `hold: "update"`。这些消息在切换后由新 daemon 自动发出,不退回:对有这种消息的会话,按 §7 启动 agent、`session/resume`,发第一条,其余照上面"发出"的规则一条接一条,不需要客户端附着。理由:排空是 daemon 自己的决定,用户没有叫停什么,界面事先说了"重启后发出"。切换没成功、回到旧版本时,旧 daemon 同样发出。只有这一种:兜底打断的回合不重放,排空之前就在队列里的消息,重启后照旧以 `interrupted` 退回。
 - **退回时没有客户端附着**(窗口都关了),或者 **daemon 重启**(进程被中断,没有机会退回):daemon 不退回,也不自动发送,队列留着。下一次有客户端附着时,daemon 在补发、`replay_complete` 和状态快照**之后**退回:原因照旧(重启则是 `interrupted`)。队列清空的快照占新的序号，领取通知单独发送。daemon 自己关闭时杀掉 agent 进程,不算退回的理由。
 - 排队退回时,多个客户端附着:先完成附着的客户端领取一批，原发送者断线不影响领取。新客户端握手声明 `_meta["cycle/ackReturns"]`，将退回的内容放入草稿后调用 `_cycle/prompt/ack_return {sessionId, returnId}`。daemon 将确认写入日志并返回 `{acknowledged: true}`；重复确认或来自其他连接的确认返回 `false`。未确认前掉线则转交下一位，重启后仍可领。领取通知没有 seq，普通队列快照照常广播；重放不触发领取。旧客户端按通知送达确认。丢失确认时可能重投，客户端用 queueId 去重。
 - **撤回**:`_cycle/prompt/dequeue`(客户端 → daemon),参数 `{sessionId, queueId}`。成功时响应里带那条 prompt 的内容(`{prompt}`),客户端放回输入框编辑,并发一条 `_cycle/queue_update`。那条已经发出或不在队列里,以 `-32016`(`not_queued`)拒绝。
