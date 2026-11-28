@@ -1144,13 +1144,3 @@
   font-size: var(--cycle-text-meta);
   color: var(--ui-muted-foreground);
 }
-
-[data-slot="extension-row"][data-kind="continue"] {
-  flex-wrap: wrap;
-  justify-content: space-between;
-}
-
-[data-slot="continue-text"] {
-  flex: 1 1 16rem;
-  min-width: 0;
-}

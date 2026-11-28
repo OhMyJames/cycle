@@ -39,7 +39,6 @@ import { type PlanItem, type QueuedPrompt, textOf } from "../model/index.ts";
 import { commandText, filterCommands, slashQuery } from "../slash.ts";
 import { optionsOf, propertiesOf } from "./config-form.tsx";
 import { ContextDetails, planRowsOf } from "./context-details.tsx";
-import { ContinueRow, useContinueHint } from "./continue-hint.tsx";
 import { useI18n } from "./i18n.tsx";
 import { AttachIcon, CloseIcon, PlusIcon, SendIcon, StopIcon } from "./icons.tsx";
 import { Lightbox, type LightboxImage } from "./lightbox.tsx";
@@ -668,21 +667,12 @@ export function Composer({
     };
   }, [attachable]);
 
-  const continueHint = useContinueHint({
-    locationId,
-    sessionId: blank ? undefined : sessionId,
-    sessionKey,
-    idle: !working,
-    connected,
-    context,
-  });
   const showBlocked = blocked !== undefined && blocked !== "" && connected;
   const hasExtensions =
     plan !== undefined ||
     queue.length > 0 ||
     draining !== undefined ||
     showBlocked ||
-    continueHint.reason !== undefined ||
     dropping ||
     problem !== undefined;
 
@@ -761,14 +751,6 @@ export function Composer({
             <div data-slot="extension-row" data-kind="hint" role="status">
               {blocked}
             </div>
-          ) : null}
-          {continueHint.reason !== undefined && sessionId !== undefined ? (
-            <ContinueRow
-              reason={continueHint.reason}
-              locationId={locationId}
-              sessionId={sessionId}
-              onDismiss={continueHint.dismiss}
-            />
           ) : null}
           {dropping ? (
             <div data-slot="extension-row" data-kind="drop">

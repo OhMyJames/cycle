@@ -250,7 +250,7 @@ const readable = (color: string, ground: string, to: string): string => {
 };
 
 /** The ground an output is drawn on (`--cycle-surface-message`), in the light theme and the dark. */
-export const OUTPUT_GROUND = { light: "#f2f2f4", dark: "#1b1b1c" };
+export const OUTPUT_GROUND = { light: "#f2f2f4", dark: "#222224" };
 
 const ORDER: (keyof AnsiPalette)[] = [
   "black",

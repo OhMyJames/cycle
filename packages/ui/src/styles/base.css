@@ -158,19 +158,19 @@
   /* Surfaces: Rare UI / Apple hardware pure neutrals. Workspace is the crisp conversation ground;
      sidebar sits recessed; raised elevates cards, menus, dialogs and the composer with a subtle
      specular top edge; message holds user bubbles and sunken fills. */
-  --cycle-surface-workspace: light-dark(#ffffff, #0a0a0a);
-  --cycle-surface-sidebar: light-dark(#f5f5f7, #050505);
-  --cycle-surface-raised: light-dark(#ffffff, #141414);
-  --cycle-surface-message: light-dark(#f2f2f4, #1b1b1c);
-  --cycle-surface-hover: light-dark(#ececef, #222224);
-  --cycle-surface-selected: light-dark(#e4e4e8, #2b2b2e);
-  --cycle-border-subtle: light-dark(#ededf0, #1f1f22);
-  --cycle-border-default: light-dark(#e2e2e6, #2c2c30);
+  --cycle-surface-workspace: light-dark(#ffffff, #141415);
+  --cycle-surface-sidebar: light-dark(#f5f5f7, #0e0e0f);
+  --cycle-surface-raised: light-dark(#ffffff, #1c1c1d);
+  --cycle-surface-message: light-dark(#f2f2f4, #222224);
+  --cycle-surface-hover: light-dark(#ececef, #29292b);
+  --cycle-surface-selected: light-dark(#e4e4e8, #303033);
+  --cycle-border-subtle: light-dark(#ededf0, #252528);
+  --cycle-border-default: light-dark(#e2e2e6, #323237);
 
   /* Ink: four pure neutral steps. Muted holds >= 4.5:1 on every surface above, selected included. */
   --cycle-ink: light-dark(#141414, #f5f5f7);
   --cycle-ink-secondary: light-dark(#505055, #a8a8ae);
-  --cycle-ink-muted: light-dark(#636369, #98989f);
+  --cycle-ink-muted: light-dark(#636369, #9c9ca3);
   --cycle-ink-disabled: light-dark(#8a8a92, #6e6e75);
 
   /* Colour: Rare UI international safety orange (#fc4c01 dark, contrast-calibrated #c93b00 light)
@@ -183,10 +183,13 @@
   --cycle-attention: light-dark(#8a5a00, #f5b82e);
   --cycle-success: light-dark(#1a7f37, #30d158);
   /* The ground of a line that warns or says what failed, in the hue of its tone: pale in light, deep in dark. */
-  --cycle-attention-soft: light-dark(#fdf4dc, #231b0a);
-  --cycle-destructive-soft: light-dark(#fcecec, #2a1414);
-  --cycle-input-border: light-dark(#8b8b93, #63636a);
-  --cycle-focus-ring: light-dark(#6b6b75, #8e8e98);
+  --cycle-attention-soft: light-dark(#fdf4dc, #2a200c);
+  --cycle-destructive-soft: light-dark(#fcecec, #311818);
+  --cycle-input-border: light-dark(#8b8b93, #696970);
+  /* The edge of a button drawn with one ("outline"): its words and its fill say it is a button, so in dark its edge is
+     a step under an input's, which has only its edge to be found by (DESIGN.md §1.2). */
+  --cycle-button-border: light-dark(#8b8b93, #4a4a50);
+  --cycle-focus-ring: light-dark(#6b6b75, #94949e);
   --cycle-focus-halo: 0 0 0 3px light-dark(rgb(0 0 0 / 7%), rgb(255 255 255 / 9%));
 
   /* Type: four disciplined sizes (12/18, 13/20, 14/22, 16/22.4) paired with the Rare UI font trio, and one display size
@@ -421,9 +424,16 @@ summary:focus-visible {
   [data-variant="destructive"],
   [data-kind="queue"]
 ) {
-  border-color: var(--cycle-input-border);
+  border-color: var(--cycle-button-border);
   background: var(--cycle-surface-raised);
   box-shadow: var(--cycle-edge-hardware);
+}
+
+/* Asked for more contrast, a button's edge is an input's again. */
+@media (prefers-contrast: more) {
+  :root {
+    --cycle-button-border: var(--cycle-input-border);
+  }
 }
 
 :is(

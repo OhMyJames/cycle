@@ -19,14 +19,15 @@ import { BlankConversationView } from "./blank.tsx";
 import { Composer } from "./composer.tsx";
 import { mergeConfigSchema } from "./config-form.tsx";
 import { ConnectorsPage } from "./connectors.tsx";
+import { ContinueNotice } from "./continue-hint.tsx";
 import { ConversationView } from "./conversation.tsx";
 import { ConfirmDialog, LocationDialog, type RemoteLocation } from "./dialogs.tsx";
 import { I18nProvider, useI18n } from "./i18n.tsx";
-import { ErrorCircleIcon, SidebarIcon } from "./icons.tsx";
+import { ErrorCircleIcon, SidebarIcon, TimelineIcon } from "./icons.tsx";
 import { LoopMain } from "./loop.tsx";
 import { type LoopProjectTab, matchLoopProject } from "./loop-nav.ts";
 import { LoopSessionPanel } from "./loop-session-panel.tsx";
-import { errorText, SessionNotices } from "./notice-line.tsx";
+import { errorText, NoticeLine, SessionNotices } from "./notice-line.tsx";
 import { currentPlan } from "./plan.tsx";
 import { SearchDialog } from "./search.tsx";
 import { SessionHeader } from "./session-header.tsx";
@@ -575,22 +576,35 @@ function AppWindow() {
               shows={blank !== undefined ? "blank" : view !== undefined ? "session" : "nothing"}
             />
             {blank === undefined ? <WorktreeSetupNotice worktree={session?.worktree} /> : null}
+            {/* What is only worth knowing comes after what is the matter, in the plain tone. */}
             {blank === undefined &&
             timelineReturn !== undefined &&
             session?.sessionId === timelineReturn.sessionId ? (
-              <div data-slot="loop-timeline-return">
-                <span>{t("loop.timeline.viewingLoopSession")}</span>
-                <Button
-                  data-variant="ghost"
-                  onClick={() => {
+              <NoticeLine
+                kind="loop-timeline-return"
+                tone="info"
+                icon={<TimelineIcon />}
+                text={t("loop.timeline.viewingLoopSession")}
+                action={{
+                  label: t("loop.timeline.backToTimeline"),
+                  onAction: () => {
                     const back = timelineReturn.projectKey;
                     setTimelineReturn(undefined);
                     places.openLoopProject(back, "timeline", "timeline");
-                  }}
-                >
-                  {t("loop.timeline.backToTimeline")}
-                </Button>
-              </div>
+                  },
+                }}
+              />
+            ) : null}
+            {blank === undefined && view !== undefined ? (
+              <ContinueNotice
+                key={viewKey(view.locationId, view.sessionId)}
+                locationId={view.locationId}
+                sessionId={view.sessionId}
+                sessionKey={viewKey(view.locationId, view.sessionId)}
+                idle={activity === "idle"}
+                connected={connected}
+                context={context}
+              />
             ) : null}
           </ShellNotices>
           {blank !== undefined ? (

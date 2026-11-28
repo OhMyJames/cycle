@@ -269,7 +269,6 @@ export const enUS = {
   "composer.continue.idle":
     "This session has been idle, so the next reply sends the whole conversation again at full cost.",
   "composer.continue.action": "Continue in new session",
-  "composer.continue.dismiss": "Dismiss hint",
   "composer.dropFiles": "Drop files to attach them",
   // The agent takes images only
   "composer.problem.type": "{name} is not a PNG, JPEG, GIF or WebP image.",
