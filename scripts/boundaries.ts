@@ -80,7 +80,11 @@ const BUILTINS = builtinModules.filter((m) => !m.startsWith("_"));
 const isBuiltin = (name: string) => BUILTINS.some((m) => name === m || name.startsWith(`${m}/`));
 // Packages that run in the daemon or the main process: the page has no business with them.
 // The analytics package may be reached for its dictionary (`@cycle/analytics/events`, for types), not for PostHog.
-const BACKEND = /^@cycle\/(?:daemon|client|protocol|desktop|oidc)(?:\/|$)|^@cycle\/harness-/;
+const backendPackage =
+  /^(?:@cycle\/|packages\/)(?:client|protocol|oidc|model-gateway|line-rpc|command-permissions)(?:\/|$)/;
+const backendApp =
+  /^(?:@cycle\/(?:daemon|desktop)|apps\/daemon|apps\/desktop\/src\/(?:main|preload))(?:\/|$)/;
+const harness = /^(?:@cycle\/harness-|harness\/)/;
 
 const isRelative = (name: string) => name.startsWith(".");
 
@@ -109,7 +113,7 @@ const forbidden: Record<
 
     if (NODE.test(name) || isBuiltin(name))
       return "the page runs in a browser: no Node, Bun or Electron module";
-    if (BACKEND.test(name))
+    if (backendPackage.test(resolved) || backendApp.test(resolved) || harness.test(resolved))
       return "the page reaches the daemon only through the bridge (@cycle/ui/api), not by importing it";
     return undefined;
   },

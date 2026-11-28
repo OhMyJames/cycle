@@ -166,6 +166,12 @@ const cases: [string, string, boolean][] = [
   ["packages/ui/src/react/x.tsx", 'await import("@cycle/analytics/events");', true],
   ["packages/ui/src/react/x.tsx", 'require("posthog-node");', true],
   ["packages/ui/src/react/x.tsx", 'import "../../../analytics/src/events.ts";', true],
+  ["apps/desktop/src/renderer/main.tsx", 'import "../main/actions.ts";', true],
+  ["apps/desktop/src/renderer/main.tsx", 'import "../preload/preload.ts";', true],
+  ["apps/desktop/src/renderer/main.tsx", 'import "../shared/ui-bundle.ts";', false],
+  ["packages/ui/src/react/x.tsx", 'import "../../../protocol/src/methods.ts";', true],
+  ["packages/ui/src/react/x.tsx", 'import "../../../../harness/agy/src/agent.ts";', true],
+  ["packages/ui/src/react/x.tsx", 'import "@cycle/model-gateway";', true],
   // The preload
   ["apps/desktop/src/preload/preload.ts", 'import { x } from "@cycle/daemon";', true],
   ["apps/desktop/src/preload/preload.ts", 'import { x } from "@cycle/daemon/src/daemon.ts";', true],
