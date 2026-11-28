@@ -78,7 +78,7 @@ Electron 通知由 BackgroundNotifications 管理窗口检查、保活、释放�
 - 读回 desktop 主进程、renderer 和 daemon 的实际调用方，区分 Electron 通知消失、窗口恢复、Loop 暂缓重试和页面渲染状态。架构门禁和浏览器测试分别检查依赖方向与用户路径。
 - 逐文件依赖图与 workspace manifest 图回答不同问题。前者只包含可静态解析的代码依赖；后者还包含类型与测试所需的包。动态插件、RPC、文件约定和运行时环境应结合领域文档与集成测试核对。
 
-源码门禁从根 manifest 推导扫描目录，覆盖 scripts 和各 workspace 所在的顶级目录。迁移时逐路径比对了 889 个文件，结果一致。独立复审发现 Loop 的 planning.ts 还导入根 scripts/integration-suites.ts。依赖图从 15 个 workspace 的 src 递归跟踪仓库内可达的 TS/TSX，现覆盖 486 个文件、1,419 条边，未发现环。
+源码门禁从根 manifest 推导扫描目录，覆盖 scripts 和各 workspace 所在的顶级目录。迁移时逐路径比对了 889 个文件，结果一致。独立复审发现 Loop 的 planning.ts 还导入根 scripts/integration-suites.ts。依赖图从 15 个 workspace 的 src 递归跟踪仓库内可达的 TS/TSX，现覆盖 486 个文件、1,418 条边，未发现环。
 
 桌面 bridge 保留已发布的认证失败类型定义。壳的 UI 更新兼容摘要取自 api.ts，等价的类型改写也可能导致旧壳拒绝更新。主进程复用协议错误词表，用类型检查确保本地补充的词与 bridge 契约一致。三个页面的 agent 埋点分类共用一个函数，类型覆盖 analytics 字典，契约测试用未知 ID 和原型属性名核对隐私回退。
 
@@ -93,3 +93,5 @@ Electron 通知由 BackgroundNotifications 管理窗口检查、保活、释放�
 ## 独立复审
 
 三位 Agent 分别核对 95bb58db 至 811ca39d 的行为、模块边界和门禁覆盖。旧桌面壳的 UI 契约摘要和 preload 字节已与基线逐项核对。Loop 现在会为共享审批规则的变更选择适配器集成测试。增量门禁覆盖架构测试及集成套件清单，renderer 的直接相对导入与包名导入均检查后端边界。workspace 回归样例覆盖相对路径、排除模式、显式注册和嵌套包所有权。
+
+复审修复在 73500a37 验证。完整门禁 2,591 项通过，Chromium 界面用例 592 项通过，严格集成的八个套件全部通过。独立复查重跑了依赖图和选包复现点。相对于基线 95bb58db，桌面壳的 contractDigest 与 3,215 字节的 preload 构建产物均一致。
