@@ -80,7 +80,10 @@ export const SIGNED_IN: AccountStatus = {
 /** A bridge that records what it is asked, answers from a script, and lets a test send events. */
 export const fakeBridge = (
   options: {
-    snapshot?: () => SessionSnapshot | Promise<SessionSnapshot>;
+    snapshot?: (
+      locationId: string,
+      sessionId: string,
+    ) => SessionSnapshot | Promise<SessionSnapshot>;
     connected?: boolean;
     update?: UpdateState;
     interface?: InterfaceState;
@@ -247,8 +250,8 @@ export const fakeBridge = (
     createSession: record("createSession", async () => "s2"),
     openSession: record(
       "openSession",
-      async () =>
-        (await options.snapshot?.()) ?? {
+      async (locationId: string, sessionId: string) =>
+        (await options.snapshot?.(locationId, sessionId)) ?? {
           conversation: emptyConversation(),
           permissions: [],
           version: 0,

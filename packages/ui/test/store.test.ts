@@ -1066,3 +1066,85 @@ test("continuing a session that is not in a worktree leaves the person's worktre
   if (blank === undefined) throw new Error("no blank conversation");
   expect(blankWorktreeOf(store.getState(), blank, "fake")?.on).toBe(true);
 });
+
+const said = (t: string, version = 1): SessionSnapshot => ({
+  conversation: [text(t)].reduce((c, u) => applyUpdate(c, u), emptyConversation()),
+  permissions: [],
+  version,
+});
+
+const withSessions = (extra: Parameters<typeof fakeBridge>[0] = {}) => {
+  const script = fakeBridge({ connected: true, ...extra });
+  const store = new AppStore(script.bridge, new DraftStore(undefined), undefined, { maxViews: 2 });
+  return { store, ...script };
+};
+
+test("views beyond the cap are dropped, the least recently used first", async () => {
+  const { store } = withSessions();
+  await store.start();
+  await store.selectSession("local", "a");
+  await store.selectSession("local", "b");
+  await store.selectSession("local", "c");
+  const views = store.getState().views;
+  expect(views[viewKey("local", "a")]).toBeUndefined();
+  expect(views[viewKey("local", "b")]).toBeDefined();
+  expect(views[viewKey("local", "c")]).toBeDefined();
+});
+
+test("the selected session's view is not dropped, even when it was opened first", async () => {
+  const { store } = withSessions();
+  await store.start();
+  await store.selectSession("local", "a");
+  await store.selectSession("local", "b");
+  await store.selectSession("local", "c");
+  // a was dropped; it is read again, and now being the selected one, it stays while others come and go.
+  await store.selectSession("local", "a");
+  await store.selectSession("local", "b");
+  await store.selectSession("local", "a");
+  const views = store.getState().views;
+  expect(store.getState().selectedSession).toBe("a");
+  expect(views[viewKey("local", "a")]).toBeDefined();
+  expect(Object.keys(views)).toHaveLength(2);
+});
+
+test("a dropped session is read again when selected, from the new snapshot", async () => {
+  let said_ = "old";
+  const { store } = withSessions({ snapshot: () => said(said_) });
+  await store.start();
+  await store.selectSession("local", "a");
+  await store.selectSession("local", "b");
+  await store.selectSession("local", "c");
+  const key = viewKey("local", "a");
+  expect(store.getState().views[key]).toBeUndefined();
+  said_ = "new";
+  await store.selectSession("local", "a");
+  const view = store.getState().views[key];
+  expect(view?.loading).toBe(false);
+  expect(JSON.stringify(view?.conversation.items)).toContain("new");
+  expect(JSON.stringify(view?.conversation.items)).not.toContain("old");
+});
+
+test("a read that comes back after a later selection is dropped", async () => {
+  const release: Record<string, () => void> = {};
+  const { store } = withSessions({
+    snapshot: (_l, id) =>
+      new Promise<SessionSnapshot>((resolve) => {
+        release[id] = () => resolve(said(`content of ${id}`));
+      }),
+  });
+  await store.start();
+  const a = store.selectSession("local", "a");
+  const b = store.selectSession("local", "b");
+  release.b?.();
+  await b;
+  release.a?.();
+  await a;
+  const s = store.getState();
+  expect(s.selectedSession).toBe("b");
+  const viewA = s.views[viewKey("local", "a")];
+  expect(viewA?.loading).not.toBe(true);
+  expect(JSON.stringify(viewA?.conversation.items ?? [])).not.toContain("content of a");
+  expect(JSON.stringify(s.views[viewKey("local", "b")]?.conversation.items)).toContain(
+    "content of b",
+  );
+});
