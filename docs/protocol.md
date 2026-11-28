@@ -1306,20 +1306,20 @@ Loop 页顶部的 Notice 区由桌面主进程从两处派生,不依赖 Loop 服
 
 桌面端和运营 agent 之后只调这组方法,itsaplan 只在 Loop 内部对接一处,不再解析评论、不再写死标签名。决定见 [2026-11-26-loop-api-is-the-only-way-in](../.agents/notes/2026-11-26-loop-api-is-the-only-way-in.md)。**本节取代上文"服务不访问 itsaplan""工单状态按钮(桌面端写 itsaplan)""Notice(桌面端派生)"三处**:桌面端改用这组方法由下一张单做,在那之前它们仍是桌面端现在的行为。`projects/list`、`runs/list`、`events/list` 保持原名;新方法在 `loop/` 下,`loop/projects/list` 与 `projects/list` 同。schema 在 `loop.ts`,每个返回都按它校验。
 
-| 方法                 | 参数                                                                       | 返回                                                       |
-| -------------------- | -------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `loop/projects/list` | 无                                                                         | `{projects}`                                               |
-| `loop/board/get`     | `{project}`                                                                | `{project, columns, stale, readAt}`                        |
-| `loop/runs/list`     | `{project, filter?: {state?}}`                                             | `{project, runs}`                                          |
-| `loop/run/get`       | `{project, key}`                                                           | 阶段、轮次、会话 `{kind,id}`、PR、最近 50 条事件、心跳     |
-| `loop/notices/list`  | `{project?}`                                                               | `{notices}`                                                |
-| `loop/ticket/get`    | `{project, key}`                                                           | 单张工单的详情(见下)                                       |
-| `loop/tickets/act`   | `{project, verb, keys[], reason?, confirmed, actor, actorKind}`            | `{results}`                                                |
-| `loop/intents/retry` | `{project, id?, key?, actor, actorKind}`                                   | `{retried}`(重新排队的 intent 数)                          |
-| `loop/graph/act`     | `{project, key, nodeId, action, title?, goal?, verify?, actor, actorKind}` | `{key, nodeId, action, phase, graph}`                      |
-| `loop/run/cancel`    | `{project, key, actor, actorKind}`                                         | `{cancelled}`                                              |
-| `loop/timeline/list` | `{project, limit?, before?}`                                               | `{project, entries, hasMore, nextBefore, knownSessionIds}` |
-| `loop/status`        | 无                                                                         | `{version, restartedAt, projects}`                         |
+| 方法                 | 参数                                                                               | 返回                                                       |
+| -------------------- | ---------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `loop/projects/list` | 无                                                                                 | `{projects}`                                               |
+| `loop/board/get`     | `{project}`                                                                        | `{project, columns, stale, readAt}`                        |
+| `loop/runs/list`     | `{project, filter?: {state?}}`                                                     | `{project, runs}`                                          |
+| `loop/run/get`       | `{project, key}`                                                                   | 阶段、轮次、会话 `{kind,id}`、PR、最近 50 条事件、心跳     |
+| `loop/notices/list`  | `{project?}`                                                                       | `{notices}`                                                |
+| `loop/ticket/get`    | `{project, key}`                                                                   | 单张工单的详情(见下)                                       |
+| `loop/tickets/act`   | `{project, verb, keys[], reason?, confirmed, actor, actorKind}`                    | `{results}`                                                |
+| `loop/intents/retry` | `{project, id?, key?, actor, actorKind}`                                           | `{retried}`(重新排队的 intent 数)                          |
+| `loop/graph/act`     | `{project, key, nodeId, action, title?, goal?, verify?, actor, actorKind, roles?}` | `{key, nodeId, action, phase, graph}`                      |
+| `loop/run/cancel`    | `{project, key, actor, actorKind}`                                                 | `{cancelled}`                                              |
+| `loop/timeline/list` | `{project, limit?, before?}`                                                       | `{project, entries, hasMore, nextBefore, knownSessionIds}` |
+| `loop/status`        | 无                                                                                 | `{version, restartedAt, projects}`                         |
 
 - **看板**:server 用 `planKey` 读 itsaplan,列按 stateType(backlog、unstarted、started、completed、canceled)再按看板顺序;完成和取消的列只取最近 30 张。卡片有编号、标题、类型名、优先级、标签名、`parent`(父工单 `{key, title}`,取自 `list_issues` 的 `parent`,无父工单为 `null`,旧 server 可不带该字段)、`pendingReason`(带 `待批准` 的卡,取最新评论首行,最多 20 张、140 字,读不到为 `null`)、`phase`(只对 started 列里有未完成 run 的卡,`{name, since}` 取自 run 的 `phase` 和 `updatedAt`,不读 tracker 自定义字段;心跳在 `run/get` 和 `stuck` Notice 里用)。缓存 15 秒;读失败时返回上一次的结果并标 `stale: true`(`readAt` 仍是上次成功的时间);第一次就失败返回 `-32603`,`data.reason` 为 `tracker_unreachable`。
 - **run**:`state` 为 `active`/`blocked`/`done`;`filter.state` 过滤。`run/get` 的会话是 `{kind, id}`(kind:`dev`、`qa`、`review`、`research`、`research_qa`、`triage`、`shape`、`shape_qa`),run 不存在返回 `-32602`,`data.reason` 为 `unknown_run`。桌面端工单抽屉读 `loop/run/get` 展示运行工作流、轮次、心跳、全部会话入口与最近事件,并在 `active` 时提供经确认的「取消本轮」(`loop/run/cancel`)。
@@ -1333,7 +1333,7 @@ Loop 页顶部的 Notice 区由桌面主进程从两处派生,不依赖 Loop 服
   - `attention` 只取 Loop 自己的记录,不解析评论:Blocked 列且 Loop 有该工单 `blocked` 的 run 时为 `{kind: "blocked", text: <原因>, session: {kind,id}|null}`;In Review 列且 `notices` 表里有 `review` 类 Notice(同上文的寿命规则)时为 `{kind: "review", text, prUrl: string|null}`(若较早的已升级 `done` run 未写入 `review` Notice 但 `reviewCommented` 为非 `merge` 结论,仍返回 `{kind: "review", text: "", prUrl}` 以便展示 PR 链接与待评审进度)。Loop 没有记录的(例如人手动移到 Blocked 的)不给 `attention`。
   - 标签和列按名字、stateType 每次从 `get_project` 解析。工单不存在返回 `-32602`,`data.reason` 为 `not_found`;读不到 itsaplan 返回 `-32603`,`data.reason` 为 `tracker_unreachable`。
 - **二级 Task Graph(CYC-512)**:一级工单(run)内部的执行图,依据 CYC-507 与 [边界笔记](../.agents/notes/2026-11-26-loop-work-item-and-task-graph-boundary.md),数据来自 `run_graphs` / `graph_nodes`。卡片可带 `graph` 摘要 `{source, total, passed, failed, blocked, running, currentNodeId, currentNodeTitle}`;`loop/ticket/get` 与 `loop/run/get` 可带完整 `graph`:`{runKey, source, revision, currentNodeId, nodes, createdAt, updatedAt}`,节点按 `position`(拓扑序)排列,字段 `id、position、origin、role、title、goal、dependsOn、filesHint、verify、status、sessionId、commitSha、rounds、lastError、summary、verdict、report、startedAt、finishedAt`。`role`(CYC-542、CYC-545,可选)为 `dev`、`qa`、`research` 或 `design`,缺省按 `dev`;`research`、`design` 是只读节点(不改代码、不打提交),产出写在 `summary` 和 `report`,它们的 `verify` 可以为空数组;`loop/run/get` 与 `loop/ticket/get` 的请求参数加可选 `roles: string[]`,表示客户端认识的角色:没带 `roles`,或没包含 `research` / `design` 时,返回的图里去掉这些节点,其他节点的 `dependsOn` 里也去掉它们的 id,摘要计数按去掉后的节点算,被去掉的正是当前节点时 `currentNodeId`、`currentNodeTitle` 为 `null`(旧客户端因此照常解析);`verdict`(可选)为 `pass`、`fail` 或 `null`:Dev 节点为 `null`,QA 节点执行完才有,`status` 仍只表示这次执行是否完成(QA 给出可用结论就是 `passed`,不论通过与否);`report`(可选)是 QA 结论原文,只出现在 `loop/run/get` 与 `loop/ticket/get` 的完整节点里,卡片摘要不带。QA 节点的 `origin` 取 `planned` 或 `fix`(看它跟在哪类 Dev 节点后面),取值不变,旧客户端读到的新字段会被忽略。run 没有执行图时三处都**省略** `graph`。
-  - **`loop/graph/act`**:`action` 为 `retry_node`、`skip_node`、`edit_node`,其余值 `-32602`(`invalid_params`)。`key` 是一级工单号,`nodeId` 是节点 id。需要 `actor`、`actorKind`(缺则 `actor_required`)。
+  - **`loop/graph/act`**:`action` 为 `retry_node`、`skip_node`、`edit_node`,可选 `roles` 同 `loop/run/get`。非 dev 运行(调研、设计)的阻塞节点重试或跳过后,运行回到该节点的阶段(调研节点 `research`,QA 节点 `research_qa`),不是 `graph_plan`。其余值 `-32602`(`invalid_params`)。`key` 是一级工单号,`nodeId` 是节点 id。需要 `actor`、`actorKind`(缺则 `actor_required`)。
     - `retry_node`:只允许 `blocked`、`failed` 节点;节点重置为 `pending`,`rounds = 0`、`lastError = null`、`sessionId = null`。
     - `skip_node`:只允许 `blocked`、`failed` 节点;节点标为 `skipped`。
     - `edit_node`:只允许 `pending`、`blocked`、`failed` 节点(`running`、`passed`、`skipped` 不可改);可改 `title`、`goal`、`verify`,至少给一个;`verify` 的每条必须通过 `parseVerify` 白名单。

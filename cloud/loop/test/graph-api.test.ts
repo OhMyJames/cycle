@@ -260,6 +260,53 @@ describe("loop/graph/act", () => {
     expect((await store.load("CYC-2"))?.phase).toBe("dev");
   });
 
+  test.each(["research", "design"] as const)(
+    "retry on a blocked %s run resumes at the node's phase, not graph_plan",
+    async (kind) => {
+      for (const [id, role, phase] of [
+        ["research", kind, "research"],
+        ["qa-1", "qa", "research_qa"],
+      ] as const) {
+        await store.save(
+          run("CYC-4", {
+            kind,
+            research: {
+              questions: [],
+              output: null,
+              docId: null,
+              docLinked: false,
+              conclusionDone: false,
+              followups: [],
+              commented: false,
+            },
+            dev: undefined,
+            phase: "blocked",
+            blockedReason: "x",
+            resumeFrom: phase,
+          }),
+        );
+        await store.saveGraph({
+          ...graphOf([
+            node("research", 0, { role: kind, status: "passed", verify: [] }),
+            node("qa-1", 1, { role: "qa", status: "blocked" }),
+          ]),
+          runKey: "CYC-4",
+        });
+        if (id === "research")
+          await store.saveGraph({
+            ...graphOf([node("research", 0, { role: kind, status: "blocked", verify: [] })]),
+            runKey: "CYC-4",
+          });
+        const result = LoopGraphActResultSchema.parse(
+          await act({ key: "CYC-4", nodeId: id, roles: ["research", "design"] }),
+        );
+        expect(result.phase).toBe(phase);
+        expect((await store.load("CYC-4"))?.phase).toBe(phase);
+        expect(result.graph.nodes.some((x) => x.role === role)).toBe(true);
+      }
+    },
+  );
+
   test("skip_node marks the node skipped and resumes the run", async () => {
     await act({ action: "skip_node" });
     expect((await store.loadGraph("CYC-2"))?.nodes.find((x) => x.id === "n2")?.status).toBe(
@@ -352,8 +399,10 @@ describe("research and design nodes for clients that know them", () => {
       await api.call(LOOP_RUN_GET, { project: "CYC", key: "CYC-4", roles: ["dev", "qa"] }),
     );
     expect(detail.graph?.nodes.map((x) => x.id)).toEqual(["n1"]);
-    const card = LoopBoardSchema.parse(await api.call(LOOP_BOARD_GET, { project: "CYC" }));
-    expect(JSON.stringify(card)).not.toContain("r1");
+    // The card summary only has counts and the current node, so it counts every role.
+    const board = LoopBoardSchema.parse(await api.call(LOOP_BOARD_GET, { project: "CYC" }));
+    const card = board.columns[0]?.cards.find((c) => c.key === "CYC-4");
+    expect(card?.graph).toMatchObject({ total: 2, running: 1, currentNodeId: "r1" });
   });
 
   test("with roles they come back, with an empty verify", async () => {

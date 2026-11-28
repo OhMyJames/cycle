@@ -223,6 +223,8 @@ export const LoopGraphActParamsSchema = z
     verify: z.array(z.string().trim().min(1).max(500)).min(1).max(20).optional(),
     actor: z.string().min(1).max(100),
     actorKind: LoopActorKindSchema,
+    /** Node roles the client understands; without `research` and `design` those nodes are left out of the graph. */
+    roles: z.array(z.string()).optional(),
   })
   .refine((p) => {
     const edits = p.title !== undefined || p.goal !== undefined || p.verify !== undefined;

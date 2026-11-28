@@ -785,6 +785,7 @@ export const actOnGraph = async (
     nodeId,
     action,
     ...(parsedEdits ?? {}),
+    roles: GRAPH_ROLES,
     actor: actorOf(loop),
     actorKind: "desktop",
   });

@@ -192,6 +192,9 @@ export const graphSummaryOf = (full: TaskGraph, roles?: readonly string[]): Loop
 /** Roles an older client does not know; it only gets nodes of these roles when it says it does. */
 const NEW_ROLES: ReadonlySet<string> = new Set(["research", "design"]);
 
+/** Summaries only carry counts and the current node's title, so they count every role. */
+const SUMMARY_ROLES: readonly string[] = ["research", "design"];
+
 /** The full graph as the API sends it: nodes in `position` order. */
 const graphOf = (graph: TaskGraph, roles?: readonly string[]): LoopGraph => {
   const known = (role: string) => !NEW_ROLES.has(role) || (roles?.includes(role) ?? false);
@@ -501,7 +504,7 @@ export class LoopApiHandler {
             run !== undefined && !finished(run) && column.stateType === "started"
               ? { name: run.phase, since: run.updatedAt }
               : null,
-          ...(graph === undefined ? {} : { graph: graphSummaryOf(graph) }),
+          ...(graph === undefined ? {} : { graph: graphSummaryOf(graph, SUMMARY_ROLES) }),
         });
       }
       columns.push({ id: column.id, name: column.name, stateType: column.stateType, cards });
@@ -811,8 +814,11 @@ export class LoopApiHandler {
       });
       let phase: string = run.phase;
       if (run.phase === "blocked") {
-        phase = "graph_plan";
-        tx.save({ ...run, phase: "graph_plan", blockedReason: null, resumeFrom: null });
+        // Only dev runs have a graph_plan phase; research and design runs resume at the node's phase.
+        const resumed =
+          run.kind === "dev" ? "graph_plan" : node.role === "qa" ? "research_qa" : "research";
+        phase = resumed;
+        tx.save({ ...run, phase: resumed, blockedReason: null, resumeFrom: null });
       }
       tx.action(key, `graph_${action}`, {
         nodeId,
@@ -820,7 +826,7 @@ export class LoopApiHandler {
         actorKind,
         ...(fields.length > 0 ? { fields } : {}),
       });
-      return { key, nodeId, action, phase, graph: graphOf(saved) };
+      return { key, nodeId, action, phase, graph: graphOf(saved, p.data.roles) };
     });
     this.#boards.delete(project.projectKey);
     return result;
@@ -1114,7 +1120,7 @@ export class LoopApiHandler {
         updatedAt: run.updatedAt,
         prUrl: prUrlOf(run),
         blockedReason: run.blockedReason,
-        graph: graph === undefined ? null : graphSummaryOf(graph),
+        graph: graph === undefined ? null : graphSummaryOf(graph, SUMMARY_ROLES),
         steps,
       });
     }
