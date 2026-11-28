@@ -12,7 +12,7 @@ import { ConfirmDialog, FormDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import { ChevronRightIcon } from "./icons.tsx";
 import { LocationScope } from "./location-scope.tsx";
-import { PageGroup, PageRow, PageRows } from "./page-layout.tsx";
+import { PageRow, PageRows, ResourceGroup } from "./page-layout.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
 import { Tip } from "./tip.tsx";
@@ -78,82 +78,70 @@ function VaultGroup({ location }: { location: LocationConfig }) {
     void store.loadVault(locationId);
   }, [store, locationId]);
 
-  const shown = keys?.filter((key) => key.toLowerCase().includes(query.trim().toLowerCase()));
-  const add = (
-    <Button data-variant="outline" onClick={() => setEditing("new")}>
-      {t("vault.add")}
-    </Button>
-  );
   return (
-    <PageGroup
-      lead={t("vault.lead", { location: location.name })}
-      action={keys !== undefined && keys.length > 0 ? add : undefined}
-    >
-      {read?.error !== undefined ? (
-        <StateBlock
-          size="inline"
-          align="start"
-          tone="error"
-          title={t("vault.unreadable")}
-          reason={read.error}
-          action={{ label: t("vault.retry"), onAction: () => void store.loadVault(locationId) }}
-        />
-      ) : null}
-      {keys === undefined ? (
-        read?.error === undefined ? (
-          <StateBlock size="inline" align="start" tone="loading" title={t("vault.loading")} />
-        ) : null
-      ) : keys.length === 0 ? (
-        <StateBlock
-          size="inline"
-          align="start"
-          tone="empty"
-          title={t("vault.empty")}
-          body={t("vault.emptyBody")}
-          action={{ label: t("vault.add"), onAction: () => setEditing("new") }}
-        />
-      ) : (
-        <>
-          <Input
-            type="search"
-            data-kind="vault-search"
-            aria-label={t("vault.search")}
-            placeholder={t("vault.search")}
-            autoComplete="off"
-            spellCheck={false}
-            value={query}
-            onChange={(e) => setQuery(e.currentTarget.value)}
-          />
-          {shown !== undefined && shown.length === 0 ? (
-            <StateBlock size="inline" align="start" tone="empty" title={t("vault.noMatch")} />
-          ) : (
-            <PageRows>
-              {shown?.map((key) => {
-                const names = used.get(key);
-                return (
-                  <PageRow
-                    key={key}
-                    label={key}
-                    description={
-                      <span data-slot="connector-status">
-                        {names !== undefined
-                          ? t("vault.usedBy", { names: names.join(", ") })
-                          : t("vault.unused")}
-                      </span>
-                    }
-                  >
-                    <Tip label={t("vault.open", { name: key })}>
-                      <Button data-variant="ghost" onClick={() => setSelected(key)}>
-                        <ChevronRightIcon />
-                      </Button>
-                    </Tip>
-                  </PageRow>
-                );
-              })}
-            </PageRows>
-          )}
-        </>
-      )}
+    <>
+      <ResourceGroup
+        lead={t("vault.lead", { location: location.name })}
+        items={keys}
+        error={read?.error}
+        onRetry={() => void store.loadVault(locationId)}
+        says={{
+          loading: t("vault.loading"),
+          unreadable: t("vault.unreadable"),
+          retry: t("vault.retry"),
+          empty: t("vault.empty"),
+          emptyBody: t("vault.emptyBody"),
+        }}
+        add={{ label: t("vault.add"), onAdd: () => setEditing("new") }}
+      >
+        {(keys) => {
+          const shown = keys.filter((key) =>
+            key.toLowerCase().includes(query.trim().toLowerCase()),
+          );
+          return (
+            <>
+              <Input
+                type="search"
+                data-kind="vault-search"
+                aria-label={t("vault.search")}
+                placeholder={t("vault.search")}
+                autoComplete="off"
+                spellCheck={false}
+                value={query}
+                onChange={(e) => setQuery(e.currentTarget.value)}
+              />
+              {shown.length === 0 ? (
+                <StateBlock size="inline" align="start" tone="empty" title={t("vault.noMatch")} />
+              ) : (
+                <PageRows>
+                  {shown.map((key) => {
+                    const names = used.get(key);
+                    return (
+                      <PageRow
+                        key={key}
+                        label={key}
+                        description={
+                          <span data-slot="connector-status">
+                            {names !== undefined
+                              ? t("vault.usedBy", { names: names.join(", ") })
+                              : t("vault.unused")}
+                          </span>
+                        }
+                      >
+                        <Tip label={t("vault.open", { name: key })}>
+                          <Button data-variant="ghost" onClick={() => setSelected(key)}>
+                            <ChevronRightIcon />
+                          </Button>
+                        </Tip>
+                      </PageRow>
+                    );
+                  })}
+                </PageRows>
+              )}
+            </>
+          );
+        }}
+      </ResourceGroup>
       {selected !== undefined ? (
         <VaultDetailDialog
           itemKey={selected}
@@ -191,7 +179,7 @@ function VaultGroup({ location }: { location: LocationConfig }) {
           }}
         />
       ) : null}
-    </PageGroup>
+    </>
   );
 }
 

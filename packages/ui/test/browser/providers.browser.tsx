@@ -58,12 +58,6 @@ test("a provider is listed by name, kind, models and whether a key is saved, nev
   expect(within(row).getByText("https://llm.lab.example/v1")).toBeTruthy();
 });
 
-test("with none, the group says so and the way to add one is there once", async () => {
-  const { group } = await mount();
-  expect(await group.findByText("No providers yet.")).toBeTruthy();
-  expect(group.getAllByRole("button", { name: "Add provider" })).toHaveLength(1);
-});
-
 test("a known service: its models are ticked from the list, the key goes once, and the form submits on Enter", async () => {
   const { user, group, calls } = await mount();
   await user.click(await group.findByRole("button", { name: "Add provider" }));

@@ -8,6 +8,7 @@ import { Button } from "@ui-sdk/react/button";
 import { Tabs, TabsList, TabsPanel, TabsTab } from "@ui-sdk/react/tabs";
 import { Fragment, type ReactNode, useEffect, useId, useRef } from "react";
 import { ChevronLeftIcon } from "./icons.tsx";
+import { StateBlock } from "./state-block.tsx";
 
 /** The key that goes back, as it is printed on the keyboard: a name, not a word to translate. */
 const ESCAPE_KEY = "Esc";
@@ -196,6 +197,74 @@ export function PageGroup({
       ) : null}
       {children}
     </section>
+  );
+}
+
+/**
+ * A group of what a location keeps (its vault, its providers, its connectors): while it is read, why it could not be
+ * (with the way to read it again, over what was read before), that there are none, or the list. The way to add one is
+ * there once: at the heading's end beside a list, in what says there are none when there are none.
+ */
+export function ResourceGroup<T>({
+  title,
+  lead,
+  items,
+  error,
+  onRetry,
+  says,
+  add,
+  status,
+  children,
+}: {
+  title?: string | undefined;
+  lead: string;
+  /** What was read; undefined until it is. */
+  items: readonly T[] | undefined;
+  /** Why the last read failed. */
+  error: string | undefined;
+  onRetry: () => void;
+  says: { loading: string; unreadable: string; retry: string; empty: string; emptyBody?: string };
+  add?: { label: string; onAdd: () => void } | undefined;
+  /** What is under way or just happened, between why it could not be read and the list. */
+  status?: ReactNode;
+  children: (items: readonly T[]) => ReactNode;
+}) {
+  const action =
+    add !== undefined && items !== undefined && items.length > 0 ? (
+      <Button data-variant="outline" onClick={add.onAdd}>
+        {add.label}
+      </Button>
+    ) : undefined;
+  return (
+    <PageGroup title={title} lead={lead} action={action}>
+      {error !== undefined ? (
+        <StateBlock
+          size="inline"
+          align="start"
+          tone="error"
+          title={says.unreadable}
+          reason={error}
+          action={{ label: says.retry, onAction: onRetry }}
+        />
+      ) : null}
+      {status}
+      {items === undefined ? (
+        error === undefined ? (
+          <StateBlock size="inline" align="start" tone="loading" title={says.loading} />
+        ) : null
+      ) : items.length === 0 ? (
+        <StateBlock
+          size="inline"
+          align="start"
+          tone="empty"
+          title={says.empty}
+          body={says.emptyBody}
+          action={add !== undefined ? { label: add.label, onAction: add.onAdd } : undefined}
+        />
+      ) : (
+        children(items)
+      )}
+    </PageGroup>
   );
 }
 

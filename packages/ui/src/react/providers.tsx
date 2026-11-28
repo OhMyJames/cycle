@@ -29,8 +29,7 @@ import { ConfirmDialog, FormDialog } from "./dialogs.tsx";
 import { useI18n } from "./i18n.tsx";
 import { CheckIcon, CloseIcon, MoreIcon, PlusIcon } from "./icons.tsx";
 import { LocationScope } from "./location-scope.tsx";
-import { PageGroup, PageRow, PageRows } from "./page-layout.tsx";
-import { StateBlock } from "./state-block.tsx";
+import { PageRow, PageRows, ResourceGroup } from "./page-layout.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
 import { Tip } from "./tip.tsx";
 
@@ -82,93 +81,74 @@ function ProvidersGroup({ location }: { location: LocationConfig }) {
     void store.loadProviders(locationId);
   }, [store, locationId]);
 
-  const add = (
-    <Button data-variant="outline" onClick={() => setEditing("new")}>
-      {t("providers.add")}
-    </Button>
-  );
   return (
-    <PageGroup
-      lead={t("providers.lead", { location: location.name })}
-      action={list !== undefined && list.length > 0 ? add : undefined}
-    >
-      {read?.error !== undefined ? (
-        <StateBlock
-          size="inline"
-          align="start"
-          tone="error"
-          title={t("providers.unreadable")}
-          reason={read.error}
-          action={{
-            label: t("providers.retry"),
-            onAction: () => void store.loadProviders(locationId),
-          }}
-        />
-      ) : null}
-      {list === undefined ? (
-        read?.error === undefined ? (
-          <StateBlock size="inline" align="start" tone="loading" title={t("providers.loading")} />
-        ) : null
-      ) : list.length === 0 ? (
-        <StateBlock
-          size="inline"
-          align="start"
-          tone="empty"
-          title={t("providers.empty")}
-          body={t("providers.emptyBody")}
-          action={{ label: t("providers.add"), onAction: () => setEditing("new") }}
-        />
-      ) : (
-        <PageRows>
-          {list.map((provider) => {
-            const kindName =
-              provider.kind === CUSTOM_PROVIDER_KIND
-                ? t("providers.form.kind.custom")
-                : (kinds.find((k) => k.id === provider.kind)?.name ?? provider.kind);
-            return (
-              <PageRow
-                key={provider.id}
-                label={provider.name}
-                description={
-                  <>
-                    <span data-slot="connector-status">{kindName}</span>
-                    <span data-slot="connector-status">
-                      {t("providers.models", { count: provider.models.length })}
-                    </span>
-                    <span data-slot="connector-status" data-key={provider.hasKey}>
-                      {t(provider.hasKey ? "providers.key.saved" : "providers.key.none")}
-                    </span>
-                    {provider.baseUrl !== null ? (
-                      <code data-slot="connector-where" title={provider.baseUrl}>
-                        {provider.baseUrl}
-                      </code>
-                    ) : null}
-                  </>
-                }
-              >
-                <Menu
-                  onAction={(value) => {
-                    if (value === "edit") setEditing(provider);
-                    else if (value === "remove") setRemoving(provider);
-                  }}
+    <>
+      <ResourceGroup
+        lead={t("providers.lead", { location: location.name })}
+        items={list}
+        error={read?.error}
+        onRetry={() => void store.loadProviders(locationId)}
+        says={{
+          loading: t("providers.loading"),
+          unreadable: t("providers.unreadable"),
+          retry: t("providers.retry"),
+          empty: t("providers.empty"),
+          emptyBody: t("providers.emptyBody"),
+        }}
+        add={{ label: t("providers.add"), onAdd: () => setEditing("new") }}
+      >
+        {(list) => (
+          <PageRows>
+            {list.map((provider) => {
+              const kindName =
+                provider.kind === CUSTOM_PROVIDER_KIND
+                  ? t("providers.form.kind.custom")
+                  : (kinds.find((k) => k.id === provider.kind)?.name ?? provider.kind);
+              return (
+                <PageRow
+                  key={provider.id}
+                  label={provider.name}
+                  description={
+                    <>
+                      <span data-slot="connector-status">{kindName}</span>
+                      <span data-slot="connector-status">
+                        {t("providers.models", { count: provider.models.length })}
+                      </span>
+                      <span data-slot="connector-status" data-key={provider.hasKey}>
+                        {t(provider.hasKey ? "providers.key.saved" : "providers.key.none")}
+                      </span>
+                      {provider.baseUrl !== null ? (
+                        <code data-slot="connector-where" title={provider.baseUrl}>
+                          {provider.baseUrl}
+                        </code>
+                      ) : null}
+                    </>
+                  }
                 >
-                  <Tip label={t("providers.actions", { name: provider.name })}>
-                    <MenuTrigger data-variant="ghost">
-                      <MoreIcon />
-                    </MenuTrigger>
-                  </Tip>
-                  <MenuContent align="end">
-                    <MenuItem value="edit">{t("providers.edit")}</MenuItem>
-                    <MenuItem value="remove" data-destructive>
-                      {t("providers.remove")}
-                    </MenuItem>
-                  </MenuContent>
-                </Menu>
-              </PageRow>
-            );
-          })}
-        </PageRows>
-      )}
+                  <Menu
+                    onAction={(value) => {
+                      if (value === "edit") setEditing(provider);
+                      else if (value === "remove") setRemoving(provider);
+                    }}
+                  >
+                    <Tip label={t("providers.actions", { name: provider.name })}>
+                      <MenuTrigger data-variant="ghost">
+                        <MoreIcon />
+                      </MenuTrigger>
+                    </Tip>
+                    <MenuContent align="end">
+                      <MenuItem value="edit">{t("providers.edit")}</MenuItem>
+                      <MenuItem value="remove" data-destructive>
+                        {t("providers.remove")}
+                      </MenuItem>
+                    </MenuContent>
+                  </Menu>
+                </PageRow>
+              );
+            })}
+          </PageRows>
+        )}
+      </ResourceGroup>
       {editing !== undefined ? (
         <ProviderFormDialog
           location={location}
@@ -192,7 +172,7 @@ function ProvidersGroup({ location }: { location: LocationConfig }) {
           }}
         />
       ) : null}
-    </PageGroup>
+    </>
   );
 }
 

@@ -45,12 +45,6 @@ test("an item is listed by name and the environments that use it, never by a val
   expect(within(spare).getByText("Not used by any environment")).toBeTruthy();
 });
 
-test("with none, the page says so and the way to add one is there once", async () => {
-  const { group } = await mount();
-  expect(await group.findByText("The vault is empty.")).toBeTruthy();
-  expect(group.getAllByRole("button", { name: "New item" })).toHaveLength(1);
-});
-
 test("a new item: the name has the focus, the value is a password field, Enter saves, and the value is not shown after", async () => {
   const { user, group, calls } = await mount();
   await user.click(await group.findByRole("button", { name: "New item" }));

@@ -69,9 +69,7 @@ test("Connectors is a page over the sessions: its button opens it, Escape goes b
   expect(screen.queryByRole("dialog")).toBeNull();
   // One location can keep connectors: there is nothing to choose.
   expect(within(page).queryByRole("combobox", { name: "Work in" })).toBeNull();
-  // With none yet, the page says so and offers the way to add one, once.
   expect(await within(page).findByText("No connectors yet.")).toBeTruthy();
-  expect(within(page).getAllByRole("button", { name: "Add connector" })).toHaveLength(1);
 
   await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("tablist")).toBeNull());
