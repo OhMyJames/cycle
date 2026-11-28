@@ -5,8 +5,8 @@
 // Notices) and asks it to approve or return a batch (`loop-board.tsx`, `loop-ticket.tsx`, `loop-notices.tsx`).
 import { isComposing } from "@ui-sdk/core";
 import { Button } from "@ui-sdk/react/button";
-import { type ReactNode, useEffect, useRef, useState } from "react";
-import type { LoopBoardColumn, LoopNotice, LoopProjectInfo, LoopRunsAnswer } from "../api.ts";
+import { useEffect, useRef, useState } from "react";
+import type { LoopBoardColumn, LoopProjectInfo, LoopRunsAnswer } from "../api.ts";
 import { useI18n } from "./i18n.tsx";
 import { ChevronRightIcon, RefreshIcon } from "./icons.tsx";
 import { Board } from "./loop-board.tsx";
