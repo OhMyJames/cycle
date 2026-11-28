@@ -58,8 +58,77 @@ test("an MCP call's long result is told by its start, where it says what it is",
     error: null,
   } as unknown as ThreadItem;
   const text = textOf(item) ?? "";
-  expect(text.startsWith('[{"type":"text","text":"rrr')).toBe(true);
-  expect(text.endsWith(`\n… ${MAX_OUTPUT + 27} more characters not shown`)).toBe(true);
+  expect(text.startsWith("rrr")).toBe(true);
+  expect(text.endsWith(`\n… ${MAX_OUTPUT} more characters not shown`)).toBe(true);
+});
+
+const mcpItem = (extra: object): ThreadItem =>
+  ({
+    type: "mcpToolCall",
+    id: "m3",
+    server: "linear",
+    tool: "create_issue",
+    status: "completed",
+    arguments: {},
+    result: null,
+    error: null,
+    ...extra,
+  }) as unknown as ThreadItem;
+
+test("an MCP call is titled `server · tool` and its text blocks are text, not JSON", () => {
+  const update = itemUpdate(
+    mcpItem({
+      result: {
+        content: [
+          { type: "text", text: 'a "quoted"\nline' },
+          { type: "text", text: "second" },
+        ],
+      },
+    }),
+    true,
+    false,
+  );
+  expect(update).toMatchObject({
+    name: "linear/create_issue",
+    title: "linear · create_issue",
+    content: [{ type: "content", content: { type: "text", text: 'a "quoted"\nline\nsecond' } }],
+  });
+});
+
+test("an MCP call's error is told as its message text", () => {
+  const update = itemUpdate(
+    mcpItem({ status: "failed", error: { message: "no such team" } }),
+    true,
+    false,
+  );
+  expect(update).toMatchObject({
+    status: "failed",
+    content: [{ type: "content", content: { type: "text", text: "no such team" } }],
+  });
+});
+
+test("an MCP call's image is kept as an image and other blocks as their JSON", () => {
+  const update = itemUpdate(
+    mcpItem({
+      result: {
+        content: [
+          { type: "image", data: "AAAA", mimeType: "image/png" },
+          { type: "resource_link", uri: "file:///a" },
+        ],
+      },
+    }),
+    true,
+    false,
+  );
+  expect(update).toMatchObject({
+    content: [
+      {
+        type: "content",
+        content: { type: "text", text: '{"type":"resource_link","uri":"file:///a"}' },
+      },
+      { type: "content", content: { type: "image", data: "AAAA", mimeType: "image/png" } },
+    ],
+  });
 });
 
 test("a command's long title is cut at its end", () => {
@@ -141,7 +210,9 @@ test("command, MCP, fileChange and webSearch items carry structured rawInput, lo
   );
   expect(mcp).toMatchObject({
     name: "plan/get_issue",
+    title: "plan · get_issue",
     rawInput: { projectKey: "CYC", sequenceNumber: 308 },
+    content: [{ type: "content", content: { type: "text", text: "ok" } }],
   });
 
   const edited = itemUpdate(
