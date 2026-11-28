@@ -57,6 +57,8 @@ const setup = async (
       ok: true,
       sha: headOf(Number(ref)),
       state: state.prState,
+      isDraft: false,
+      baseBranch: "main",
     }),
     authorPermission: async () => {
       calls.push("permission");
