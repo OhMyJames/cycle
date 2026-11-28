@@ -2135,6 +2135,49 @@ test("git push rejected and an authentication failure are not retried: Blocked a
   }
 });
 
+const REMOTE_FAILED =
+  "To https://github.com/OhMyJames/cycle\n ! [remote rejected]   67dc83e426dfda26de76abacfa2072de9f02c36c -> auto/cyc-1 (failed)\nerror: failed to push some refs to 'https://github.com/OhMyJames/cycle'";
+
+test("git push gets a reasonless [remote rejected] (failed): retried like a network error, then network_wait, not Blocked (CYC-559)", async () => {
+  const s = setup([ready()], {
+    dev: [done()],
+    qa: [done(PASS), done(PASS)],
+    review: [done(REVIEW_MERGE)],
+  });
+  const { pipeline, left } = flaky(s, (l) => l.includes(" push "), 4, REMOTE_FAILED);
+  const first = await pipeline.step();
+  expect(first).toEqual({ status: "network_wait", key: "CYC-1", command: "git push" });
+  expect(left()).toBe(0);
+  expect(s.tracker.moves).not.toContain("CYC-1:blocked");
+  expect(s.tracker.comments).toEqual([]);
+  const events = (await s.store.events()).map((e) => e.kind);
+  expect(events).toContain("network_down");
+  expect(events.filter((e) => e === "network_retry")).toHaveLength(3);
+
+  // Once GitHub accepts the push, the same run goes on and is delivered.
+  const second = await pipeline.step();
+  expect(second.status).toBe("delivered");
+  expect(s.tracker.moves).not.toContain("CYC-1:blocked");
+});
+
+test("git push rejected with a stated reason is not retried: Blocked, the reason goes into the comment (CYC-559)", async () => {
+  for (const reason of [
+    "protected branch hook declined",
+    "pre-receive hook declined",
+    "push declined due to repository rule violations",
+  ]) {
+    const s = setup([ready()], { dev: [done()], qa: [done(PASS)] });
+    const out = ` ! [remote rejected]   HEAD -> auto/cyc-1 (${reason})`;
+    const { pipeline, left } = flaky(s, (l) => l.includes(" push "), 5, out);
+    const result = await pipeline.step();
+    expect(result.status).toBe("blocked");
+    expect(left()).toBe(4);
+    expect(s.tracker.moves).toContain("CYC-1:blocked");
+    expect(s.tracker.comments.join("\n")).toContain(reason);
+    expect((await s.store.events()).some((e) => e.kind === "network_retry")).toBe(false);
+  }
+});
+
 test("each role's session is made with that role's model and effort", async () => {
   const { pipeline, sessions } = setup(
     [ready()],
