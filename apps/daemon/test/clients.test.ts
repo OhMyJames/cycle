@@ -8,6 +8,7 @@ const conn = (id: string, notify: ClientConn["notify"]): ClientConn => ({
   notify,
   request: async () => undefined,
   elicitation: false,
+  updateNotify: false,
   ackReturns: false,
 });
 

@@ -116,6 +116,17 @@ export const ConfigSchema = z.object({
       exitMinutes: z.number().min(0).default(30),
     })
     .default({ agentMinutes: 10, attachedAgentMinutes: 60, exitMinutes: 30 }),
+  /**
+   * The daemon updating itself (docs/daemon.md "自动更新"): with a new version ready and no quiet moment, after
+   * `drainAfterMinutes` it stops starting turns and waits for the running ones; `forceAfterMinutes` after that it
+   * switches whatever is still working. 0 turns the next step off.
+   */
+  update: z
+    .object({
+      drainAfterMinutes: z.number().min(0).default(15),
+      forceAfterMinutes: z.number().min(0).default(15),
+    })
+    .default({ drainAfterMinutes: 15, forceAfterMinutes: 15 }),
   /** The daemon's own log, `<dataDir>/daemon.log` (docs/daemon.md "日志"). Events only, never content. */
   log: z
     .object({

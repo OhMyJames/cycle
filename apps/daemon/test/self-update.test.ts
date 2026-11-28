@@ -381,3 +381,112 @@ test("a look at the channel does not start while a switch is deciding", async ()
   decide(false);
   expect(await switching).toBe(false);
 });
+
+const staged = async (installDir: string, version = "0.3.150") => {
+  const ready = join(dir, `ready-${version}`);
+  await mkdir(ready);
+  await writeFile(join(ready, "cycle"), `daemon v${version}`);
+  await putStaged(installDir, ready, version);
+};
+
+test("a version waits, then drains after drainAfter, then forces after forceAfter, and says so", async () => {
+  const installDir = await installed(OLD);
+  await staged(installDir);
+  let clock = 0;
+  const working = true;
+  const calls: string[] = [];
+  const { update, applied, logged } = updater(installDir, "http://127.0.0.1:1", {
+    now: () => clock,
+    idle: async () => !working,
+    drained: async () => !working,
+    setDraining: (on) => calls.push(`draining:${on}`),
+    forced: async () => ({ sessions: 2, background: 3 }),
+    changed: () => calls.push("changed"),
+    drainAfterMs: 15 * 60_000,
+    forceAfterMs: 10 * 60_000,
+  });
+  expect(await update.tryApply()).toBe(false);
+  expect(update.state).toMatchObject({ phase: { state: "waiting", since: 0 } });
+  clock = 14 * 60_000;
+  expect(await update.tryApply()).toBe(false);
+  expect(update.state).toMatchObject({ phase: { state: "waiting" } });
+  clock = 15 * 60_000;
+  expect(await update.tryApply()).toBe(false);
+  expect(update.state).toMatchObject({
+    phase: { state: "draining", since: clock, forceAt: clock + 10 * 60_000 },
+  });
+  expect(calls).toContain("draining:true");
+  expect(logged).toContain("self_update_draining");
+  clock += 9 * 60_000;
+  expect(await update.tryApply()).toBe(false);
+  expect(applied).toEqual([]);
+  clock += 60_000;
+  expect(await update.tryApply()).toBe(true);
+  expect(applied).toEqual(["0.3.150"]);
+  expect(logged).toContain("self_update_forced");
+});
+
+test("draining switches at once when nothing is left, without the quiet time", async () => {
+  const installDir = await installed(OLD);
+  await staged(installDir);
+  let clock = 0;
+  const quiet = false;
+  let drained = false;
+  const { update, applied, logged } = updater(installDir, "http://127.0.0.1:1", {
+    now: () => clock,
+    idle: async () => quiet,
+    drained: async () => drained,
+    drainAfterMs: 60_000,
+  });
+  expect(await update.tryApply()).toBe(false);
+  clock = 60_000;
+  expect(await update.tryApply()).toBe(false);
+  drained = true;
+  expect(await update.tryApply()).toBe(true);
+  expect(applied).toEqual(["0.3.150"]);
+  expect(logged).not.toContain("self_update_forced");
+});
+
+test("with both limits 0 there is only waiting, and a failed switch ends draining", async () => {
+  const installDir = await installed(OLD);
+  await staged(installDir);
+  let clock = 0;
+  const calls: string[] = [];
+  const { update } = updater(installDir, "http://127.0.0.1:1", {
+    now: () => clock,
+    idle: async () => false,
+    setDraining: (on) => calls.push(`draining:${on}`),
+  });
+  await update.tryApply();
+  clock = 24 * 3_600_000;
+  await update.tryApply();
+  expect(update.state).toMatchObject({ phase: { state: "waiting" } });
+  expect(calls).toEqual([]);
+
+  const failing = updater(installDir, "http://127.0.0.1:1", {
+    now: () => clock,
+    idle: async () => false,
+    drained: async () => true,
+    setDraining: (on) => calls.push(`draining:${on}`),
+    drainAfterMs: 1,
+    apply: async () => {
+      throw new Error("cannot");
+    },
+  });
+  await failing.update.tryApply();
+  clock += 5;
+  await failing.update.tryApply();
+  expect(calls).toEqual(["draining:true", "draining:false"]);
+  expect(failing.update.state).not.toHaveProperty("phase");
+});
+
+test("a turn that ends is looked at at once", async () => {
+  const installDir = await installed(OLD);
+  await staged(installDir);
+  const { update, applied } = updater(installDir, "http://127.0.0.1:1", {
+    setTimeout: (() => 0) as unknown as typeof setTimeout,
+    clearInterval: (() => {}) as unknown as typeof clearInterval,
+  });
+  update.nudge();
+  await until(() => applied.length === 1, "the look");
+});

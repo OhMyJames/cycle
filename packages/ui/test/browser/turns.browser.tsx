@@ -2417,3 +2417,36 @@ test("Codex and agy consecutive command cards show every command, hide exit 0 no
   const extraInput = log.querySelector('[data-item-id="a1"] [data-slot="tool-input"]');
   expect(extraInput?.textContent).not.toContain(longAgyCmd);
 });
+
+test("while the daemon drains for its update, the box says so with the time it will switch; waiting and done say nothing", async () => {
+  const { emit, script } = await open(you("u1"), state({ state: "idle", stopReason: "end_turn" }));
+  const hint = () => document.querySelector('[data-update="draining"]');
+  expect(hint()).toBeNull();
+  await act(async () =>
+    script.emit({
+      type: "daemon-update",
+      locationId: "local",
+      draining: { version: "0.3.9", forceAt: "2026-11-28T10:30:00Z" },
+    }),
+  );
+  await waitFor(() => expect(hint()?.textContent).toContain("Cycle is updating"));
+  expect(hint()?.textContent).toContain("messages sent now go out after the restart");
+  expect(hint()?.textContent).toMatch(/by .*\d.* at the latest/);
+  // A message the daemon holds for the restart is shown as queued.
+  await emit(
+    u({
+      sessionUpdate: "_cycle/queue_update",
+      hold: "update",
+      entries: [{ queueId: "q1", prompt: [{ type: "text", text: "after the restart" }] }],
+    }),
+  );
+  await waitFor(() =>
+    expect(document.querySelector('[data-slot="queued-message"]')?.textContent).toContain(
+      "after the restart",
+    ),
+  );
+  expect(document.querySelector('[data-slot="queued-tag"]')?.textContent).toBe("Queued");
+  // The switch is done: the notice goes.
+  await act(async () => script.emit({ type: "daemon-update", locationId: "local" }));
+  await waitFor(() => expect(hint()).toBeNull());
+});

@@ -149,7 +149,7 @@ export function Composer({
   context,
   planUsage,
 }: ComposerProps) {
-  const { t, number } = useI18n();
+  const { t, number, date } = useI18n();
   const store = useAppStore();
   const draft = useSyncExternalStore(store.drafts.subscribe, () => store.drafts.get(sessionKey));
   // Only what the box shows is watched: the conversation is made anew by every streamed update, and the box must not be drawn again for each.
@@ -164,6 +164,8 @@ export function Composer({
   );
   // A permission waiting for an answer: ⌘Enter is its "Allow once" (app.tsx), the same test as there.
   const permissionWaits = useAppState((s) => (s.views[sessionKey]?.permissions.length ?? 0) > 0);
+  // The daemon is about to switch to its new version and starts no new turn: what is sent now goes after the restart.
+  const draining = useAppState((s) => s.daemonDraining[locationId]);
   const { text, attachments, kept } = draft;
   // A daemon that has not said it queues is asked nothing it would refuse: a message waits for the turn to end.
   const capabilities = useAppState((s) => s.status[locationId]?.capabilities);
@@ -678,6 +680,7 @@ export function Composer({
   const hasExtensions =
     plan !== undefined ||
     queue.length > 0 ||
+    draining !== undefined ||
     showBlocked ||
     continueHint.reason !== undefined ||
     dropping ||
@@ -741,6 +744,18 @@ export function Composer({
                 );
               })}
             </ul>
+          ) : null}
+          {draining !== undefined ? (
+            <div data-slot="extension-row" data-kind="hint" data-update="draining" role="status">
+              {draining.forceAt !== undefined && !Number.isNaN(Date.parse(draining.forceAt))
+                ? t("composer.updating.until", {
+                    time: date(Date.parse(draining.forceAt), {
+                      hour: "numeric",
+                      minute: "2-digit",
+                    }),
+                  })
+                : t("composer.updating")}
+            </div>
           ) : null}
           {showBlocked ? (
             <div data-slot="extension-row" data-kind="hint" role="status">

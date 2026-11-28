@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SessionUpdate } from "@agentclientprotocol/sdk/experimental/v2";
 import { Daemon, listenUnix } from "@cycle/daemon";
+import type { DaemonUpdateState } from "@cycle/protocol";
 import { fakeAgent } from "../../../apps/daemon/test/fake-agent.ts";
 import {
   type Channel,
@@ -38,8 +39,8 @@ const until = async (condition: () => boolean, what: string, ms = 3_000) => {
 const text = (value: string) => [{ type: "text" as const, text: value }];
 
 /** A daemon on a unix socket, and a way to make clients that can be cut off. */
-const setup = async (fake = fakeAgent()) => {
-  let daemon = await Daemon.start({ dataDir: dir, agents: [fake.definition] });
+const setup = async (fake = fakeAgent(), extra: { updateState?: () => DaemonUpdateState } = {}) => {
+  let daemon = await Daemon.start({ dataDir: dir, agents: [fake.definition], ...extra });
   const socket = join(dir, "d.sock");
   const server = await listenUnix({
     path: socket,
@@ -57,14 +58,18 @@ const setup = async (fake = fakeAgent()) => {
     channels.push(channel);
     return channel;
   };
-  const make = (events: ConstructorParameters<typeof CycleClient>[0]["events"] = {}) => {
-    const client = new CycleClient({ connect, events, backoff: { first: 10, max: 50 } });
+  const make = (
+    events: ConstructorParameters<typeof CycleClient>[0]["events"] = {},
+    more: { promptWaitMs?: number } = {},
+  ) => {
+    const client = new CycleClient({ connect, events, backoff: { first: 10, max: 50 }, ...more });
     cleanup.push(() => client.close());
     return client;
   };
   return {
     fake,
     make,
+    announce: () => daemon.announceUpdate(),
     /** Cuts every connection, as a network drop would. */
     drop: () => {
       for (const channel of channels.splice(0)) channel.close();
@@ -598,4 +603,67 @@ test('a worktree is asked for with the session, its branches are listed, and a r
   await expect(client.newSession({ cwd: "/tmp", worktree: {} })).rejects.toMatchObject({
     data: { reason: "not_a_repository" },
   });
+});
+
+test("a prompt sent while the connection is being re-made is sent once it is back", async () => {
+  const { make, drop, network } = await setup();
+  const seen: { update: SessionUpdate }[] = [];
+  const states: string[] = [];
+  const client = make({
+    update: (_id, update) => seen.push({ update }),
+    connection: (state) => states.push(state),
+  });
+  await client.start();
+  const sessionId = await client.newSession({ cwd: "/tmp" });
+  await client.watch(sessionId, "/tmp");
+  network(false);
+  drop();
+  await until(() => client.state === "reconnecting", "the loss");
+  const sent = client.prompt(sessionId, text("hi"));
+  await Bun.sleep(60);
+  network(true);
+  expect(typeof (await sent)).toBe("string");
+  expect(client.state).toBe("connected");
+  await until(
+    () => seen.some((s) => (s.update as { stopReason?: string }).stopReason === "end_turn"),
+    "the turn",
+  );
+});
+
+test("a prompt sent while the connection stays down fails after the wait", async () => {
+  const { make, drop, network } = await setup();
+  const client = make({}, { promptWaitMs: 80 });
+  await client.start();
+  const sessionId = await client.newSession({ cwd: "/tmp" });
+  network(false);
+  drop();
+  await until(() => client.state === "reconnecting", "the loss");
+  const started = Date.now();
+  await expect(client.prompt(sessionId, text("hi"))).rejects.toThrow("Not connected");
+  expect(Date.now() - started).toBeGreaterThanOrEqual(70);
+});
+
+test("the update state is read, and its notification reaches a client that has a handler", async () => {
+  let state: DaemonUpdateState = { version: "1.2.3", updates: "on" };
+  const { make, announce } = await setup(fakeAgent(), { updateState: () => state });
+  const told: DaemonUpdateState[] = [];
+  const listening = make({ daemonUpdate: (s) => told.push(s) });
+  const deaf = make();
+  await listening.start();
+  await deaf.start();
+  expect(listening.capabilities).toMatchObject({ selfUpdateDrain: true });
+  state = {
+    version: "1.2.3",
+    updates: "on",
+    pending: {
+      version: "1.3.0",
+      state: "draining",
+      since: "2026-11-28T00:00:00Z",
+      forceAt: "2026-11-28T00:15:00Z",
+    },
+  };
+  expect(await deaf.readDaemonUpdate()).toEqual(state);
+  announce();
+  await until(() => told.length === 1, "the notification");
+  expect(told[0]).toEqual(state);
 });

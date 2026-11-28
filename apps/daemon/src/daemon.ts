@@ -185,6 +185,8 @@ export type DaemonOptions = {
   builtinPlugins?: BuiltinBundle;
   /** The daemon's own update state (`_cycle/daemon/update/read`). Default: it does not update itself. */
   updateState?: () => DaemonUpdateState;
+  /** A turn or a background task has ended: a version waiting to be switched to may be able to go now (self-update.ts). */
+  onSettled?: () => void;
 };
 
 /** The terminals' settings when the daemon is given none: what `config.json` defaults to. */
@@ -267,6 +269,8 @@ export class Daemon {
   #counter = 0;
   #closing = false;
   readonly #updateState: (() => DaemonUpdateState) | undefined;
+  readonly #onSettled: (() => void) | undefined;
+  #draining = false;
 
   private constructor(
     options: DaemonOptions,
@@ -280,6 +284,7 @@ export class Daemon {
   ) {
     this.#version = options.version ?? "dev";
     this.#updateState = options.updateState;
+    this.#onSettled = options.onSettled;
     this.#dataDir = options.dataDir;
     this.#agentHomes = options.agentHomes ?? (() => []);
     const defaultConfigPath = join(options.dataDir, "config.json");
@@ -388,6 +393,7 @@ export class Daemon {
     );
     // Quietly, and not waited for: nothing starts later because of it (a failure is tried again as an agent starts).
     void daemon.#plugins.ensureBuiltins();
+    void daemon.#resumeHeld();
     return daemon;
   }
 
@@ -522,6 +528,97 @@ export class Daemon {
       if (now - session.lastActive < quietMs) return false;
     }
     return !(await this.#terminals.busy());
+  }
+
+  /** Whether the daemon is draining for an update: it starts no new turn (docs/daemon.md "自动更新"). */
+  get draining(): boolean {
+    return this.#draining;
+  }
+
+  setDraining(draining: boolean): void {
+    this.#draining = draining;
+    // The switch did not happen (or was called off): what was held for it goes now, here.
+    if (!draining) this.#sendHeld();
+  }
+
+  /**
+   * Draining is over without a restart: in a session with no turn, what waits goes on, one after the other. That
+   * includes prompts queued before draining, whose turn ended while no next prompt was taken.
+   */
+  #sendHeld(): void {
+    for (const session of this.#sessions.values()) {
+      if (session.closed || session.queue.length === 0) continue;
+      const status = session.status();
+      if (status !== "idle" && status !== "stopped") continue;
+      if (this.#turnInProgress(session)) continue;
+      this.#dispatchNext(session);
+    }
+  }
+
+  /**
+   * A new daemon, after a switch, sends what the old one held for it: each session with prompts queued for the update
+   * has its agent started and resumed (`#send`), no client needed. What was queued before draining is handed back.
+   */
+  async #resumeHeld(): Promise<void> {
+    for (const [id, entry] of this.#index.list()) {
+      if (entry.queued !== true || this.#closing) continue;
+      try {
+        const session = await this.#session(id);
+        if (session.closed || !session.queue.some((e) => e.hold === "update")) continue;
+        const held = session.queue.filter((e) => e.hold === "update");
+        session.queue = session.queue.filter((e) => e.hold !== "update");
+        this.#returnQueue(session, "interrupted", true);
+        session.queue = [...held, ...session.queue];
+        this.#log.info("held_prompts_resumed", { session: id, count: held.length });
+        // A prompt that came in while the session was loading has started a turn: the held ones go after it.
+        const status = session.status();
+        if ((status !== "idle" && status !== "stopped") || this.#turnInProgress(session)) continue;
+        this.#dispatchNext(session);
+      } catch (error) {
+        this.#log.warn("held_prompts_resume_failed", { session: id, error: errorText(error) });
+      }
+    }
+  }
+
+  /**
+   * Whether a draining daemon has nothing left to wait for: no turn, no request waiting, no background task (what is
+   * queued does not count) and no terminal running a command. No quiet time is asked: no new turn can start.
+   */
+  async drainedForUpdate(): Promise<boolean> {
+    if (this.#closing) return false;
+    if (this.activity().length > 0) return false;
+    return !(await this.#terminals.busy());
+  }
+
+  /** Tells the clients that take it (`_cycle/daemon/update`) the daemon's update state as it now is. */
+  announceUpdate(): void {
+    const state = this.#updateState?.();
+    if (state !== undefined) this.#clients.broadcastUpdate(NOTIFICATIONS.daemonUpdate, state);
+  }
+
+  /**
+   * Before a forced switch: what the stop will cut short, as counts, and in each session whose background tasks it
+   * stops, a note saying so (the same words as `cycle stop --force`).
+   */
+  async noteForcedStop(): Promise<{ sessions: number; background: number }> {
+    let sessions = 0;
+    let background = 0;
+    for (const session of this.#sessions.values()) {
+      if (session.closed) continue;
+      const tasks = session.backgroundCount();
+      if (this.#turnInProgress(session) || tasks > 0) sessions += 1;
+      if (tasks === 0) continue;
+      background += tasks;
+      await this.#write(session, {
+        kind: "update",
+        data: {
+          sessionUpdate: "notice",
+          severity: "warning",
+          title: "更新 daemon 时停掉了后台任务",
+        },
+      });
+    }
+    return { sessions, background };
   }
 
   /** A turn has started and not ended: on record, or as the daemon has it (a prompt still on its way to the agent). */
@@ -1434,7 +1531,10 @@ export class Daemon {
     const announce = kind === "state_update" || backgroundChanged;
     void this.#write(session, { kind: "update", data: kept }).then((written) => {
       if (written && announce) this.#changed();
-      if (written && backgroundChanged) this.#restartIfStale(session);
+      if (written && backgroundChanged) {
+        this.#restartIfStale(session);
+        if (session.backgroundCount() === 0) this.#onSettled?.();
+      }
     });
     return true;
   }
@@ -1450,6 +1550,7 @@ export class Daemon {
       });
     else this.#log.info("turn_ended", { session: session.id, stopReason: ended.stopReason });
     this.#queueAfterTurn(session, ended.stopReason);
+    this.#onSettled?.();
     // A turn that ended with nothing behind it: an agent started with an old trust decision can go now.
     this.#restartIfStale(session);
   }
@@ -1457,6 +1558,8 @@ export class Daemon {
   /** What waits goes on after a turn that ended well, and is handed back after one that did not. */
   #queueAfterTurn(session: Session, stopReason: string): void {
     if (session.queue.length === 0) return;
+    // Draining starts no new turn: what waits stays, for after the switch.
+    if (stopReason === "end_turn" && this.#draining) return;
     if (stopReason === "end_turn") this.#dispatchNext(session);
     else this.#returnQueue(session, stopReason === "cancelled" ? "cancelled" : "error");
   }
@@ -1502,6 +1605,7 @@ export class Daemon {
       data: {
         sessionUpdate: QUEUE_UPDATE,
         entries: [...session.queue],
+        ...(session.queue.some((e) => e.hold === "update") ? { hold: "update" } : {}),
         ...(back !== undefined ? back : {}),
       },
     }).then((written) => {
@@ -1584,6 +1688,8 @@ export class Daemon {
   #returnStale(session: Session): void {
     const status = session.status();
     if (status !== "idle" && status !== "stopped") return;
+    // Held for the update: it is sent after the switch, not handed back.
+    if (session.queue.some((e) => e.hold === "update")) return;
     this.#returnQueue(session, session.heldReason ?? "interrupted", true);
   }
 
@@ -2206,6 +2312,7 @@ export class Daemon {
       promptFailed: (session, error) => this.#promptFailed(session, error),
       publishQueue: (session, back) => this.#publishQueue(session, back),
       returnQueue: (session, reason, force) => this.#returnQueue(session, reason, force),
+      draining: () => this.#draining,
       returnStale: (session) => this.#returnStale(session),
       offerReturn: (session) => this.#offerReturn(session),
       ackReturn: (session, conn, id) => this.#ackReturn(session, conn, id),

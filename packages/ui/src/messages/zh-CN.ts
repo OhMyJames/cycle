@@ -317,6 +317,9 @@ export const zhCN: Readonly<Record<MessageKey, Message>> = {
 
   // 排队的消息
   "composer.queued.label": "排队的消息",
+  "composer.updating": "Cycle 正在更新，正在运行的任务结束后重启；现在发的消息会在重启后发出。",
+  "composer.updating.until":
+    "Cycle 正在更新，正在运行的任务结束后重启，最迟 {time}；现在发的消息会在重启后发出。",
   "composer.queued.tag": "排队中",
   "composer.queued.edit": "编辑排队的消息：{preview}",
   "composer.queued.editShort": "编辑",

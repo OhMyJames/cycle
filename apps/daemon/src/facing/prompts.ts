@@ -61,11 +61,17 @@ export const registerPrompts = (app: AgentApp, core: Core, me: Me): void => {
       const steered = await core.steer(session, params.prompt);
       if (steered !== undefined) return steered;
     }
-    if (busy()) {
+    // Draining for an update: no new turn starts, even in an idle session; the prompt waits for the switch.
+    const held = !busy() && core.draining();
+    if (busy() || held) {
       // The agent is busy: the prompt waits here, and goes when the turn ends well.
       if (session.queue.length >= QUEUE_LIMIT) throw queueFull(session.id, QUEUE_LIMIT);
       const queueId = randomUUID();
-      const queued = { queueId, prompt: params.prompt };
+      const queued = {
+        queueId,
+        prompt: params.prompt,
+        ...(held || core.draining() ? { hold: "update" as const } : {}),
+      };
       session.queue.push(queued);
       if (!(await core.publishQueue(session))) {
         // Not on record, so not taken: the sender keeps what they wrote, and the queue is as it was.

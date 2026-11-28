@@ -186,6 +186,15 @@ export class AppStore extends StoreBase {
       case "plan-usage":
         this.#locations.planUsageTold(event);
         return;
+      case "daemon-update":
+        this.set((s) => {
+          const { [event.locationId]: _gone, ...rest } = s.daemonDraining;
+          return {
+            daemonDraining:
+              event.draining === undefined ? rest : { ...rest, [event.locationId]: event.draining },
+          };
+        });
+        return;
       case "connectors":
         this.#connectors.changed(event.locationId);
         return;

@@ -16,6 +16,7 @@ export const registerConnection = (app: AgentApp, core: Core, me: Me): void => {
     ];
     // Whether this client can answer a form: only then is it asked one (decision 0011).
     me().ackReturns = params._meta?.[META.ackReturns] === true;
+    me().updateNotify = params._meta?.[META.updateNotify] === true;
     me().elicitation = params.capabilities?.elicitation?.form != null;
     if (
       typeof requested === "string" &&
@@ -70,6 +71,7 @@ export const registerConnection = (app: AgentApp, core: Core, me: Me): void => {
           vault: true,
           search: true,
           selfUpdate: true,
+          selfUpdateDrain: true,
         },
       },
     };

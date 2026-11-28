@@ -3,6 +3,7 @@
 // file only builds the connection and hands their events to them (RuntimeHooks).
 import { type AgentWord, agentOf, type EventName, type EventProps } from "@cycle/analytics/events";
 import { type Channel, type ClientEvents, CycleClient, ProtocolMismatchError } from "@cycle/client";
+import type { DaemonUpdateState } from "@cycle/protocol";
 import type { AppEvent, LocationConfig, LocationStatus, SessionSummary } from "@cycle/ui";
 import {
   type DaemonStop,
@@ -306,6 +307,7 @@ export class Runtime {
         agentAuthCompleted: (completed) => this.#hooks.authCompleted(locationId, completed),
         connectorsChanged: () => this.emit({ type: "connectors", locationId }),
         providersChanged: () => this.emit({ type: "providers", locationId }),
+        daemonUpdate: (state) => this.emit(drainingEvent(locationId, state)),
         pluginsChanged: (agentId) => this.emit({ type: "plugins", locationId, agentId }),
         planUsage: (agent, usage) => this.emit({ type: "plan-usage", locationId, agent, usage }),
         terminalsChanged: (sessionId, terminals) =>
@@ -336,6 +338,13 @@ export class Runtime {
             this.track("location_connection", { kind: this.kindOf(locationId), state });
           if (state === "reconnecting") this.#hooks.lost(connection);
           if (state === "reconnecting" || state === "closed") this.#hooks.authLost(locationId);
+          // The daemon may be draining already, or may be the new one: what the page was told is read again.
+          if (state === "connected") {
+            void connection.client
+              .readDaemonUpdate()
+              .then((told) => this.emit(drainingEvent(locationId, told)))
+              .catch(() => undefined);
+          }
           if (state === "connected" && was === "reconnecting") {
             void this.#hooks.refresh(locationId, connection, true).catch(() => undefined);
           }
@@ -515,6 +524,23 @@ export class Runtime {
     this.emit({ type: "location-status", locationId, state: "closed" });
   }
 }
+
+/** What the page is told of the daemon's own update: only that it is draining, and when it will force the switch. */
+const drainingEvent = (locationId: string, state: DaemonUpdateState | undefined): AppEvent => {
+  const pending = state?.pending;
+  return {
+    type: "daemon-update",
+    locationId,
+    ...(pending?.state === "draining"
+      ? {
+          draining: {
+            version: pending.version,
+            ...(pending.forceAt !== undefined ? { forceAt: pending.forceAt } : {}),
+          },
+        }
+      : {}),
+  };
+};
 
 /** What a connected daemon said it can do, as the page reads it. */
 const capabilitiesOf = (client: CycleClient): NonNullable<LocationStatus["capabilities"]> => ({

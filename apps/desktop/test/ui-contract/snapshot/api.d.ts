@@ -597,6 +597,10 @@ export type SessionSnapshot = {
     permissions: PermissionRequest[];
     version: number;
 };
+export type DaemonDraining = {
+    version: string;
+    forceAt?: string;
+};
 export type UpdateState = {
     current: string;
 } & ({
@@ -709,6 +713,10 @@ export type AppEvent = {
 } | {
     type: "providers";
     locationId: string;
+} | {
+    type: "daemon-update";
+    locationId: string;
+    draining?: DaemonDraining;
 } | {
     type: "plugins";
     locationId: string;

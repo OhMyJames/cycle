@@ -109,6 +109,8 @@ export type Core = {
   ): Promise<boolean>;
   /** Hands everything waiting back to the clients. */
   returnQueue(session: Session, reason: QueueReason, force?: boolean): void;
+  /** Whether the daemon is draining for an update: no new turn starts. */
+  draining(): boolean;
   /** A queue left behind with no turn to send it is handed back. */
   returnStale(session: Session): void;
   /** Offers what was handed back to a client that is ready. */
