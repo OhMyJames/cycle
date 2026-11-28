@@ -1,20 +1,21 @@
 import type { LoopProjectInfo } from "../api.ts";
 
 /** Project-level views mounted under a Loop-backed workspace in the sidebar (CYC-533). */
-export type LoopProjectTab = "kanban" | "timeline";
+export type LoopProjectTab = "console" | "kanban" | "timeline";
 
 /** Where the Loop page is: the cross-project overview, one Project's tab (Kanban / Timeline), or a ticket drawer. */
 export type LoopView =
   | { at: "overview" }
   | { at: "project"; projectKey: string; tab: LoopProjectTab }
-  | { at: "ticket"; projectKey: string; identifier: string };
+  | { at: "ticket"; projectKey: string; identifier: string; over?: "console" | "kanban" };
 
 /**
- * One level up (Escape on a ticket's drawer): ticket → board. Nothing from a board, timeline or the overview: Escape
+ * One level up (Escape on a ticket's drawer): ticket → the page it was opened over (Console or Kanban; Kanban when unknown). Nothing from a board, timeline or the overview: Escape
  * does not move between them or leave the Loop; the sidebar does.
  */
 export function up(view: LoopView): LoopView | undefined {
-  if (view.at === "ticket") return { at: "project", projectKey: view.projectKey, tab: "kanban" };
+  if (view.at === "ticket")
+    return { at: "project", projectKey: view.projectKey, tab: view.over ?? "kanban" };
   return undefined;
 }
 

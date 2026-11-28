@@ -9,8 +9,8 @@ import type { LoopBoardColumn, LoopProjectInfo, LoopRunsAnswer } from "../api.ts
 import { useI18n } from "./i18n.tsx";
 import { ChevronRightIcon, RefreshIcon } from "./icons.tsx";
 import { Board } from "./loop-board.tsx";
+import { LoopConsole } from "./loop-console.tsx";
 import { type LoopProjectTab, type LoopView, up, viewProject } from "./loop-nav.ts";
-import { Notices, noticeUrgency, type RetryIntents } from "./loop-notices.tsx";
 import { LoopTimeline } from "./loop-timeline.tsx";
 import { PageGroup, PageRows } from "./page-layout.tsx";
 import { ShellNotices, ShellTitle } from "./shell.tsx";
@@ -42,40 +42,17 @@ function Overview({
   projects,
   away,
   onOpenProject,
-  onOpenTicket,
 }: {
   projects: LoopProjectInfo[];
   away: boolean;
   onOpenProject: (projectKey: string) => void;
-  onOpenTicket: (projectKey: string, identifier: string) => void;
 }) {
   const { t } = useI18n();
   const store = useAppStore();
   const boards = useAppState((s) => s.loop.boards);
-  const noticeAnswers = useAppState((s) => s.loop.notices);
   const runs = useAppState((s) => s.loop.runs);
+  const allNotices = useAppState((s) => s.loop.notices);
   const [refreshing, setRefreshing] = useState(false);
-
-  const notices = projects
-    .flatMap((p) => {
-      const answer = noticeAnswers[p.projectKey];
-      return answer?.kind === "ok"
-        ? answer.notices.map((notice) => ({ projectKey: p.projectKey, notice }))
-        : [];
-    })
-    .sort((a, b) => noticeUrgency(a.notice) - noticeUrgency(b.notice));
-
-  const retryIntents: RetryIntents = async (projectKey, identifier) => {
-    const result = await store.retryLoopIntents(projectKey, identifier);
-    if (result.kind === "failed") return { ok: false, message: t(`loop.fail.${result.reason}`) };
-    return {
-      ok: true,
-      message:
-        result.retried > 0
-          ? t("loop.notices.retried", { count: result.retried })
-          : t("loop.notices.retryNone"),
-    };
-  };
 
   const refreshAll = async () => {
     setRefreshing(true);
@@ -94,17 +71,6 @@ function Overview({
 
   return (
     <div data-slot="loop-overview" data-kind="loop-overview">
-      <Notices
-        notices={notices}
-        onRetryIntents={retryIntents}
-        onOpen={(projectKey, notice) => {
-          store.track("loop_notice_opened", { kind: notice.kind });
-          // The session it names, when it is here; else the ticket's page, where it is joined or its story is read.
-          if (notice.session === null || !store.joinLoopSession(notice.session.id)) {
-            if (notice.identifier !== null) onOpenTicket(projectKey, notice.identifier);
-          }
-        }}
-      />
       <section data-slot="loop-projects" aria-label={t("loop.projects")}>
         <PageGroup
           title={t("loop.projects")}
@@ -129,6 +95,11 @@ function Overview({
                   board && board !== "loading" && board.kind === "ok"
                     ? pendingCountOf(board.columns)
                     : 0;
+                const answer = allNotices[p.projectKey];
+                const needs =
+                  (answer?.kind === "ok"
+                    ? answer.notices.filter((n) => n.kind !== "operator").length
+                    : 0) + pending;
                 return (
                   <li key={p.projectKey} data-slot="loop-project-row" data-project={p.projectKey}>
                     <button
@@ -145,6 +116,11 @@ function Overview({
                         </span>
                         <span data-slot="loop-repo">{p.repo.displayName}</span>
                       </span>
+                      {needs > 0 ? (
+                        <span data-slot="loop-project-needs" data-kind="loop-project-needs">
+                          {t("loop.project.needs", { count: needs })}
+                        </span>
+                      ) : null}
                       {board === undefined || board === "loading" ? (
                         <span data-slot="loop-repo">{away ? "" : t("loop.loading")}</span>
                       ) : board.kind === "ok" ? (
@@ -259,6 +235,10 @@ export function LoopMain({
   const chosen = projects.find((p) => p.projectKey === projectKey);
   const chosenKey = chosen?.projectKey;
   const isTimeline = view.at === "project" && view.tab === "timeline";
+  // The Console, or a ticket's drawer over it.
+  const isConsole =
+    (view.at === "project" && view.tab === "console") ||
+    (view.at === "ticket" && view.over === "console");
   const allKeys = projects.map((p) => p.projectKey).join("\n");
 
   const openProject = (
@@ -368,7 +348,7 @@ export function LoopMain({
           onClick={() =>
             onView(
               view.at === "ticket"
-                ? { at: "project", projectKey: chosen.projectKey, tab: "kanban" }
+                ? { at: "project", projectKey: chosen.projectKey, tab: view.over ?? "kanban" }
                 : { at: "overview" },
             )
           }
@@ -381,7 +361,9 @@ export function LoopMain({
             ? view.identifier
             : isTimeline
               ? t("loop.tab.timeline")
-              : t("loop.tab.kanban")}
+              : isConsole
+                ? t("loop.tab.console")
+                : t("loop.tab.kanban")}
         </span>
       </nav>
     );
@@ -406,7 +388,7 @@ export function LoopMain({
         data-slot="page-body"
         data-kind="loop-body"
         // The board is a fixed frame whose columns scroll; the Timeline is a long page that scrolls as a whole.
-        data-full={chosen !== undefined && !isTimeline ? "" : undefined}
+        data-full={chosen !== undefined && !isTimeline && !isConsole ? "" : undefined}
       >
         {chosen !== undefined && isTimeline ? (
           <LoopTimeline
@@ -421,6 +403,29 @@ export function LoopMain({
               onOpenTimelineSession?.(key, locationId, sessionId)
             }
           />
+        ) : chosen !== undefined && isConsole ? (
+          <div data-slot="page-column">
+            <LoopConsole
+              key={chosen.projectKey}
+              projectKey={chosen.projectKey}
+              answer={loop.boards[chosen.projectKey]}
+              openIdentifier={
+                view.at === "ticket" && view.projectKey === chosen.projectKey
+                  ? view.identifier
+                  : undefined
+              }
+              onOpen={(identifier) =>
+                onView({
+                  at: "ticket",
+                  projectKey: chosen.projectKey,
+                  identifier,
+                  over: "console",
+                })
+              }
+              onBack={onBack}
+              onChatStarted={onClose}
+            />
+          </div>
         ) : chosen !== undefined ? (
           <Board
             projectKey={chosen.projectKey}
@@ -433,7 +438,9 @@ export function LoopMain({
             onOpen={(identifier) =>
               onView({ at: "ticket", projectKey: chosen.projectKey, identifier })
             }
-            onOpenOverview={() => onView({ at: "overview" })}
+            onOpenConsole={() =>
+              onView({ at: "project", projectKey: chosen.projectKey, tab: "console" })
+            }
             onBack={onBack}
             onChatStarted={onClose}
           />
@@ -457,10 +464,7 @@ export function LoopMain({
               <Overview
                 projects={projects}
                 away={away}
-                onOpenProject={(key) => openProject(key, "kanban", "overview")}
-                onOpenTicket={(key, identifier) =>
-                  onView({ at: "ticket", projectKey: key, identifier })
-                }
+                onOpenProject={(key) => openProject(key, "console", "overview")}
               />
             )}
           </div>

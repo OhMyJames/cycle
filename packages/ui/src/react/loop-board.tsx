@@ -1,34 +1,9 @@
-// One Project's board (CYC-431), as the Loop server answers it. The layout and interaction follow SakaniUI's
-// KanbanBoardBlock (https://www.sakaniui.com/docs/blocks/kanban-board, MIT, samzydd/Sakaniui): full-width toolbar with
-// search and filters, side-by-side columns with dot + title + count, crisp elevated cards with badge + footer divider,
-// and a floating selection dock at the bottom when awaiting-approval cards are picked. Only the visual and interaction
-// patterns are borrowed: nothing of it is imported or copied, and none of its dragging, "Move to" menu or arrow-key
-// moves is here, as they would move a ticket without the confirmation CYC-387 asks for. Tickets awaiting approval stay
-// at the top of Backlog with an amber card badge and a quick Approve button (CYC-451); clicking any card opens a
-// right-side drawer (`loop-ticket.tsx`) without losing board scroll or filter state. The columns are the server's own,
-// in its order.
-import { isComposing } from "@ui-sdk/core";
 import { Button } from "@ui-sdk/react/button";
 import { Menu, MenuContent, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "@ui-sdk/react/menu";
-import { useEffect, useMemo, useRef, useState } from "react";
-import type {
-  LoopActFailure,
-  LoopBoardAnswer,
-  LoopBoardColumn,
-  LoopManyResult,
-  LoopTicket,
-} from "../api.ts";
-import { ConfirmDialog } from "./dialogs.tsx";
+import { useMemo, useRef, useState } from "react";
+import type { LoopBoardAnswer, LoopBoardColumn, LoopTicket } from "../api.ts";
 import { useI18n } from "./i18n.tsx";
-import {
-  CheckIcon,
-  ChevronDownIcon,
-  ChevronRightIcon,
-  CloseIcon,
-  ErrorCircleIcon,
-  RefreshIcon,
-} from "./icons.tsx";
-import { BatchBar } from "./loop-batch-bar.tsx";
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon, RefreshIcon } from "./icons.tsx";
 import { GraphProgress } from "./loop-graph.tsx";
 import { BoardAlerts, type RetryIntents } from "./loop-notices.tsx";
 import {
@@ -37,14 +12,12 @@ import {
   PriorityBadge,
   priorityRank,
   TicketActions,
-  TicketDrawer,
   TicketStage,
+  useTicketDrawer,
 } from "./loop-ticket.tsx";
 import { SearchField } from "./search-field.tsx";
-import { usePlaceActive } from "./shell.tsx";
 import { StateBlock } from "./state-block.tsx";
 import { useAppState, useAppStore } from "./store-context.tsx";
-import { Tip } from "./tip.tsx";
 
 type PriorityFilter = "all" | (typeof PRIORITIES)[number];
 
@@ -147,8 +120,6 @@ function TicketCard({
   act,
   busyAction,
   active,
-  selected,
-  onTogglePick,
   onOpen,
 }: {
   ticket: LoopTicket;
@@ -156,8 +127,6 @@ function TicketCard({
   act: Act;
   busyAction?: string | undefined;
   active: boolean;
-  selected: boolean;
-  onTogglePick?: (() => void) | undefined;
   onOpen: (identifier: string) => void;
 }) {
   const { t } = useI18n();
@@ -171,19 +140,9 @@ function TicketCard({
       data-id={ticket.identifier}
       data-pending={isPending ? "" : undefined}
       data-active={active ? "" : undefined}
-      data-selected={selected ? "" : undefined}
     >
       <div data-slot="loop-ticket-head">
         <span data-slot="loop-ticket-lead">
-          {isPending && onTogglePick !== undefined ? (
-            <input
-              type="checkbox"
-              data-slot="loop-pending-pick"
-              aria-label={`${t("loop.pending.pick")} ${ticket.identifier}`}
-              checked={selected}
-              onChange={onTogglePick}
-            />
-          ) : null}
           <span data-slot="loop-ticket-id">{ticket.identifier}</span>
           {ticket.parent ? (
             <button
@@ -255,10 +214,6 @@ function Column({
   filtered,
   pageSize,
   openIdentifier,
-  picked,
-  onTogglePick,
-  onSelectAllPending,
-  allPendingSelected,
   pendingCount,
   childrenOf,
   act,
@@ -275,10 +230,6 @@ function Column({
   filtered?: boolean;
   pageSize?: number;
   openIdentifier?: string | undefined;
-  picked?: ReadonlySet<string> | undefined;
-  onTogglePick?: ((identifier: string) => void) | undefined;
-  onSelectAllPending?: (() => void) | undefined;
-  allPendingSelected?: boolean | undefined;
   pendingCount?: number | undefined;
   childrenOf?: ReadonlyMap<string, Child[]> | undefined;
   act: Act;
@@ -306,16 +257,6 @@ function Column({
         <span data-slot="loop-column-dot" aria-hidden="true" />
         <h3 data-slot="loop-column-title">{title}</h3>
         <span data-slot="loop-column-count">{countLabel}</span>
-        {pendingCount !== undefined && pendingCount > 0 && onSelectAllPending !== undefined ? (
-          <label data-slot="loop-column-select-all">
-            <input
-              type="checkbox"
-              checked={allPendingSelected === true}
-              onChange={onSelectAllPending}
-            />
-            {t("loop.pending.all")}
-          </label>
-        ) : null}
       </header>
       <div data-slot="loop-column-body">
         {tickets.length === 0 ? (
@@ -332,12 +273,6 @@ function Column({
                 act={act}
                 busyAction={busyAction}
                 active={openIdentifier === ticket.identifier}
-                selected={picked?.has(ticket.identifier) === true}
-                onTogglePick={
-                  ticket.pending !== undefined && onTogglePick !== undefined
-                    ? () => onTogglePick(ticket.identifier)
-                    : undefined
-                }
                 onOpen={onOpen}
               />
             ))}
@@ -394,7 +329,7 @@ export function Board({
   answer,
   openIdentifier,
   onOpen,
-  onOpenOverview,
+  onOpenConsole,
   onBack,
   onChatStarted,
 }: {
@@ -403,7 +338,7 @@ export function Board({
   /** The ticket whose drawer is open, if any: it is the Loop's navigation state, not the board's. */
   openIdentifier: string | undefined;
   onOpen: (identifier: string) => void;
-  onOpenOverview?: (() => void) | undefined;
+  onOpenConsole?: (() => void) | undefined;
   onBack: () => void;
   onChatStarted: () => void;
 }) {
@@ -412,34 +347,14 @@ export function Board({
   const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState("");
   const [priority, setPriority] = useState<PriorityFilter>("all");
-  const [onlyPending, setOnlyPending] = useState(false);
-  const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
-  const [why, setWhy] = useState("");
-  const [askingMany, setAskingMany] = useState(false);
-  const [batchBusy, setBatchBusy] = useState(false);
-  const [batchProblem, setBatchProblem] = useState<string | undefined>();
-  const [batchOutcome, setBatchOutcome] = useState<LoopManyResult | undefined>();
-  const [problem, setProblem] = useState<LoopActFailure | undefined>();
-  const [busyAction, setBusyAction] = useState<string | undefined>();
-  const [version, setVersion] = useState(0);
   const boardRef = useRef<HTMLDivElement>(null);
-  const lastOpened = useRef<string | undefined>(undefined);
-
-  // Restore focus to the ticket card that opened the drawer when the drawer closes.
-  useEffect(() => {
-    if (openIdentifier !== undefined) {
-      lastOpened.current = openIdentifier;
-      return;
-    }
-    const id = lastOpened.current;
-    if (id === undefined) return;
-    lastOpened.current = undefined;
-    boardRef.current
-      ?.querySelector<HTMLElement>(
-        `[data-slot="loop-ticket"][data-id="${CSS.escape(id)}"] > [data-slot="loop-ticket-title"]`,
-      )
-      ?.focus();
-  }, [openIdentifier]);
+  const { drawer, act, busyAction, alert, clearProblem } = useTicketDrawer(
+    projectKey,
+    openIdentifier,
+    onOpen,
+    onBack,
+    onChatStarted,
+  );
 
   const refresh = async () => {
     setRefreshing(true);
@@ -464,54 +379,8 @@ export function Board({
     };
   };
 
-  const request = useAppState((s) => s.loop.request);
-  // A pressed notification asks for its ticket once: it is taken (cleared) here, so reopening the page does not repeat it.
-  useEffect(() => {
-    if (request === undefined || request.projectKey !== projectKey) return;
-    onOpen(request.identifier);
-    store.takeLoopRequest(request.n);
-  }, [request, projectKey, store, onOpen]);
-
-  // Escape clears batch selection before reaching LoopMain (when no ticket drawer is open). Not while a page opened from
-  // the Loop is over it: Escape is the page's then.
-  const active = usePlaceActive();
-  useEffect(() => {
-    if (!active || picked.size === 0 || openIdentifier !== undefined) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented || isComposing(event)) return;
-      if (document.querySelector('[role="alertdialog"], [role="dialog"]') !== null) return;
-      event.preventDefault();
-      setPicked(new Set());
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [active, picked.size, openIdentifier]);
-
-  const act: Act = async (ticket, action, confirmed, reason) => {
-    const key = `${ticket.identifier}:${action}`;
-    setProblem(undefined);
-    setBusyAction(key);
-    try {
-      const result = await store.actOnLoopTicket(
-        projectKey,
-        ticket.identifier,
-        action,
-        confirmed,
-        reason,
-      );
-      if (result.kind === "ok") {
-        setVersion((v) => v + 1);
-        return undefined;
-      }
-      if (action !== "approve" && action !== "return") setProblem(result.reason);
-      return t(`loop.fail.${result.reason}`);
-    } finally {
-      setBusyAction(undefined);
-    }
-  };
-
   const openTicket = (identifier: string) => {
-    setProblem(undefined);
+    clearProblem();
     onOpen(identifier);
   };
 
@@ -528,106 +397,6 @@ export function Board({
   );
 
   const childrenOf = useMemo(() => childrenByParent(columns), [columns]);
-
-  const allPending = useMemo(() => {
-    const list: LoopTicket[] = [];
-    for (const c of columns) {
-      if (c.stateType !== "backlog") continue;
-      for (const tk of c.tickets) if (tk.pending !== undefined) list.push(tk);
-    }
-    return list.sort((a, b) => priorityRank(a.priority) - priorityRank(b.priority));
-  }, [columns]);
-
-  // If the filter was set to pending-only and all pending tickets were processed, turn it back off cleanly.
-  useEffect(() => {
-    if (onlyPending && allPending.length === 0) setOnlyPending(false);
-  }, [onlyPending, allPending.length]);
-
-  const chosen = useMemo(
-    () => allPending.filter((x) => picked.has(x.identifier)),
-    [allPending, picked],
-  );
-
-  const openSummary = useMemo(() => {
-    if (openIdentifier === undefined) return undefined;
-    for (const c of columns) {
-      const hit = c.tickets.find((tk) => tk.identifier === openIdentifier);
-      if (hit !== undefined) return hit;
-    }
-    return undefined;
-  }, [columns, openIdentifier]);
-
-  // The drawer stays mounted after it is closed until its slide-out has played (CYC-506); a new ticket picked
-  // meanwhile replaces it at once, and switching Projects clears any held drawer from the previous Project.
-  const [held, setHeld] = useState<{
-    projectKey: string;
-    identifier: string;
-    summary: LoopTicket | undefined;
-  }>();
-  const sameProjectHeld = held?.projectKey === projectKey ? held : undefined;
-  if (
-    openIdentifier !== undefined &&
-    (sameProjectHeld?.identifier !== openIdentifier || sameProjectHeld.summary !== openSummary)
-  ) {
-    setHeld({ projectKey, identifier: openIdentifier, summary: openSummary });
-  } else if (openIdentifier === undefined && held !== undefined && held.projectKey !== projectKey) {
-    setHeld(undefined);
-  }
-  const drawerId = openIdentifier ?? sameProjectHeld?.identifier;
-  const drawerSummary = openIdentifier !== undefined ? openSummary : sameProjectHeld?.summary;
-  const drawerClosing = openIdentifier === undefined;
-
-  const togglePick = (identifier: string) =>
-    setPicked((prev) => {
-      const next = new Set(prev);
-      if (!next.delete(identifier)) next.add(identifier);
-      return next;
-    });
-
-  const selectAllPending = () => {
-    const allSelected = allPending.length > 0 && chosen.length === allPending.length;
-    setPicked(allSelected ? new Set() : new Set(allPending.map((x) => x.identifier)));
-  };
-
-  const runBatch = async (action: "approve_many" | "return_many"): Promise<string | undefined> => {
-    setBatchBusy(true);
-    setBatchOutcome(undefined);
-    setBatchProblem(undefined);
-    const result = await store.actOnLoopMany(
-      projectKey,
-      action,
-      chosen.map((x) => x.identifier),
-      true,
-      action === "return_many" ? why : undefined,
-    );
-    setBatchBusy(false);
-    if (result.kind === "failed") {
-      const words = t(`loop.fail.${result.reason}`);
-      setBatchProblem(words);
-      return words;
-    }
-    setBatchOutcome(result);
-    setPicked(new Set());
-    if (action === "return_many") setWhy("");
-    return undefined;
-  };
-
-  const alert =
-    problem !== undefined ? (
-      <div data-slot="loop-board-notice" data-tone="error" role="alert">
-        <ErrorCircleIcon size={14} />
-        <span>{t(`loop.fail.${problem}`)}</span>
-        <Tip label={t("notice.dismiss")}>
-          <Button
-            data-variant="ghost"
-            data-kind="loop-notice-dismiss"
-            onClick={() => setProblem(undefined)}
-          >
-            <CloseIcon size={12} />
-          </Button>
-        </Tip>
-      </div>
-    ) : null;
 
   if (answer === undefined || answer === "loading") return <BoardSkeleton />;
   if (answer.kind === "no_server")
@@ -654,39 +423,18 @@ export function Board({
     );
 
   const q = query.trim().toLowerCase();
-  const filtered = q !== "" || priority !== "all" || onlyPending;
+  const filtered = q !== "" || priority !== "all";
   const matches = (tk: LoopTicket) => {
-    if (onlyPending && tk.pending === undefined) return false;
     if (priority !== "all" && tk.priority !== priority) return false;
     if (q === "") return true;
     return tk.identifier.toLowerCase().includes(q) || tk.title.toLowerCase().includes(q);
   };
-
-  const outcomeCount = (kind: "ok" | "skipped" | "failed") =>
-    batchOutcome?.kind === "done"
-      ? batchOutcome.results.filter((r) => r.outcome === kind).length
-      : 0;
 
   return (
     <div ref={boardRef} data-slot="loop-board" data-kind="loop-board">
       <div data-slot="loop-toolbar">
         <div data-slot="loop-toolbar-left">
           <SearchField value={query} onChange={setQuery} label={t("loop.search")} />
-
-          {allPending.length > 0 ? (
-            <button
-              type="button"
-              data-slot="loop-filter-chip"
-              data-tone="attention"
-              data-active={onlyPending ? "" : undefined}
-              aria-pressed={onlyPending}
-              onClick={() => setOnlyPending((v) => !v)}
-            >
-              <span data-slot="loop-pending-dot" aria-hidden="true" />
-              <span>{t("loop.pending")}</span>
-              <span data-slot="loop-filter-count">{allPending.length}</span>
-            </button>
-          ) : null}
 
           <Menu>
             <MenuTrigger
@@ -723,7 +471,6 @@ export function Board({
               onClick={() => {
                 setQuery("");
                 setPriority("all");
-                setOnlyPending(false);
               }}
             >
               {t("loop.filter.clear")}
@@ -755,51 +502,14 @@ export function Board({
         projectKey={projectKey}
         notices={projectNotices}
         onRetryIntents={retryIntents}
-        onOpenOverview={onOpenOverview}
+        onOpenConsole={onOpenConsole}
         onOpen={(notice) => {
-          store.track("loop_notice_opened", { kind: notice.kind });
+          store.track("loop_notice_opened", { kind: notice.kind, from: "board" });
           if (notice.session === null || !store.joinLoopSession(notice.session.id)) {
             if (notice.identifier !== null) openTicket(notice.identifier);
           }
         }}
       />
-      {batchProblem !== undefined ? (
-        <div data-slot="loop-board-notice" data-tone="error" role="alert">
-          <ErrorCircleIcon size={14} />
-          <span>{batchProblem}</span>
-          <Tip label={t("notice.dismiss")}>
-            <Button
-              data-variant="ghost"
-              data-kind="loop-notice-dismiss"
-              onClick={() => setBatchProblem(undefined)}
-            >
-              <CloseIcon size={12} />
-            </Button>
-          </Tip>
-        </div>
-      ) : null}
-      {batchOutcome?.kind === "done" ? (
-        <div data-slot="loop-board-notice" data-tone="info" role="status">
-          <CheckIcon size={14} />
-          <span>
-            {t("loop.pending.done", {
-              ok: outcomeCount("ok"),
-              skipped: outcomeCount("skipped"),
-              failed: outcomeCount("failed"),
-            })}
-          </span>
-          <Tip label={t("notice.dismiss")}>
-            <Button
-              data-variant="ghost"
-              data-kind="loop-notice-dismiss"
-              onClick={() => setBatchOutcome(undefined)}
-            >
-              <CloseIcon size={12} />
-            </Button>
-          </Tip>
-        </div>
-      ) : null}
-
       <div data-slot="loop-columns">
         {displayColumns.map((c) => {
           const isBacklog = c.stateType === "backlog";
@@ -836,11 +546,6 @@ export function Board({
               {...(isBacklog
                 ? {
                     pageSize: BACKLOG_PAGE,
-                    picked,
-                    onTogglePick: togglePick,
-                    onSelectAllPending: selectAllPending,
-                    allPendingSelected:
-                      allPending.length > 0 && chosen.length === allPending.length,
                     pendingCount: colPending,
                   }
                 : {})}
@@ -853,49 +558,7 @@ export function Board({
         })}
       </div>
 
-      <BatchBar
-        chosen={chosen}
-        totalPending={allPending.length}
-        why={why}
-        busy={batchBusy}
-        onWhy={setWhy}
-        onSelectAll={selectAllPending}
-        onClear={() => setPicked(new Set())}
-        onReturn={() => void runBatch("return_many")}
-        onApprove={() => setAskingMany(true)}
-      />
-
-      {askingMany ? (
-        <ConfirmDialog
-          open
-          onOpenChange={setAskingMany}
-          title={t("loop.pending.approve.title", { count: chosen.length })}
-          description={t("loop.pending.approve.body")}
-          detail={chosen.map((x) => [x.identifier, x.title].join(" ")).join("\n")}
-          confirmLabel={t("loop.pending.approve")}
-          onConfirm={() => runBatch("approve_many")}
-        />
-      ) : null}
-
-      {drawerId !== undefined ? (
-        <TicketDrawer
-          key={drawerId}
-          projectKey={projectKey}
-          identifier={drawerId}
-          summary={drawerSummary}
-          closing={drawerClosing}
-          onExited={() => setHeld(undefined)}
-          act={act}
-          busyAction={busyAction}
-          onChatStarted={onChatStarted}
-          onClose={() => {
-            setProblem(undefined);
-            onBack();
-          }}
-          problem={alert}
-          version={version}
-        />
-      ) : null}
+      {drawer}
     </div>
   );
 }
