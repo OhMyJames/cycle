@@ -230,6 +230,14 @@ export type Config = {
     readRoots: string[];
     maxFollowups: number;
   } | null;
+  /** Design work items (CYC-545), or null when off: the same shape as `research`, with the design folder and type. */
+  design: {
+    typeId: number;
+    backlogColumn: number;
+    folderId: number;
+    readRoots: string[];
+    maxFollowups: number;
+  } | null;
   /**
    * The planning node (CYC-322), or null when the Project has not turned it on. Label, column and type ids are
    * resolved from the tracker at start; `templates` are the Feature and Bug issue templates' bodies, for the prompt.
@@ -324,6 +332,7 @@ export const defaultConfig = (
   fullFlowLabelId: null,
   docsBase: null,
   research: null,
+  design: null,
   planning: null,
   prReview: null,
   repoSlug: null,

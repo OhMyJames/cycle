@@ -42,7 +42,12 @@ export const resolveProject = (
   names: { projectKey: string; autoLabel: string; featureType: string; bugType: string },
   research?: ResearchNames,
   planning?: PlanningNames,
-): ProjectSetup & { research: ResearchSetup | null; planning: PlanningSetup | null } => {
+  design?: ResearchNames,
+): ProjectSetup & {
+  research: ResearchSetup | null;
+  design: ResearchSetup | null;
+  planning: PlanningSetup | null;
+} => {
   const body = rec(reply);
   const data = rec(body.data ?? body);
   const columns = list(data.columns).sort((a, b) => Number(a.position) - Number(b.position));
@@ -80,6 +85,14 @@ export const resolveProject = (
           backlogColumn: pick("backlog", 0, "backlog"),
           folderId: folder(research, names.projectKey),
         };
+  const designSetup: ResearchSetup | null =
+    design === undefined
+      ? null
+      : {
+          typeId: byName(data.issueTypes, design.type, "issue type"),
+          backlogColumn: pick("backlog", 0, "backlog"),
+          folderId: folder(design, names.projectKey),
+        };
   // Planning likewise: its labels, Epic and the templates are required only when it is on.
   const planningSetup: PlanningSetup | null =
     planning === undefined
@@ -115,11 +128,13 @@ export const resolveProject = (
         featureTypeId,
         bugTypeId,
         ...(researchSetup === null ? [] : [researchSetup.typeId]),
+        ...(designSetup === null ? [] : [designSetup.typeId]),
       ]),
     ],
     featureTypeId,
     bugTypeId,
     research: researchSetup,
+    design: designSetup,
     planning: planningSetup,
   };
 };

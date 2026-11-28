@@ -29,6 +29,7 @@ import {
 } from "../../graph.ts";
 import { conclusionIsEmpty } from "../../preflight.ts";
 import {
+  designBrief,
   formatFindings,
   researchBrief,
   researchContinueBrief,
@@ -41,16 +42,41 @@ import { type ResearchState, type RunRecord, researchOf } from "../../store.ts";
 import { type Config, type Issue, SessionLost, type TurnResult } from "../../types.ts";
 import { judge, newQaSession, nextRound } from "../dev/qa.ts";
 import { blockTicket, tellTicket, ticketStillMine, ticketStillWanted } from "../ticket.ts";
-import { checkResearch, parseResearch, replaceConclusion } from "./output.ts";
+import { checkDesign, checkResearch, parseResearch, replaceConclusion } from "./output.ts";
+
+/** What differs between a research and a design ticket (CYC-545): the rest of the flow is the same. */
+const PROFILES = {
+  research: {
+    name: "调研",
+    session: "Research",
+    nodeTitle: "调研",
+    brief: researchBrief,
+    extraChecks: () => [] as string[],
+  },
+  design: {
+    name: "设计",
+    session: "Design",
+    nodeTitle: "设计",
+    brief: designBrief,
+    extraChecks: checkDesign,
+  },
+} as const;
+
+/** The options of a ticket kind, which the project must have turned on to take that kind. */
+const optionsOf = (kind: "research" | "design", config: Config) =>
+  kind === "design" ? config.design : config.research;
 
 export class ResearchFlow implements Flow {
-  readonly kind = "research";
+  readonly kind: "research" | "design";
+  readonly #p;
   readonly #host: FlowHost;
   readonly phases: Partial<Record<Phase, PhaseDef>>;
   readonly firstPhase = "research";
   readonly qa: Flow["qa"];
 
-  constructor(host: FlowHost) {
+  constructor(host: FlowHost, kind: "research" | "design" = "research") {
+    this.kind = kind;
+    this.#p = PROFILES[kind];
     this.#host = host;
     this.phases = {
       // A research run that has just been claimed already shows 调研, not 开发.
@@ -71,25 +97,25 @@ export class ResearchFlow implements Flow {
     };
     this.qa = {
       role: "research_qa",
-      title: (key) => `[${key}] Research QA`,
-      subject: "调研内容",
-      readRoots: (config) => host.need(config.research ?? undefined).readRoots,
+      title: (key) => `[${key}] ${this.#p.session} QA`,
+      subject: `${this.#p.name}内容`,
+      readRoots: (config) => host.need(optionsOf(kind, config) ?? undefined).readRoots,
     };
   }
 
   /** Turned off with a run under way: it waits in the state directory until research is on again. */
   enabled(config: Config): boolean {
-    return config.research !== null;
+    return optionsOf(this.kind, config) !== null;
   }
 
   /** A research work item has questions, not criteria: its book is empty, kept so a resume reads it as for any run. */
   open(accepted: Accepted): Opening {
-    if (accepted.kind !== "research")
-      throw new Error(`a ${accepted.kind} work item is not a research run`);
+    if (accepted.kind !== this.kind)
+      throw new Error(`a ${accepted.kind} work item is not a ${this.kind} run`);
     return {
       specs: [],
       state: {
-        kind: "research",
+        kind: this.kind,
         research: {
           questions: accepted.questions,
           output: null,
@@ -101,20 +127,20 @@ export class ResearchFlow implements Flow {
         },
       },
       // `runKind` is what `stats` tells the runs apart by (`kind` is taken: it is the event's name).
-      claimed: { runKind: "research", questions: accepted.questions.length },
+      claimed: { runKind: this.kind, questions: accepted.questions.length },
     };
   }
 
   wouldTake(issue: Issue, accepted: Accepted): StepResult {
-    if (accepted.kind !== "research")
-      throw new Error(`a ${accepted.kind} work item is not a research run`);
+    if (accepted.kind !== this.kind)
+      throw new Error(`a ${accepted.kind} work item is not a ${this.kind} run`);
     this.#host.d.log(
-      `dry run: would take ${issue.key} (research, ${accepted.questions.length} questions)`,
+      `dry run: would take ${issue.key} (${this.kind}, ${accepted.questions.length} questions)`,
     );
     return {
       status: "would-take",
       key: issue.key,
-      kind: "research",
+      kind: this.kind,
       questions: accepted.questions.length,
     };
   }
@@ -140,13 +166,13 @@ export class ResearchFlow implements Flow {
   block(args: BlockArgs) {
     return blockTicket(this.#host, args, {
       firstPhase: "research",
-      session: `调研会话「[${args.run.key}] Research」`,
+      session: `${this.#p.name}会话「[${args.run.key}] ${this.#p.session}」`,
       // A research block can quote what the sessions wrote (QA's findings, draft titles), and the tracker is their
       // only way out: the same check as before publishing, naming the kinds only.
       redact: (said) => {
         const leaked = findSecrets(said);
         return leaked.length > 0
-          ? `卡住的原因里有疑似凭据（${leaked.join("、")}），没有贴出原文；详情在调研会话和 QA 会话里。`
+          ? `卡住的原因里有疑似凭据（${leaked.join("、")}），没有贴出原文；详情在${this.#p.name}会话和 QA 会话里。`
           : said;
       },
     });
@@ -170,7 +196,7 @@ export class ResearchFlow implements Flow {
       agent: config.devAgent,
       ...(config.devModel ? { model: config.devModel } : {}),
       ...(config.devEffort ? { effort: config.devEffort } : {}),
-      title: `[${run.key}] Research`,
+      title: `[${run.key}] ${this.#p.session}`,
       // The same name again is the worktree that is there: the daemon reuses it, and files the session under it.
       cwd: config.repoRoot,
       worktree: { base: config.baseRef, name: branchOf(issue.number) },
@@ -220,13 +246,13 @@ export class ResearchFlow implements Flow {
       "single",
       [
         {
-          id: "research",
-          title: "调研",
+          id: this.kind,
+          title: this.#p.nodeTitle,
           goal: `回答工单里要回答的问题：\n${state.questions.map((q, i) => `${i + 1}. ${q}`).join("\n")}`,
           dependsOn: [],
           filesHint: [],
           verify: [],
-          role: "research",
+          role: this.kind,
         },
       ],
       nowIso,
@@ -234,7 +260,7 @@ export class ResearchFlow implements Flow {
     const beyond = run.phase === "research_qa" || run.phase === "publishing";
     graph = updateGraphNode(
       graph,
-      "research",
+      this.kind,
       beyond
         ? {
             status: "passed",
@@ -275,7 +301,7 @@ export class ResearchFlow implements Flow {
       graph: updateGraphNode(
         appended.graph,
         appended.node.id,
-        { goal: "独立验收调研产出" },
+        { goal: `独立验收${this.#p.name}产出` },
         nowIso,
       ),
       node: appended.node,
@@ -288,22 +314,22 @@ export class ResearchFlow implements Flow {
    */
   async #research(run: RunRecord, issue: Issue, byPerson: boolean, save: Save): Promise<void> {
     const { config, store, clock } = this.#host.d;
-    const bounds = this.#host.need(config.research ?? undefined);
+    const bounds = this.#host.need(optionsOf(this.kind, config) ?? undefined);
     const state = researchOf(run);
     const worktree = this.#host.need(run.worktree ?? undefined);
     let graph = await this.#ensureGraph(run);
     let node = graph.nodes
-      .filter((n) => n.role === "research")
+      .filter((n) => n.role === this.kind)
       .find((n) => n.status === "running" || n.status === "blocked" || n.status === "pending");
     if (node === undefined) {
       // The last research node was judged and sent back (or put back after that): a `fix-n` node, a new session,
       // told the report it replaces and what was found wrong with it.
       const nowIso = clock.now().toISOString();
       const appended = appendFixNode(graph, {
-        title: "调研返工",
-        goal: run.findings ?? "Redo the research.",
+        title: `${this.#p.name}返工`,
+        goal: run.findings ?? `Redo the ${this.kind}.`,
         verify: [],
-        role: "research",
+        role: this.kind,
         nowIso,
       });
       if (!appended.ok) throw new Blocked(appended.reason);
@@ -326,9 +352,9 @@ export class ResearchFlow implements Flow {
     }
     const current = node;
     const rework = current.origin === "fix";
-    const previous = graph.nodes.filter((n) => n.role === "research" && n.report !== null).at(-1);
+    const previous = graph.nodes.filter((n) => n.role === this.kind && n.report !== null).at(-1);
     const brief = () => {
-      const first = researchBrief(issue, state.questions, {
+      const first = this.#p.brief(issue, state.questions, {
         readRoots: bounds.readRoots,
         maxFollowups: bounds.maxFollowups,
         maxCriteria: config.maxCriteria,
@@ -386,16 +412,21 @@ export class ResearchFlow implements Flow {
     // Read-only, kept by a check and not by trust.
     const after = await this.#host.snapshot(worktree);
     if (before !== after)
-      throw new Blocked("调研会话修改了工作区（提交或文件状态变了），自动化不信任这次调研结果。");
-    this.#host.mustHaveEnded("调研", result);
+      throw new Blocked(
+        `${this.#p.name}会话修改了工作区（提交或文件状态变了），自动化不信任这次${this.#p.name}结果。`,
+      );
+    this.#host.mustHaveEnded(this.#p.name, result);
 
     const output = parseResearch(result.text);
-    const findings = checkResearch(output, state.questions, {
-      maxCriteria: config.maxCriteria,
-      featureTypeId: config.featureTypeId,
-      bugTypeId: config.bugTypeId,
-      maxFollowups: bounds.maxFollowups,
-    });
+    const findings = [
+      ...checkResearch(output, state.questions, {
+        maxCriteria: config.maxCriteria,
+        featureTypeId: config.featureTypeId,
+        bugTypeId: config.bugTypeId,
+        maxFollowups: bounds.maxFollowups,
+      }),
+      ...this.#p.extraChecks(output),
+    ];
     await store.appendProgress(
       run.key,
       run.round,
@@ -475,7 +506,7 @@ export class ResearchFlow implements Flow {
    */
   async #researchQa(run: RunRecord, issue: Issue, save: Save): Promise<void> {
     const { config, clock, store } = this.#host.d;
-    const bounds = this.#host.need(config.research ?? undefined);
+    const bounds = this.#host.need(optionsOf(this.kind, config) ?? undefined);
     const state = researchOf(run);
     const output = this.#host.need(state.output ?? undefined);
     const worktree = this.#host.need(run.worktree ?? undefined);
@@ -599,7 +630,7 @@ export class ResearchFlow implements Flow {
   async #publish(start: RunRecord, issue: Issue, save: Save): Promise<StepResult> {
     const { config, tracker, store } = this.#host.d;
     await this.#ensureGraph(start);
-    const bounds = this.#host.need(config.research ?? undefined);
+    const bounds = this.#host.need(optionsOf(this.kind, config) ?? undefined);
     let state = researchOf(start);
     const output = this.#host.need(state.output ?? undefined);
     const progress = async (patch: Partial<ResearchState>, also?: (tx: StoreOps) => void) => {
@@ -621,7 +652,7 @@ export class ResearchFlow implements Flow {
           findings: `The reply holds text shaped like a credential (${kinds.join(", ")}). Nothing was published. Write the blocks again with no secret in them: name a variable or a key by its name alone.`,
         });
         throw new Blocked(
-          `调研结果里有疑似凭据（${kinds.join("、")}），什么都没有发布。请先确认这些内容，再把工单放回 Todo：调研会话会去掉它们后重写。`,
+          `${this.#p.name}结果里有疑似凭据（${kinds.join("、")}），什么都没有发布。请先确认这些内容，再把工单放回 Todo：${this.#p.name}会话会去掉它们后重写。`,
           "research",
         );
       }
@@ -673,7 +704,7 @@ export class ResearchFlow implements Flow {
               kind: "comment",
               dedupe: `researched-summary:${start.key}`,
               payload: {
-                body: `调研摘要（「结论」一节已经有人写过，没有覆盖）：\n\n${output.summary}\n\n报告：「${title}」（已挂在本工单上）`,
+                body: `${this.#p.name}摘要（「结论」一节已经有人写过，没有覆盖）：\n\n${output.summary}\n\n报告：「${title}」（已挂在本工单上）`,
               },
             }),
           );
@@ -721,7 +752,7 @@ export class ResearchFlow implements Flow {
             .join("\n")}`;
     await save({ phase: "done", research: { ...state, commented: true } }, (tx) => {
       tellTicket(tx, start, issue, `researched:${start.key}`, {
-        body: `调研完成。报告：「${title}」（已挂在本工单上）。\n\n${followups}`,
+        body: `${this.#p.name}完成。报告：「${title}」（已挂在本工单上）。\n\n${followups}`,
         to: "done",
       });
       tx.event(start.key, "researched", { docId, followups: keys.length });

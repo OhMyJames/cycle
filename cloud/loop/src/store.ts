@@ -188,11 +188,14 @@ export const RunRecordSchema = z.preprocess(
   z.discriminatedUnion("kind", [
     RunCommonSchema.extend({ kind: z.literal("dev"), dev: DevStateSchema }),
     RunCommonSchema.extend({ kind: z.literal("research"), research: ResearchStateSchema }),
+    // A design run (CYC-545) keeps the same state as a research run: questions, one report, a conclusion, follow-ups.
+    RunCommonSchema.extend({ kind: z.literal("design"), research: ResearchStateSchema }),
   ]),
 ) as unknown as z.ZodType<RunRecord>;
 export type RunRecord =
   | (RunCommon & { kind: "dev"; dev: DevState })
-  | (RunCommon & { kind: "research"; research: ResearchState });
+  | (RunCommon & { kind: "research"; research: ResearchState })
+  | (RunCommon & { kind: "design"; research: ResearchState });
 
 /** A change to a run: the common fields as they are; `dev` is merged into the dev state, `research` replaces it. */
 export type RunPatch = Partial<RunCommon> & { dev?: Partial<DevState>; research?: ResearchState };
@@ -209,9 +212,9 @@ export const devOf = (run: RunRecord): DevState => {
   return run.dev;
 };
 
-/** The research state of a research run. */
+/** The research state of a research run (or of a design run, which keeps the same). */
 export const researchOf = (run: RunRecord): ResearchState => {
-  if (run.kind !== "research")
+  if (run.kind !== "research" && run.kind !== "design")
     throw new Error(`${run.key} is a ${run.kind} run, not a research run`);
   return run.research;
 };

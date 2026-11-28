@@ -161,7 +161,7 @@ const runState = (run: RunRecord): LoopRunSummary["state"] =>
 const summaryOf = (run: RunRecord): LoopRunSummary => ({
   key: run.key,
   title: run.title,
-  kind: run.kind,
+  kind: run.kind === "design" ? "research" : run.kind,
   phase: run.phase,
   state: runState(run),
   round: run.round,
@@ -1106,7 +1106,7 @@ export class LoopApiHandler {
         id: `run:${run.key}`,
         key: run.key,
         title: run.title,
-        kind: run.kind,
+        kind: run.kind === "design" ? "research" : run.kind,
         phase: run.phase,
         state: runState(run),
         round: run.round,
@@ -1173,7 +1173,11 @@ export class LoopApiHandler {
         workers: p.workers,
         working: (await p.store.unfinished())
           .filter((r) => r.phase !== "blocked" && r.phase !== "done")
-          .map((r) => ({ key: r.key, kind: r.kind, phase: r.phase })),
+          .map((r) => ({
+            key: r.key,
+            kind: r.kind === "design" ? "research" : r.kind,
+            phase: r.phase,
+          })),
       })),
     );
     return {

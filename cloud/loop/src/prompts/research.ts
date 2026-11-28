@@ -11,7 +11,7 @@ import { ALLOWED_COMMANDS } from "../preflight.ts";
 import type { Issue } from "../types.ts";
 import { numbered } from "./common.ts";
 
-const RESEARCH_OUTPUT = (
+export const RESEARCH_OUTPUT = (
   maxFollowups: number,
 ): string => `End your last reply with these blocks, and nothing after them. The loop reads only your last reply, and publishes what is in the blocks: the report as a document, the summary into the work item's 「结论」 section, each follow-up as a new work item in Backlog for a person to approve.
 <summary>

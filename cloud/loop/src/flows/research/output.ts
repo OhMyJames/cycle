@@ -129,6 +129,28 @@ export const checkResearch = (
   return findings;
 };
 
+const headed = (report: string, name: string): boolean =>
+  new RegExp(`^#{1,6}\\s*${name}`, "m").test(report);
+
+/**
+ * What a design report must have besides the research rules (CYC-545): a section comparing the alternatives and one
+ * recommending among them. Each question's own answer is already checked by `checkResearch`.
+ */
+export const checkDesign = (output: ResearchOutput): string[] => {
+  const report = output.report;
+  if (report === null) return [];
+  const findings: string[] = [];
+  if (!headed(report, "备选方案对比"))
+    findings.push(
+      "The report has no section 「## 备选方案对比」 that compares at least two alternatives (what each is, what it costs, what it risks).",
+    );
+  if (!headed(report, "推荐"))
+    findings.push(
+      "The report has no section 「## 推荐」 that says which alternative to take and why.",
+    );
+  return findings;
+};
+
 /**
  * `description` with the 「结论」 section's content replaced by `text`, its heading kept; with no such section, one is
  * added at the end. Every other character is left as it was: people edit the rest of the work item.

@@ -232,3 +232,63 @@ test("UI_CRITERIA_GUIDE names the three ways, the ./ rule and test:real; ALLOWED
     expect(ALLOWED_COMMANDS).toContain(form);
   }
 });
+
+const DESIGN = 31;
+const design = config({
+  maxCriteria: 3,
+  design: {
+    typeId: DESIGN,
+    backlogColumn: 21,
+    folderId: 8,
+    readRoots: ["/repo"],
+    maxFollowups: 5,
+  },
+});
+const readyDesign = `## 背景与约束
+现有 Loop 只存 JSON。
+
+## 要回答的问题
+
+1. 用哪种存储？
+2. 怎么迁移？
+
+## 结论
+（做完后回填）
+`;
+const designReasons = (description: string): string =>
+  reasonsOf(preflight(issue({ description, typeId: DESIGN }), design));
+
+test("a design item with numbered questions, its background and an empty conclusion is taken as design", () => {
+  expect(preflight(issue({ description: readyDesign, typeId: DESIGN }), design)).toEqual({
+    ok: true,
+    kind: "design",
+    questions: ["用哪种存储？", "怎么迁移？"],
+  });
+});
+
+test("with design off, a Design-typed item is not judged as design", () => {
+  const result = preflight(issue({ description: readyDesign, typeId: DESIGN }), research);
+  expect(result.ok === true && result.kind === "design").toBe(false);
+});
+
+test("a design item is sent back for each thing it lacks", () => {
+  expect(designReasons(readyDesign.replace(/1\. .*\n2\. .*\n/, ""))).toContain(
+    "no list of questions",
+  );
+  expect(designReasons(readyDesign.replace("1. 用哪种", "- 用哪种"))).toContain("numbered list");
+  expect(designReasons(readyDesign.replace("2. 怎么迁移？", "2. b\n3. c\n4. d"))).toContain(
+    "at most 3",
+  );
+  expect(designReasons(readyDesign.replace("现有 Loop 只存 JSON。", ""))).toContain(
+    "「背景与约束」",
+  );
+  expect(designReasons(readyDesign.replace("（做完后回填）", "已有结论。"))).toContain("「结论」");
+  expect(designReasons("   ")).toContain("no description");
+});
+
+test("a design item's conclusion may be absent, empty or one bracketed note", () => {
+  for (const tail of ["", "## 结论\n", "## 结论\n\n（待定）\n"]) {
+    const description = readyDesign.split("## 结论")[0] + tail;
+    expect(preflight(issue({ description, typeId: DESIGN }), design).ok).toBe(true);
+  }
+});
